@@ -109,7 +109,7 @@ test.describe("Customer management — UI", () => {
     const warning = page.getByRole("alertdialog");
     await expect(warning).toBeVisible();
     await expect(
-      warning.getByText(/aimer-web's matching customer/i),
+      warning.getByText(/Clumit Insight's matching customer/i),
     ).toBeVisible();
     await page.keyboard.press("Escape");
     await expect(warning).toBeVisible();
@@ -171,7 +171,7 @@ test.describe("Customer management — UI", () => {
     const warning = page.getByRole("alertdialog");
     await expect(warning).toBeVisible();
     await expect(
-      warning.getByText(/disables Analyze with Aimer/i),
+      warning.getByText(/disables Analyze with Insight/i),
     ).toBeVisible();
     await warning.getByRole("button", { name: "Continue" }).click();
 

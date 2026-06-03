@@ -1,7 +1,7 @@
 <?xml version="1.0" encoding="UTF-8"?>
 <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 720 200" font-family="-apple-system, Segoe UI, Roboto, Helvetica, Arial, sans-serif" role="img" aria-labelledby="title desc">
   <title id="title">Dashboard "Latest digest" (LIVE) report card (wireframe)</title>
-  <desc id="desc">Wireframe of the per-customer "AI analyses" dashboard section. Under the customer name "Acme Corp" the "Latest digest" card shows the LIVE report tier badge "AI · CRITICAL"; the badge links to the aimer-web LIVE report page. The card renders only when the LIVE summary resolves to a CRITICAL or HIGH tier; a negative result hides the card with no placeholder.</desc>
+  <desc id="desc">Wireframe of the per-customer "AI analyses" dashboard section. Under the customer name "Acme Corp" the "Latest digest" card shows the LIVE report tier badge "AI · CRITICAL"; the badge links to the Clumit Insight LIVE report page. The card renders only when the LIVE summary resolves to a CRITICAL or HIGH tier; a negative result hides the card with no placeholder.</desc>
   <style>
     .bg { fill: #fafafa; }
     .panel { fill: #ffffff; stroke: #e5e7eb; stroke-width: 1; }
@@ -23,5 +23,5 @@
   <rect class="badge-crit" x="246" y="98" width="92" height="20" rx="3" ry="3"/>
   <text x="254" y="112" class="badge-crit-text">AI · CRITICAL</text>
 
-  <text x="24" y="168" class="text-muted">The badge links to the aimer-web LIVE report (latest minute-cadence digest). Hidden when below CRITICAL/HIGH.</text>
+  <text x="24" y="168" class="text-muted">The badge links to the Clumit Insight LIVE report (latest minute-cadence digest). Hidden when below CRITICAL/HIGH.</text>
 </svg>

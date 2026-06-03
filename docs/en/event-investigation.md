@@ -130,8 +130,8 @@ switching away and back does not re-issue the lookup.
 Summary card with severity, time, kind, category, confidence
 and triage scores (each score with its policy ID).
 
-The tab also includes an **Analyze with Aimer** banner.
-Clicking **Analyze with Aimer** opens a small confirmation
+The tab also includes an **Analyze with Insight** banner.
+Clicking **Analyze with Insight** opens a small confirmation
 modal — the investigator picks the customer this event should
 be analyzed under, then confirms.  When the event is connected
 to a single customer the modal shows that customer's name and
@@ -146,8 +146,8 @@ After confirmation the browser asks
 `POST /api/aimer/analyze-envelope` to mint a four-field
 signed-multipart envelope (`context_token`, `events_envelope`,
 `events_data`, `analyze_params_token`).  All four fields are
-signed by the same Aimer signing key configured under
-**Settings → Aimer Integration**, and the
+signed by the same Clumit Insight signing key configured under
+**Settings → Clumit Insight Integration**, and the
 `analyze_params_token` cross-binds the other three so an
 envelope cannot be swapped between mint and submit.
 
@@ -158,30 +158,31 @@ tab via `window.open("about:blank", "aimer-analyze-bridge-<id>")`
 under the still-fresh transient activation from the user's
 click.  The `<id>` is a fresh per-click UUID (browser-named
 windows are global to the opener, so a fixed or per-mount
-suffix would clobber a previously opened Aimer result tab
-with the same name).  The browser then builds a hidden HTML `<form>` with
-`method="POST"`, `enctype="multipart/form-data"`, and `action`
-pointing at aimer-web's `/api/analysis/analyze-bridge` endpoint,
-sets the form's `target` to the reserved window's name, and
-calls `form.submit()` so the multipart POST navigates the
-pre-opened tab.  If `window.open` returns `null` (popup
-blocked), the form falls back to `target="_blank"`.  The
-reserved tab is closed if the mint fails, the user cancels, or
-the locale changes mid-flight.  The original aice-web-next tab
-stays open; the **analysis result page opens in the reserved
-tab** on aimer-web.
-On first visit aimer-web walks the investigator through OIDC
-sign-in inline; on subsequent visits the result page opens
+suffix would clobber a previously opened Insight result tab
+with the same name).  The browser then builds a hidden HTML
+`<form>` with `method="POST"`, `enctype="multipart/form-data"`,
+and `action` pointing at Clumit Insight's
+`/api/analysis/analyze-bridge` endpoint, sets the form's
+`target` to the reserved window's name, and calls
+`form.submit()` so the multipart POST navigates the pre-opened
+tab.  If `window.open` returns `null` (popup blocked), the form
+falls back to `target="_blank"`.  The reserved tab is closed if
+the mint fails, the user cancels, or the locale changes
+mid-flight.  The original aice-web-next tab stays open; the
+**analysis result page opens in the reserved tab** on Clumit
+Insight.
+On first visit Clumit Insight walks the investigator through
+OIDC sign-in inline; on subsequent visits the result page opens
 directly via the existing Keycloak SSO session.  Result-page
-errors (invalid envelope, unsupported language, aimer
+errors (invalid envelope, unsupported language, Insight service
 unavailable, …) render as styled error pages in the same new
 tab — the original aice-web-next tab does not receive a
 programmatic error response.
 
-When the result page on aimer-web offers a **Re-analyze**
+When the result page on Clumit Insight offers a **Re-analyze**
 action, it round-trips back to aice-web-next with
 `?aimerForce=1`.  Arriving at the event detail page with that
-query parameter arms the next **Analyze with Aimer** click as
+query parameter arms the next **Analyze with Insight** click as
 `force=true`.  The parameter intentionally stays on the URL
 across a refresh-before-click so the force arm survives a
 reload; it is stripped only after the click consumes the flag,
@@ -190,13 +191,13 @@ re-force.
 
 The button is disabled when:
 
-- The event is not connected to any customer (no Aimer customer
-  to scope the transfer under).
+- The event is not connected to any customer (no Insight
+  customer to scope the transfer under).
 - Every connected customer is missing the `external_key`
-  needed to identify it on aimer-web.  An operator with the
+  needed to identify it on Clumit Insight.  An operator with the
   Customers permission can populate that key on the **Customers**
   page.
-- The Aimer integration is not configured by a System
+- The Clumit Insight integration is not configured by a System
   Administrator.  All five prerequisites must be present: the
   AICE ID, the bridge URL, the default model-name / model
   identifiers used in the analyze parameters, and an active
@@ -211,12 +212,12 @@ has an `external_key`, the customer without a key is shown
 disabled (with an "(no external_key set)" hint) — the
 investigator can still send under the configured one.
 
-![Analyze with Aimer confirmation modal](../assets/aimer-send-modal-en.png)
+![Analyze with Insight confirmation modal](../assets/aimer-send-modal-en.png)
 *Screenshot pending update — tracked at #624.*
 
-![Send to Aimer Phase 2 disclosure](../assets/aimer-send-phase2-en.png)
+![Send to Insight Phase 2 disclosure](../assets/aimer-send-phase2-en.png)
 *Screenshot pending update — the Phase 2 disclosure modal is
-removed in the analyze-bridge flow; the new tab on aimer-web
+removed in the analyze-bridge flow; the new tab on Clumit Insight
 shows the result page directly.  Tracked at #624.*
 
 The browser primitive used here is intentional.  An HTML form
@@ -233,7 +234,7 @@ popup was blocked before the form was built).  Because HTML
 form parts can only be text, every field including the JSON
 payload is sent as a text part rather than a `Blob`.
 
-Below the Aimer banner, **Pivot shortcuts** lists links that
+Below the Insight banner, **Pivot shortcuts** lists links that
 open the Detection page pre-filtered to related activity:
 same source IP in the last 24 hours, same destination IP in
 the last 24 hours, and same kind in the last 7 days. The

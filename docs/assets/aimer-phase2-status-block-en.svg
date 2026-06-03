@@ -1,6 +1,6 @@
 <?xml version="1.0" encoding="UTF-8"?>
 <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 760 520" font-family="-apple-system, Segoe UI, Roboto, Helvetica, Arial, sans-serif" role="img" aria-labelledby="title desc">
-  <title id="title">Phase 2 sync status block on the Aimer integration settings page (wireframe)</title>
+  <title id="title">Phase 2 sync status block on the Clumit Insight integration settings page (wireframe)</title>
   <desc id="desc">Wireframe of the Phase 2 sync status block. A customer picker sits in the header next to a Refresh button. Three rows below render the three tracks: baseline events and stories (streaming) each show a colored bucket dot, last-synced time, approximate backlog, pending notice count with oldest age, per-subkind badges (withdraw / refresh / backfill), and a Pause/Resume button; policy runs shows last-sent run + total runs sent; policy event withdrawals shows pending count with a withdraw badge. Below the rows are a Sync now panel and a Backfill historical window form.</desc>
   <style>
     .bg { fill: #fafafa; }

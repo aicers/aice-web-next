@@ -202,8 +202,8 @@ Fields:
 - **Name** — customer display name (required).
 - **Description** — optional description.
 - **External Key** — optional cross-system bridge identifier paired
-  with the matching customer on aimer-web. Globally unique. Leave
-  blank if the customer is not yet onboarded for *Analyze with Aimer*.
+  with the matching customer on Clumit Insight. Globally unique. Leave
+  blank if the customer is not yet onboarded for *Analyze with Insight*.
   See [External Key](#external-key) below for the agreement and
   validation rules.
 
@@ -225,12 +225,12 @@ confirmation dialog before the change is saved — see
 ### External Key
 
 The external key is the operator-supplied identifier that pairs an
-AICE customer with the matching customer on aimer-web. The value is
-the same string both sides carry, so the cross-system bridge can map
-audit and event traffic back to a single business entity.
+AICE customer with the matching customer on Clumit Insight. The value
+is the same string both sides carry, so the cross-system bridge can
+map audit and event traffic back to a single business entity.
 
 - **When to set it.** Only after the value has been agreed with the
-  aimer-web System Administrator over an out-of-band secure channel
+  Clumit Insight System Administrator over an out-of-band secure channel
   (in-house SSO messenger, in person, etc.). The recommended
   identifiers are a domain (e.g. `acmecorp.com`), a business
   registration number, or a contract code.
@@ -241,20 +241,20 @@ audit and event traffic back to a single business entity.
   by another customer returns a typed conflict.
 - **Effect of a change.** Setting or changing the external key
   rewrites the cross-system mapping; the matching customer on
-  aimer-web must be updated to keep the mapping intact, and a single
-  bridge test is recommended right after.
+  Clumit Insight must be updated to keep the mapping intact, and a
+  single bridge test is recommended right after.
 - **Effect of clearing.** Clearing the external key disables
-  *Analyze with Aimer* for the customer until a value is set again. Any
-  existing mapping with the aimer-web side is no longer reachable
-  from this side.
+  *Analyze with Insight* for the customer until a value is set again.
+  Any existing mapping with the Clumit Insight side is no longer
+  reachable from this side.
 - **Customers without an external key.** Edits and queries continue
-  to work normally; only the *Analyze with Aimer* button is disabled per
-  customer until a value is populated.
+  to work normally; only the *Analyze with Insight* button is disabled
+  per customer until a value is populated.
 
 For the full operator playbook (agreement workflow, recovery from
 mismatches, audit forensics) see the canonical
 [Cross-system customer identification](https://github.com/aicers/aimer-web/blob/main/docs/operations/cross-system-customer-identification.md)
-guide on aimer-web.
+guide on Clumit Insight.
 
 <!-- TODO: screenshot - aimer-bridge batch -->
 
@@ -499,10 +499,10 @@ bound:
   cadence is independent of the corpus / snapshot retention
   passes; the 05:15 slot only clusters the morning log window.
   Token: `TRIAGE_ENGAGEMENT_RETENTION_INTERNAL_TOKEN`.
-- **Aimer Phase 2 manual-mint ledger**
+- **Clumit Insight Phase 2 manual-mint ledger**
   (`run-aimer-phase2-manual-mint-retention.sh`, daily at 06:15
   UTC) — prunes `aimer_phase2_manual_mint` rows older than 24
-  hours (consumed or not). Every manual Send-to-aimer-web mints
+  hours (consumed or not). Every manual Send-to-Insight mints
   one ledger row; abandoned sends that never reach `ack-manual`
   would otherwise grow the table without bound. The 24h window
   is well outside the single-use JTI TTL, so any late
@@ -786,10 +786,10 @@ Displays mTLS certificate status with severity indicators:
 - **Warning** — certificate will expire soon.
 - **Critical** — certificate is expired or expiring imminently.
 
-## Aimer Integration
+## Clumit Insight Integration
 
-Navigate to **Settings → Aimer Integration** to configure the
-system-wide prerequisites for the Analyze with Aimer flow. This
+Navigate to **Settings → Clumit Insight Integration** to configure the
+system-wide prerequisites for the Analyze with Insight flow. This
 section is reserved for the **System Administrator** role —
 Tenant Administrator and Security Monitor are denied access at
 the page route, the public-JWK / thumbprint read endpoint, and
@@ -800,20 +800,20 @@ grants.
 
 ### Setup status
 
-Analyze with Aimer requires five system-wide prerequisites:
+Analyze with Insight requires five system-wide prerequisites:
 
 1. **`aice_id`** — the deployment hostname. Used as the JWT
-   `iss` claim and as the `aice_id` claim sent to aimer-web.
-   aimer-web's `trust_registry` joins on this value, so it must
+   `iss` claim and as the `aice_id` claim sent to Clumit Insight.
+   Clumit Insight's `trust_registry` joins on this value, so it must
    match the entry registered there.
-2. **`aimer_web_bridge_url`** — the base URL of the aimer-web
+2. **`aimer_web_bridge_url`** — the base URL of the Clumit Insight
    instance whose `/api/analysis/analyze-bridge` endpoint
    receives the top-level multipart POST. HTTPS only.
 3. **`aimer_default_model_name`** — the default LLM vendor /
    model-family identifier embedded as the `model_name` claim
    in the `analyze_params_token` JWS. The accepted catalog is
-   owned by aimer-side configuration; any non-empty string is
-   structurally valid here.
+   owned by Clumit Insight-side configuration; any non-empty string
+   is structurally valid here.
 4. **`aimer_default_model`** — the default LLM model identifier
    embedded as the `model` claim. Same shape rules as
    `aimer_default_model_name`.
@@ -841,7 +841,7 @@ SHA-256 Thumbprint in two formats simultaneously:
 
 - **base64url** (43 characters, no padding) — canonical. Use this
   when accuracy matters; copy and compare it with the value shown
-  on aimer-web's environment registration screen.
+  on Clumit Insight's environment registration screen.
 - **colon-separated hex** — the same SHA-256 (32 bytes / 64 hex
   characters) grouped in 4-byte blocks. Visual aid for verbal or
   mental comparison.
@@ -869,13 +869,13 @@ The rotation state machine has four states:
    The active kid keeps signing tokens until you Switch.
 3. **Switch** — promotes the pending kid to active and demotes the
    old kid to *previous*. **Required precondition**: the new kid
-   must already be registered on aimer-web's trust registry, or
+   must already be registered on Clumit Insight's trust registry, or
    tokens signed by the new kid will be rejected. The page asks
    you to tick a confirmation checkbox before the button enables.
 4. **Deactivate** — drops the previous kid from disk. Auto-eligible
    after a short retention window (default: 5 minutes — sized to
    the context-token TTL plus a clock-skew margin) so in-flight
-   verification on aimer-web's side has time to complete via
+   verification on Clumit Insight's side has time to complete via
    redelivery.
 
 A dashboard banner warns when rotation is approaching:
@@ -900,7 +900,7 @@ permissions on disk.
 
 ### `aice_id`
 
-Hostname (RFC 1123) identifying this AICE instance to aimer-web.
+Hostname (RFC 1123) identifying this AICE instance to Clumit Insight.
 Underscores are intentionally rejected — `aice_id` is also the
 JWT `iss` claim, so a strict hostname keeps the trust-registry
 join key portable.
@@ -909,18 +909,18 @@ Example: `acme.example.com`.
 
 ### `aimer_web_bridge_url`
 
-Base URL of the aimer-web instance, HTTPS-only. The path is
+Base URL of the Clumit Insight instance, HTTPS-only. The path is
 normalized to a canonical form (no trailing slash). Credentials,
 query strings, and fragments are rejected.
 
-Example: `https://aimer.example.com`.
+Example: `https://insight.example.com`.
 
 ### `aimer_default_model_name`
 
 Default LLM vendor / model-family identifier sent as the
 `model_name` claim of the `analyze_params_token` JWS. Any
 non-empty string up to 256 characters is structurally valid;
-the accepted catalog is owned by aimer-side configuration.
+the accepted catalog is owned by Clumit Insight-side configuration.
 
 Example: `anthropic`.
 
@@ -929,7 +929,7 @@ Example: `anthropic`.
 Default LLM model identifier sent as the `model` claim of the
 `analyze_params_token` JWS. Any non-empty string up to 256
 characters is structurally valid; the accepted catalog is
-owned by aimer-side configuration.
+owned by Clumit Insight-side configuration.
 
 Example: `claude-sonnet-4-6`.
 
@@ -940,7 +940,7 @@ Editing any of `aice_id`, `aimer_web_bridge_url`,
 a non-dismissable modal that warns:
 
 > After this change, the operator must re-register this
-> environment on aimer-web. Existing registrations are
+> environment on Clumit Insight. Existing registrations are
 > invalidated and any context tokens issued in the interim
 > will be rejected.
 
@@ -950,7 +950,7 @@ You must explicitly confirm before the change is committed.
 
 ### Audit log
 
-The Aimer integration page records:
+The Clumit Insight integration page records:
 
 - `aimer_signing_key.generated`, `.rotated`, `.switched`,
   `.deactivated` — keypair lifecycle events.
@@ -959,9 +959,9 @@ The Aimer integration page records:
   `aimer_default_model` changed, with the `{key, old, new}`
   triple.
 
-The Analyze with Aimer flow records, on every browser-initiated
+The Analyze with Insight flow records, on every browser-initiated
 envelope mint (issued by the `POST /api/aimer/analyze-envelope`
-endpoint that the **Analyze with Aimer** button calls in the
+endpoint that the **Analyze with Insight** button calls in the
 background):
 
 - `aimer_analyze_envelope.issued` — success. The audit row is
@@ -1087,8 +1087,8 @@ Click sequence:
 
 #### Auto-forward (cadence)
 
-The **Auto-forward to aimer-web (every 5 min while signed in)**
-toggle below the tracks turns on an automatic, browser-side push
+The **Auto-forward to Clumit Insight (every 5 min while signed
+in)** toggle below the tracks turns on an automatic, browser-side push
 cadence for the selected customer. It is **off by default** —
 forwarding only starts after an operator opts the customer in.
 
@@ -1203,7 +1203,7 @@ under the tenant operator's effective customer scope.
 If any customer is in the `behind` / `way_behind` / `paused`
 bucket for a tracked kind, the dashboard renders a one-line
 banner at the top of the app shell summarizing the situation and
-linking to **Settings → Aimer integration**. The banner is
+linking to **Settings → Clumit Insight integration**. The banner is
 fetched client-side after first paint via
 `GET /api/aimer/phase2/status/summary` so it never blocks SSR or
 initial document render; the summary route applies bounded
@@ -1229,7 +1229,7 @@ way_behind in `worst_bucket` severity.
 The summary route restricts the customer set to active tenants
 (`customers.status = 'active'`) so the banner only warns about
 customers an operator can actually act on — the Phase 2
-customer picker on **Settings → Aimer integration** is itself
+customer picker on **Settings → Clumit Insight integration** is itself
 filtered to active customers, and warning about a suspended /
 deleted tenant the operator cannot select would link to a page
 where that customer is absent.

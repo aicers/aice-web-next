@@ -1,7 +1,7 @@
 <?xml version="1.0" encoding="UTF-8"?>
 <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 720 460" font-family="-apple-system, Segoe UI, Roboto, Helvetica, Arial, sans-serif" role="img" aria-labelledby="title desc">
   <title id="title">Stories tab in the Triage menu (wireframe)</title>
-  <desc id="desc">Wireframe of the Stories tab in Baseline mode. The tab strip shows Asset list, Stories, and Pivot peer views; the Stories pane shows a list of story cards with title, rule badge, score, member count, time window, top-3 preview, and Open / Send-to-aimer-web actions. The Send-to-aimer-web button is wired by #493 and renders enabled when the Aimer integration is configured; a kebab toggle next to it opens the "Send (force refresh)" menu.</desc>
+  <desc id="desc">Wireframe of the Stories tab in Baseline mode. The tab strip shows Asset list, Stories, and Pivot peer views; the Stories pane shows a list of story cards with title, rule badge, score, member count, time window, top-3 preview, and Open / Send-to-Insight actions. The Send-to-Insight button is wired by #493 and renders enabled when the Clumit Insight integration is configured; a kebab toggle next to it opens the "Send (force refresh)" menu.</desc>
   <style>
     .bg { fill: #fafafa; }
     .panel { fill: #ffffff; stroke: #e5e7eb; stroke-width: 1; }
@@ -67,7 +67,7 @@
   <text x="488" y="275" class="badge-text">analyst-curated</text>
   <text x="566" y="276" class="text-meta">Score 3.00</text>
   <text x="640" y="276" class="text-meta">3 events</text>
-  <text x="40" y="296" class="text-muted">2026-05-09 13:20 ~ 13:25 · Sent to aimer-web · 7 min ago</text>
+  <text x="40" y="296" class="text-muted">2026-05-09 13:20 ~ 13:25 · Sent to Insight · 7 min ago</text>
   <text x="40" y="318" class="text-section">Top events</text>
   <line x1="40" y1="326" x2="680" y2="326" class="row-divider"/>
   <text x="40" y="344" class="text-mono">2026-05-09 13:24:00</text>
@@ -85,5 +85,5 @@
   <text x="667" y="376" class="btn-primary-text">▾</text>
 
   <!-- Footer hint -->
-  <text x="24" y="436" class="text-muted">Clicking Send pushes the Story to aimer-web for LLM analysis (#493); the kebab opens "Send (force refresh)".</text>
+  <text x="24" y="436" class="text-muted">Clicking Send pushes the Story to Clumit Insight for LLM analysis (#493); the kebab opens "Send (force refresh)".</text>
 </svg>

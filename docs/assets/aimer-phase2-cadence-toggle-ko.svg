@@ -1,7 +1,7 @@
 <?xml version="1.0" encoding="UTF-8"?>
 <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 760 120" font-family="-apple-system, Segoe UI, Roboto, Helvetica, Arial, sans-serif" role="img" aria-labelledby="title desc">
   <title id="title">Phase 2 자동 전달 cadence 토글 (와이어프레임)</title>
-  <desc id="desc">상태 트랙 아래 고객별 자동 전달 토글의 와이어프레임. 왼쪽에는 "aimer-web로 자동 전달 (로그인 중 5분마다)" 라벨과, 브라우저에 묶여 있고 탭 가시성에 따라 일시 정지되는 cadence에 대한 한 줄 설명이 쌓여 있습니다. 오른쪽에는 켜기/끄기 스위치가 기본값인 꺼짐 위치로 표시됩니다.</desc>
+  <desc id="desc">상태 트랙 아래 고객별 자동 전달 토글의 와이어프레임. 왼쪽에는 "Clumit Insight로 자동 전달 (로그인 중 5분마다)" 라벨과, 브라우저에 묶여 있고 탭 가시성에 따라 일시 정지되는 cadence에 대한 한 줄 설명이 쌓여 있습니다. 오른쪽에는 켜기/끄기 스위치가 기본값인 꺼짐 위치로 표시됩니다.</desc>
   <style>
     .bg { fill: #fafafa; }
     .panel { fill: #ffffff; stroke: #e5e7eb; stroke-width: 1; stroke-dasharray: 4 3; }
@@ -15,7 +15,7 @@
 
   <rect class="panel" x="16" y="16" width="728" height="88" rx="6"/>
 
-  <text x="32" y="48" class="text-section">aimer-web로 자동 전달 (로그인 중 5분마다)</text>
+  <text x="32" y="48" class="text-section">Clumit Insight로 자동 전달 (로그인 중 5분마다)</text>
   <text x="32" y="72" class="text-meta">기본값 꺼짐. 로그인 중 5분마다 baseline 이벤트와 story를 전송하며,</text>
   <text x="32" y="88" class="text-meta">탭이 숨겨지면 일시 정지되고 로그아웃하면 중지됩니다. 지금 동기화는 무관하게 동작합니다.</text>
 
