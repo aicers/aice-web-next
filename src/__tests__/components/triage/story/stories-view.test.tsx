@@ -1830,6 +1830,19 @@ describe("TriageStoriesView — negative AI-analysis results are cached (#653)",
       expect(loadAiAnalysis).toHaveBeenCalledTimes(stories.length);
     });
 
+    // `waitFor` above only proves the calls were *issued* — each fetch's
+    // `.then`/`.finally` (which caches the negative and clears
+    // `aiInFlightRef`) still runs a microtask later. Let the initial wave
+    // fully settle before rotating: a rotation that races a still-in-flight
+    // key is skipped by the next effect generation (it sees the key in
+    // `aiInFlightRef`), so that key gets freshly cached instead of
+    // re-queued and the wave stalls below `2 * stories.length`. Flushing a
+    // macrotask drains all pending microtasks deterministically — without
+    // it the assertion is flaky under CI load (observed stalling at 7/12).
+    await act(async () => {
+      await new Promise((resolve) => setTimeout(resolve, 0));
+    });
+
     // Advance the clock past the negative-cache TTL, then rotate.
     nowSpy.mockReturnValue(base + AI_ANALYSIS_NEGATIVE_TTL_MS + 1);
     rerender(view([...stories].reverse()));
