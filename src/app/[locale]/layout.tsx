@@ -9,7 +9,7 @@ import { ThemeProvider } from "next-themes";
 
 import { SessionExtensionDialog } from "@/components/session/session-extension-dialog";
 import { routing } from "@/i18n/routing";
-import { appIcons } from "@/lib/icons";
+import { appIcons, appTileMeta } from "@/lib/icons";
 import { NONCE_HEADER } from "@/lib/security/csp";
 import { themeConfig } from "@/lib/theme";
 
@@ -24,6 +24,7 @@ export const metadata: Metadata = {
   title: "Clumit Security",
   description: "Clumit Security",
   icons: appIcons,
+  other: appTileMeta,
 };
 
 export default async function LocaleLayout({

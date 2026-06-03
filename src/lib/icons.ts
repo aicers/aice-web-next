@@ -27,3 +27,14 @@ export const appIcons: Metadata["icons"] = {
     { url: "/favicon/clumit/180.ico", sizes: "180x180", type: "image/png" },
   ],
 };
+
+// Windows Start-menu tiles.  Next's `metadata.icons` only emits
+// `<link rel="icon">` / `apple-touch-icon`, so the tile images are declared
+// as `msapplication-*` meta tags via `metadata.other` instead.  Wired into
+// the same layouts as `appIcons`.  Like the rest of the set, these files use
+// a `.ico` extension but contain PNG data.
+export const appTileMeta: Metadata["other"] = {
+  "msapplication-square70x70logo": "/favicon/clumit/70.ico",
+  "msapplication-square150x150logo": "/favicon/clumit/150.ico",
+  "msapplication-square310x310logo": "/favicon/clumit/310.ico",
+};
