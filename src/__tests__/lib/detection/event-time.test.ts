@@ -38,4 +38,29 @@ describe("formatEventTime", () => {
       spy.mockRestore();
     }
   });
+
+  it("renders the time in the supplied timezone", () => {
+    // 15:30:45 UTC is 00:30:45 the next day in Asia/Seoul (UTC+9).
+    const out = formatEventTime(ISO, "en-GB", FALLBACK, "Asia/Seoul");
+    expect(out).toMatch(/00:30:45/);
+    expect(out).toMatch(/23\/04\/2026/);
+  });
+
+  it("renders the same instant differently across timezones", () => {
+    const seoul = formatEventTime(ISO, "en-GB", FALLBACK, "Asia/Seoul");
+    const utc = formatEventTime(ISO, "en-GB", FALLBACK, "UTC");
+    expect(utc).toMatch(/15:30:45/);
+    expect(seoul).not.toBe(utc);
+  });
+
+  it("treats a nullish timezone as the runtime default", () => {
+    const spy = vi.spyOn(Intl, "DateTimeFormat");
+    try {
+      formatEventTime(ISO, "en-US", FALLBACK, null);
+      const options = spy.mock.calls[0]?.[1] as { timeZone?: string };
+      expect(options?.timeZone).toBeUndefined();
+    } finally {
+      spy.mockRestore();
+    }
+  });
 });

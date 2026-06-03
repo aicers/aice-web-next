@@ -5,6 +5,7 @@ import { useTranslations } from "next-intl";
 import { useCallback, useEffect, useMemo, useState } from "react";
 
 import { ManagerUnavailablePanel } from "@/components/node/manager-unavailable-panel";
+import { useTimezone } from "@/components/providers/timezone-provider";
 import { readCsrfToken } from "@/components/session/session-extension-dialog";
 import {
   AlertDialog,
@@ -39,6 +40,7 @@ import {
 } from "@/hooks/use-node-status-polling";
 import { useServiceStatus } from "@/hooks/use-service-status";
 import { Link, useRouter } from "@/i18n/navigation";
+import { formatDateTime } from "@/lib/format-date";
 import type { NodeStatus } from "@/lib/node/types";
 import { cn } from "@/lib/utils";
 
@@ -226,6 +228,7 @@ export function NodeStatusTable({
   // `toLocaleTimeString()` reads the OS locale on the server and the
   // browser locale on the client, so rendering it during SSR triggers
   // a hydration mismatch warning.
+  const timezone = useTimezone();
   const [hydrated, setHydrated] = useState(false);
   useEffect(() => {
     setHydrated(true);
@@ -233,8 +236,8 @@ export function NodeStatusTable({
   const lastUpdatedLabel = !hydrated
     ? ""
     : polling.lastSampleAt
-      ? polling.lastSampleAt.toLocaleTimeString()
-      : new Date(initialCapturedAt).toLocaleTimeString();
+      ? formatDateTime(polling.lastSampleAt, timezone)
+      : formatDateTime(initialCapturedAt, timezone);
 
   // If the manager goes unreachable after the first paint, swap to the
   // same fallback panel the SSR path uses. The polling fetcher tags

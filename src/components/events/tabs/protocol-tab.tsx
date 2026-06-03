@@ -1,4 +1,8 @@
+"use client";
+
+import { useTimezone } from "@/components/providers/timezone-provider";
 import type { Event } from "@/lib/detection/types";
+import { formatDateTime } from "@/lib/format-date";
 
 interface HttpFieldLabels {
   method: string;
@@ -224,6 +228,28 @@ function Field({ label, value }: { label: string; value: unknown }) {
   );
 }
 
+/**
+ * Wall-clock time field. Start/End times arrive as UTC ISO strings;
+ * render them in the operator's configured timezone instead of the
+ * raw UTC ISO that the generic `Field` would emit via `String(value)`.
+ * Nanosecond `duration` values are not wall-clock times and stay on
+ * the plain `Field`.
+ */
+function TimeField({ label, value }: { label: string; value: unknown }) {
+  const tz = useTimezone();
+  if (value === undefined || value === null || value === "") {
+    return null;
+  }
+  return (
+    <>
+      <dt className="text-muted-foreground">{label}</dt>
+      <dd className="text-foreground break-all font-mono">
+        {formatDateTime(String(value), tz)}
+      </dd>
+    </>
+  );
+}
+
 function HttpGroups({
   event,
   labels,
@@ -379,8 +405,8 @@ function PortScanGroups({
         <Field label={f.scannedPorts} value={e.respPorts} />
       </Section>
       <Section title={labels.duration}>
-        <Field label={f.startTime} value={e.startTime} />
-        <Field label={f.endTime} value={e.endTime} />
+        <TimeField label={f.startTime} value={e.startTime} />
+        <TimeField label={f.endTime} value={e.endTime} />
       </Section>
     </div>
   );
@@ -405,8 +431,8 @@ function FtpGroups({
         <Field label={f.userList} value={e.userList} />
       </Section>
       <Section title={labels.duration}>
-        <Field label={f.startTime} value={e.startTime} />
-        <Field label={f.endTime} value={e.endTime} />
+        <TimeField label={f.startTime} value={e.startTime} />
+        <TimeField label={f.endTime} value={e.endTime} />
       </Section>
     </div>
   );
@@ -443,7 +469,7 @@ function FtpPlainTextGroups({
         <Field label={f.password} value={maskSecret(e.password)} />
       </Section>
       <Section title={labels.duration}>
-        <Field label={f.startTime} value={e.startTime} />
+        <TimeField label={f.startTime} value={e.startTime} />
         <Field label={f.duration} value={e.duration} />
       </Section>
       {commandsPreview && commandsPreview.length > 0 ? (
@@ -476,8 +502,8 @@ function MultiHostPortScanGroups({
         <Field label={f.respPort} value={e.respPort} />
       </Section>
       <Section title={labels.duration}>
-        <Field label={f.startTime} value={e.startTime} />
-        <Field label={f.endTime} value={e.endTime} />
+        <TimeField label={f.startTime} value={e.startTime} />
+        <TimeField label={f.endTime} value={e.endTime} />
       </Section>
     </div>
   );
@@ -503,7 +529,7 @@ function NetworkThreatGroups({
       <Field label={f.service} value={e.service} />
       <Field label={f.attackKind} value={e.attackKind} />
       <Field label={f.content} value={e.content} />
-      <Field label={f.startTime} value={e.startTime} />
+      <TimeField label={f.startTime} value={e.startTime} />
       <Field label={f.duration} value={e.duration} />
     </Section>
   );
@@ -531,7 +557,7 @@ function BlocklistConnGroups({
     <Section title={labels.title}>
       <Field label={f.state} value={e.connState} />
       <Field label={f.service} value={e.service} />
-      <Field label={f.startTime} value={e.startTime} />
+      <TimeField label={f.startTime} value={e.startTime} />
       <Field label={f.duration} value={e.duration} />
       <Field label={f.origBytes} value={e.origBytes} />
       <Field label={f.respBytes} value={e.respBytes} />

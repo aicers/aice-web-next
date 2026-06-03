@@ -26,11 +26,10 @@ import { cn } from "@/lib/utils";
  * shared event table.
  *
  * `time` is a pre-formatted display string; each surface decides how
- * to render its source ISO (the asset side runs `formatDateTime`
- * against the active timezone; the story side passes the raw
- * `event_time_iso` literal per #547's existing output). Keeping the
- * formatter on the caller side preserves the per-surface time
- * formatting contract that this issue is not modifying.
+ * to render its source ISO. Both the asset and Story surfaces run
+ * `formatDateTime` against the operator's configured timezone (#684) —
+ * keeping the formatter on the caller side lets each surface pick its
+ * own zone while the table stays presentation-only.
  */
 export interface TriageEventRow {
   /** Stable per-row React key. */

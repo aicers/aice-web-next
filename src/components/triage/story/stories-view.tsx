@@ -23,6 +23,7 @@
 
 import { useEffect, useMemo, useRef, useState, useTransition } from "react";
 
+import { useTimezone } from "@/components/providers/timezone-provider";
 import { panelSurface } from "@/components/ui/panel-surface";
 import type { AiAnalysisStorySummaryFetcher } from "@/lib/aimer/analysis/story-summary.client";
 import type { AiAnalysisSummary } from "@/lib/aimer/analysis/summary-types";
@@ -30,6 +31,7 @@ import {
   ManualSendError,
   manualSendToAimerWeb,
 } from "@/lib/aimer/phase2/manual-send.client";
+import { formatDateTime } from "@/lib/format-date";
 import type { TriagePeriod } from "@/lib/triage";
 import type { PivotDimensionId, PivotValue } from "@/lib/triage/pivot";
 import { getPivotDimension } from "@/lib/triage/pivot";
@@ -956,6 +958,7 @@ function TriageStoryDetail({
   labels,
   cardLabels,
 }: StoryDetailProps) {
+  const timezone = useTimezone();
   const stored = story.summary.memberCount;
   const title = renderStoryTitle(
     story.primaryAsset,
@@ -1054,16 +1057,17 @@ function TriageStoryDetail({
   // address so the optional columns surface when their labels are
   // provided.
   //
-  // The `time` field is the raw ISO literal — the Story panel
-  // continues to render `event_time_iso` verbatim per #547. The
-  // asset surface formats with `formatDateTime` instead. Time
-  // formatting stays on the caller side so this issue's extraction
-  // does not change either surface's rendered output.
+  // The `time` field carries the display string: `event_time_iso` is a
+  // Detection event timestamp (UTC), so #684 routes it through
+  // `formatDateTime(value, tz)` to render in the operator's configured
+  // timezone — matching the asset surface, which already formats this
+  // way. Time formatting stays on the caller side per the shared-table
+  // contract, so each surface picks the zone for its own rows.
   const rows: ReadonlyArray<TriageEventRow> =
     detail.status === "ready"
       ? detail.members.map((m) => ({
           key: m.eventKey,
-          time: m.eventTimeIso,
+          time: formatDateTime(m.eventTimeIso, timezone),
           kind: m.kind,
           category: m.category,
           baselineScore: m.baselineScore,
@@ -1080,7 +1084,7 @@ function TriageStoryDetail({
         }))
       : story.topMembers.map((m) => ({
           key: m.eventKey,
-          time: m.eventTimeIso,
+          time: formatDateTime(m.eventTimeIso, timezone),
           kind: m.kind,
           category: m.category,
           baselineScore: m.rawScore,
@@ -1169,7 +1173,13 @@ function TriageStoryDetail({
             data-testid="triage-story-detail-time-window"
             className="mt-1 font-mono text-xs text-muted-foreground"
           >
-            {story.timeWindowStartIso} ~ {story.timeWindowEndIso}
+            <time dateTime={story.timeWindowStartIso}>
+              {formatDateTime(story.timeWindowStartIso, timezone)}
+            </time>{" "}
+            ~{" "}
+            <time dateTime={story.timeWindowEndIso}>
+              {formatDateTime(story.timeWindowEndIso, timezone)}
+            </time>
           </p>
         </div>
         <button
