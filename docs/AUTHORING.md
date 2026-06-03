@@ -31,13 +31,13 @@ the feature shows real data received from REview:
   drawer, a confirmation dialog, a settings form, a customer picker —
   are reproducible from the authoring worktree, so a real PNG is always
   expected.
-- **Shows real data received from REview**: record a placeholder
-  instead of a screenshot. Do not fabricate or hand-process the data,
-  and do not stand up a one-off live REview just to capture a figure no
-  one else can reproduce. A clearly labeled placeholder is more honest
-  than a doctored or unreproducible capture. See
+- **Shows real data received from REview**: record a placeholder for
+  now, and open a **separate issue** to capture the real screenshot on
+  a real data stack — the placeholder is replaced once that capture
+  lands. Do not fabricate or hand-process the data to dodge the
+  placeholder, and do not capture from a one-off local REview. See
   [Screenshot exception for infrastructure-gated features](#screenshot-exception-for-infrastructure-gated-features)
-  for how to ship one.
+  for how to ship the interim placeholder.
 
 - Place figures in `docs/assets/`.
 - Use PNG for real screenshots, SVG for diagrams and placeholders.
@@ -63,16 +63,17 @@ access to. A stand-in must satisfy:
   readers know it is not a real capture.
 
 For figures that show **real data received from REview**, the
-placeholder is the standing form — not a temporary debt. There is no
-"capture it for real later" step, because real REview data is
-deliberately kept out of the manual: a live REview build is not
-reproducible across contributors, and a screenshot taken against
-fabricated or hand-processed data is misleading. Do not stand up a
-live REview to replace these wireframes.
+placeholder is interim, not the final form. A screenshot taken against
+fabricated or hand-processed data is misleading, so the feature PR
+ships the wireframe and a **separate issue** is opened to capture the
+real screenshot on a real data stack; that capture replaces the
+placeholder when it lands. Do not fabricate or hand-process data to
+avoid the placeholder, and do not capture from a one-off local REview
+build — the real-data-stack capture is tracked and produced separately.
 
 For figures gated only on infrastructure that will become available
 later (for example a back-end service not yet open-sourced), the
-wireframe is temporary instead: record the screenshot debt in the PR
+wireframe is likewise temporary: record the screenshot debt in the PR
 description's "Not addressed" or equivalent section, and replace the
 wireframe with a real capture once that infrastructure is available.
 
@@ -84,12 +85,13 @@ tier above — client-side surfaces that do not depend on REview data
 customer picker, and the like). They were piloted on Detection
 (issue #335) and apply to any feature page.
 
-Because figures that show real data received from REview are
-placeholders by policy (see [UI screenshots](#ui-screenshots)), no
-live REview build, dataset, or mTLS setup is needed to author the
-manual. When a surface needs *some* response to render at all, point
-the BFF at a mocked GraphQL endpoint and capture the deterministic,
-client-side chrome from there.
+Authoring a feature's manual page needs no local REview build,
+dataset, or mTLS setup: REview-backed figures ship as placeholders
+(see [UI screenshots](#ui-screenshots)), and their real captures are
+taken separately on a real data stack under their own tracking issue.
+When a surface needs *some* response just to render its client-side
+chrome, point the BFF at a mocked GraphQL endpoint and capture from
+there.
 
 ### Locale switching
 
@@ -140,7 +142,8 @@ Before opening a PR with new or changed figures:
       matching filenames and equivalent captured / illustrated state.
 - [ ] Real screenshots were captured at 1440×900 in dark theme from
       the local mocked flow; figures that show real data received from
-      REview use SVG placeholders instead (see [UI screenshots](#ui-screenshots)).
+      REview ship as SVG placeholders, with a separate issue tracking
+      the real-data-stack capture (see [UI screenshots](#ui-screenshots)).
 - [ ] No personally identifiable information, no developer
       machine artefacts (open IDE windows in the background,
       personal browser bookmarks, etc.) appear in any frame.
@@ -164,8 +167,9 @@ project graph so the command above does not fan out into the rest of
 the E2E matrix.
 
 REview-backed surfaces (the list, analytics, Quick peek, CSV export,
-pivot, and Event Investigation figures) are placeholders by policy, so
-there is no real-data capture spec to run for them.
+pivot, and Event Investigation figures) ship as placeholders in the
+feature PR; their real captures are produced separately on a real data
+stack under their own tracking issue, not from a spec in this repo.
 
 The older one-off scripts under `docs/scripts/` remain as
 historical references, but they are no longer the canonical

@@ -51,7 +51,8 @@
     - If the feature does not depend on data from REview, capture a real
       screenshot.
     - If the feature shows real data received from REview, record a
-      placeholder in the manual instead of a fabricated, hand-processed,
-      or one-off real-data capture.
+      placeholder for now (do not fabricate or hand-process the data),
+      and open a separate issue to capture the real screenshot on a real
+      data stack — that capture replaces the placeholder.
 - EN/KR pages must stay in sync (same structure, same filenames).
 - See `docs/AUTHORING.md` for the full authoring guide.
