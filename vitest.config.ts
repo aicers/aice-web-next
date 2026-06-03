@@ -108,6 +108,13 @@ export default defineConfig({
             // `locator`, `candidates`, `customerBridgeEligible`, and
             // `aimerSetup` unchanged.
             "src/__tests__/components/events/overview-tab-forwarding.test.tsx",
+            // Issue #684 (Reviewer Round 1): the Related tab's "Last
+            // seen" snippet must render its Detection event timestamp
+            // in the operator's configured timezone via `formatDateTime`
+            // while keeping the raw ISO in `<time dateTime>`. Real DOM is
+            // required for the post-fetch state update and the `<time>`
+            // attribute assertion.
+            "src/__tests__/components/events/related-tab.test.tsx",
             // Issue #452 (Reviewer Round 1): real-render coverage of
             // the Triage period-change confirmation flow — pivoting
             // and then changing the period must surface an
@@ -226,6 +233,7 @@ export default defineConfig({
             "src/__tests__/components/layout/aimer-phase2-cadence-manager.test.tsx",
             "src/__tests__/components/events/aimer-banner.test.tsx",
             "src/__tests__/components/events/overview-tab-forwarding.test.tsx",
+            "src/__tests__/components/events/related-tab.test.tsx",
             "src/__tests__/components/triage/triage-shell.test.tsx",
             "src/__tests__/components/triage/baseline-content.test.tsx",
             "src/__tests__/components/triage/related-events-panel.test.tsx",

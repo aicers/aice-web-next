@@ -3,6 +3,7 @@
 import { ExternalLink } from "lucide-react";
 import { useEffect, useMemo, useState } from "react";
 
+import { useTimezone } from "@/components/providers/timezone-provider";
 import { Link } from "@/i18n/navigation";
 import type { Event } from "@/lib/detection/types";
 import { buildDetectionPivotUrl } from "@/lib/detection/url-filters";
@@ -12,6 +13,7 @@ import {
   type RelatedPivotAnchor,
   type RelatedPivotSummary,
 } from "@/lib/events/related-pivots";
+import { formatDateTime } from "@/lib/format-date";
 
 import { readEventAddressing } from "../event-display-helpers";
 
@@ -49,6 +51,7 @@ interface PivotEntry {
 }
 
 export function RelatedTab({ event, labels, customers }: Props) {
+  const timezone = useTimezone();
   const addressing = readEventAddressing(event);
   const sourceAddr = addressing.origAddr ?? addressing.origAddrs[0];
   const destAddr = addressing.respAddr ?? addressing.respAddrs[0];
@@ -169,6 +172,7 @@ export function RelatedTab({ event, labels, customers }: Props) {
                     summary={summary ?? null}
                     loading={summaries === null}
                     labels={labels}
+                    timezone={timezone}
                   />
                   <span className="text-muted-foreground inline-flex items-center gap-1 text-xs">
                     {labels.openInSearch}
@@ -188,10 +192,12 @@ function PivotSnippet({
   summary,
   loading,
   labels,
+  timezone,
 }: {
   summary: RelatedPivotSummary | null;
   loading: boolean;
   labels: RelatedLabels;
+  timezone: string;
 }) {
   if (loading) {
     return (
@@ -215,7 +221,9 @@ function PivotSnippet({
       {summary.lastTime ? (
         <span>
           {labels.lastSeen}:{" "}
-          <time dateTime={summary.lastTime}>{summary.lastTime}</time>
+          <time dateTime={summary.lastTime}>
+            {formatDateTime(summary.lastTime, timezone)}
+          </time>
         </span>
       ) : null}
     </span>

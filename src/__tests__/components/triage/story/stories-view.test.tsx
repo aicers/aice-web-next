@@ -35,6 +35,7 @@ import {
   TriageStoriesView,
   type TriageStoriesViewLabels,
 } from "@/components/triage/story/stories-view";
+import { formatDateTime } from "@/lib/format-date";
 import type { TriagePeriod } from "@/lib/triage";
 import type {
   TriageStory,
@@ -1180,9 +1181,15 @@ describe("TriageStoryDetail — header identity", () => {
     expect(title.textContent).toBe("10.0.0.5 · 30 min · IMPACT");
     const memberCount = screen.getByTestId("triage-story-detail-member-count");
     expect(memberCount.textContent).toBe("12 events");
+    // #684: the time window now renders in the operator's configured
+    // timezone via `formatDateTime`, not raw UTC ISO. Compute the
+    // expectation through the same helper so the assertion stays
+    // independent of the runtime test timezone.
     const timeWindow = screen.getByTestId("triage-story-detail-time-window");
     expect(timeWindow.textContent).toBe(
-      "2026-05-09T12:00:00.000Z ~ 2026-05-09T12:30:00.000Z",
+      `${formatDateTime("2026-05-09T12:00:00.000Z")} ~ ${formatDateTime(
+        "2026-05-09T12:30:00.000Z",
+      )}`,
     );
     const detail = screen.getByTestId("triage-story-detail");
     // Rule badge ("R1" by default) and customer name remain.
