@@ -171,6 +171,7 @@ import {
   R5_MIN_VICTIMS,
 } from "../src/lib/triage/story/critical-sets.mjs";
 import {
+  buildReadR2CandidatesPhase1Sql,
   buildReadR3CandidatesPhase1Sql,
   buildReadR4CandidatesPhase1Sql,
   buildReadR5CandidatesPhase1Sql,
@@ -757,6 +758,44 @@ async function runR6Phase1Probe(pool, { memberScanStartIsNull, params }) {
 }
 
 /**
+ * R2 (multi-stage low-and-slow) candidate-asset probe — the
+ * counterpart to {@link probeR6CandidateAssets}, but bound on
+ * `category IS NOT NULL` (no selector array) with the phase-1
+ * distinct-category + UTC-hour-dispersion floors. Phase-2's
+ * `$N::inet[]` bind is the deduped asset set phase-1's
+ * `GROUP BY orig_addr HAVING COUNT(DISTINCT date_trunc('hour', …)) >= 3
+ * AND COUNT(DISTINCT category) >= 3` returned. Returns `{firstTick,
+ * slopReplay}`, each a string[]; either may be empty (→ a
+ * `meta.notMeasurable` skip). Issue #702.
+ */
+export async function probeR2CandidateAssets(pool, ctx) {
+  const firstTick = await runR2Phase1Probe(pool, {
+    memberScanStartIsNull: true,
+    params: [ctx.memberScanEndIso],
+  });
+  const slopReplay =
+    ctx.memberScanStartIso === null
+      ? []
+      : await runR2Phase1Probe(pool, {
+          memberScanStartIsNull: false,
+          params: [ctx.memberScanStartIso, ctx.memberScanEndIso],
+        });
+  return { firstTick, slopReplay };
+}
+
+async function runR2Phase1Probe(pool, { memberScanStartIsNull, params }) {
+  const sql = buildReadR2CandidatesPhase1Sql({ memberScanStartIsNull });
+  const { rows } = await pool.query(sql, params);
+  return Array.from(
+    new Set(
+      rows
+        .map((r) => r.orig_addr)
+        .filter((a) => typeof a === "string" && a.length > 0),
+    ),
+  );
+}
+
+/**
  * Read `baseline_corpus_state.story_finalized_through` from the probe
  * pool, returning the value as ms since epoch or `null` when the
  * cadence has never advanced the watermark. The slop-replay
@@ -855,6 +894,18 @@ export function partitionMeasurableQueries(queries, ctx) {
         continue;
       }
     }
+    if (q.name === "readR2CandidatesPhase2") {
+      const key = q.context === "first-tick" ? "firstTick" : "slopReplay";
+      const assets = ctx.r2CandidateAssets?.[key] ?? [];
+      if (assets.length === 0) {
+        notMeasurable.push({
+          query: q.name,
+          context: q.context,
+          reason: "phase-1 returned 0 assets",
+        });
+        continue;
+      }
+    }
     measurable.push(q);
   }
   return { measurable, notMeasurable };
@@ -895,6 +946,7 @@ async function main(argv) {
   let r4CandidateVictims = { firstTick: [], slopReplay: [] };
   let r5CandidateCategories = { firstTick: [], slopReplay: [] };
   let r6CandidateAssets = { firstTick: [], slopReplay: [] };
+  let r2CandidateAssets = { firstTick: [], slopReplay: [] };
   // `memberScanStartIso` mirrors the cadence's
   // `previous_watermark − MAX_RULE_WINDOW_MS` (slop replay). Null
   // when the tenant has never finalized a watermark — in that case
@@ -973,6 +1025,13 @@ async function main(argv) {
         memberScanStartIso,
         memberScanEndIso,
       });
+      // R2 (issue #702) follows the same prefetch contract: phase-2
+      // binds the candidate assets phase-1 pre-aggregated under the
+      // distinct-category + UTC-hour dispersion floors.
+      r2CandidateAssets = await probeR2CandidateAssets(probePool, {
+        memberScanStartIso,
+        memberScanEndIso,
+      });
     } finally {
       await probePool.end();
     }
@@ -989,6 +1048,7 @@ async function main(argv) {
     r4CandidateVictims,
     r5CandidateCategories,
     r6CandidateAssets,
+    r2CandidateAssets,
   };
 
   // Partition MEASURED_QUERIES by measurability against `ctx`. A
@@ -1070,6 +1130,10 @@ async function main(argv) {
         r6CandidateAssetCounts: {
           firstTick: r6CandidateAssets.firstTick.length,
           slopReplay: r6CandidateAssets.slopReplay.length,
+        },
+        r2CandidateAssetCounts: {
+          firstTick: r2CandidateAssets.firstTick.length,
+          slopReplay: r2CandidateAssets.slopReplay.length,
         },
         warmups: args.warmups,
         samples: args.samples,

@@ -643,3 +643,114 @@ export function buildReadR6CandidatesPhase2Sql(opts) {
             AND orig_addr = ANY($3::inet[])
             AND selector_tags && $4::text[]`;
 }
+
+// ── R2 multi-stage low-and-slow sweep per-page SELECTs (issue #702) ──
+//
+// R2 is single-source (`primary_asset = orig_addr`, like R3/R6) and
+// runs over the same 24h window from the hourly low-and-slow sweep, but
+// keys on `category` rather than `selector_tags`: the "slow R1". It
+// reuses `R1_R3_CANDIDATE_SELECT` for the member read (no `resp_addr`).
+// Two-phase like R6, but the phase-1 push-down swaps R6's selector
+// member floor for a distinct-category floor:
+//
+//   * Phase 1 pre-aggregates candidate assets with BOTH a
+//     distinct-category floor (`COUNT(DISTINCT category) >= 3`) AND the
+//     same UTC-hour dispersion floor R6 uses
+//     (`COUNT(DISTINCT date_trunc('hour', event_time AT TIME ZONE
+//     'UTC')) >= 3`). The dispersion floor excludes a single-window
+//     multi-category burst already covered by R1; the category floor is
+//     mandatory (not just an optimization) to keep phase 2 bounded,
+//     because R2 keys on the very broad `category IS NOT NULL` rather
+//     than R6's narrow `selector_tags && LOWSLOW_SELECTOR_SET`.
+//   * Phase 2 reads the member rows for the candidate assets via
+//     `orig_addr = ANY($::inet[])`, also carrying `AND category IS NOT
+//     NULL` — R2 is category-driven, so a null-category row can never
+//     contribute and is filtered here rather than read and discarded.
+//
+// The `>= 3` literals mirror the rule-layer tunables `R2_MIN_CATEGORIES`
+// / `LOWSLOW_MIN_BUCKETS` (`rules.ts`); the two must stay in sync. They
+// are inlined (not bound) for the same reason R3/R6 inline their `>= 3`:
+// this `.mjs` is Node-safe and cannot import the `.ts` rule-layer
+// tunables. The ≥1-critical guard (`CRITICAL_CATEGORIES`) stays a
+// rule-layer re-validation on the phase-2 rows (`detectR2`), simpler
+// than encoding the critical set in SQL.
+//
+// R2 binds NO `$N::text[]` selector/category array: `category IS NOT
+// NULL` is a bare predicate, so phase 1 binds only the time bound(s) and
+// phase 2 adds the `$N::inet[]` asset list. As with R3/R6 the builders
+// vary over `memberScanStartIsNull` and `endExclusive`; the sweep always
+// binds a non-null `memberScanStart`, so the first-tick shape exists
+// only for measurement parity.
+
+/**
+ * R2 phase-1 — candidate-asset pre-aggregation with the
+ * distinct-category + UTC-hour dispersion floors. See
+ * `./repository.ts:readR2Candidates` and issue #702.
+ *
+ * Parameters (slop-replay):
+ *   $1 :: timestamptz — memberScanStart
+ *   $2 :: timestamptz — memberScanEnd
+ *
+ * Parameters (first-tick):
+ *   $1 :: timestamptz — memberScanEnd
+ *
+ * @param {{ memberScanStartIsNull: boolean, endExclusive?: boolean }} opts
+ * @returns {string}
+ */
+export function buildReadR2CandidatesPhase1Sql(opts) {
+  const memberScanStartIsNull = Boolean(opts?.memberScanStartIsNull);
+  const endOp = opts?.endExclusive ? "<" : "<=";
+  return memberScanStartIsNull
+    ? `SELECT host(orig_addr) AS orig_addr
+           FROM baseline_triaged_event
+          WHERE event_time ${endOp} $1
+            AND orig_addr IS NOT NULL
+            AND category IS NOT NULL
+          GROUP BY orig_addr
+         HAVING COUNT(DISTINCT date_trunc('hour', event_time AT TIME ZONE 'UTC')) >= 3
+            AND COUNT(DISTINCT category) >= 3`
+    : `SELECT host(orig_addr) AS orig_addr
+           FROM baseline_triaged_event
+          WHERE event_time >= $1
+            AND event_time ${endOp} $2
+            AND orig_addr IS NOT NULL
+            AND category IS NOT NULL
+          GROUP BY orig_addr
+         HAVING COUNT(DISTINCT date_trunc('hour', event_time AT TIME ZONE 'UTC')) >= 3
+            AND COUNT(DISTINCT category) >= 3`;
+}
+
+/**
+ * R2 phase-2 — per-asset member scan against the candidate assets
+ * phase 1 returned. Same single-source shape as R6 phase-2 but bound on
+ * `category IS NOT NULL` instead of the R6 selector set; the rule layer
+ * (`detectR2`) re-applies the 24h sliding-window cluster, the
+ * distinct-category gate, hour-bucket dispersion, and the ≥1-critical
+ * guard.
+ *
+ * Parameters (slop-replay):
+ *   $1 :: timestamptz — memberScanStart
+ *   $2 :: timestamptz — memberScanEnd
+ *   $3 :: inet[]      — phase-1 candidate assets (deduped)
+ *
+ * Parameters (first-tick):
+ *   $1 :: timestamptz — memberScanEnd
+ *   $2 :: inet[]      — phase-1 candidate assets (deduped)
+ *
+ * @param {{ memberScanStartIsNull: boolean, endExclusive?: boolean }} opts
+ * @returns {string}
+ */
+export function buildReadR2CandidatesPhase2Sql(opts) {
+  const memberScanStartIsNull = Boolean(opts?.memberScanStartIsNull);
+  const endOp = opts?.endExclusive ? "<" : "<=";
+  return memberScanStartIsNull
+    ? `${R1_R3_CANDIDATE_SELECT}
+          WHERE event_time ${endOp} $1
+            AND orig_addr = ANY($2::inet[])
+            AND category IS NOT NULL`
+    : `${R1_R3_CANDIDATE_SELECT}
+          WHERE event_time >= $1
+            AND event_time ${endOp} $2
+            AND orig_addr = ANY($3::inet[])
+            AND category IS NOT NULL`;
+}

@@ -166,6 +166,24 @@ const PATTERNS = [
         source,
       ),
   },
+  // Issue #702: R2 (multi-stage low-and-slow) phase-1 cadence shape. R2
+  // is the only `GROUP BY orig_addr` carrying a
+  // `COUNT(DISTINCT category) >= 3` distinct-category floor — the
+  // category-breadth signal that distinguishes it from R6's
+  // selector-keyed member floor. (R2 phase-1 ALSO carries the same
+  // UTC-hour dispersion floor as R6, so the R6 pattern above would
+  // co-flag an inlined copy; this entry names the R2-specific floor so
+  // the drift report points at the right rule. R2's phase-2 read is
+  // structurally R6's minus the selector overlap and is not separately
+  // gated.)
+  {
+    label:
+      "`GROUP BY orig_addr ... COUNT(DISTINCT category) >= 3` (R2 phase-1 cadence shape)",
+    test: (source) =>
+      /\bGROUP\s+BY\s+orig_addr\b[\s\S]*?\bCOUNT\s*\(\s*DISTINCT\s+category\s*\)\s*>=\s*3\b/i.test(
+        source,
+      ),
+  },
 ];
 
 const SOURCE_EXTS = new Set([

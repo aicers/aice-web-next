@@ -310,6 +310,100 @@ describe("runLowslowSweep — finalization and watermark", () => {
   });
 });
 
+describe("runLowslowSweep — R2 multi-stage low-and-slow (issue #702)", () => {
+  // 3 events on one asset, 3 distinct critical categories in a
+  // non-monotonic order, across 3 UTC hour buckets within 24h. The
+  // caller picks the selector tags so a test can include or exclude the
+  // R6 selector set independently of R2's category-only signal.
+  function multiStageRows(selectorTags: string[]): FakeRow[] {
+    return [
+      {
+        event_key: "s1",
+        event_time: new Date("2026-05-09T01:05:00Z"),
+        kind: "HttpThreat",
+        orig_addr: "10.0.0.5",
+        category: "INITIAL_ACCESS",
+        selector_tags: selectorTags,
+        raw_score: 1.0,
+      },
+      {
+        event_key: "s2",
+        event_time: new Date("2026-05-09T02:10:00Z"),
+        kind: "HttpThreat",
+        orig_addr: "10.0.0.5",
+        category: "COMMAND_AND_CONTROL",
+        selector_tags: selectorTags,
+        raw_score: 1.0,
+      },
+      {
+        event_key: "s3",
+        event_time: new Date("2026-05-09T03:15:00Z"),
+        kind: "HttpThreat",
+        orig_addr: "10.0.0.5",
+        category: "EXFILTRATION",
+        selector_tags: selectorTags,
+        raw_score: 1.0,
+      },
+    ];
+  }
+
+  function insertedRuleIds(h: FakeClientHandles): string[] {
+    return h.queries
+      .filter((q) => q.sql.includes("INSERT INTO event_group "))
+      .map((q) => q.params?.[0] as string);
+  }
+
+  it("fires R2 for an oscillating multi-category asset (R6 selector absent)", async () => {
+    const h = makeClient();
+    const horizon = new Date("2026-05-09T05:00:00Z");
+    h.setHorizon(horizon);
+    h.setLowslowWatermark(null); // first run
+    // No R6 selector overlap → R6 cannot fire; only R2's category-breadth
+    // signal remains. The category order is non-monotonic
+    // (INITIAL_ACCESS → C2 → EXFILTRATION here, but R2 is order-agnostic).
+    h.setCandidates(multiStageRows([]));
+    hoisted.connect = () => h.client;
+
+    const result = await runLowslowSweep(1, {});
+    expect(result.status).toBe("ok");
+    expect(result.storiesInserted).toBe(1);
+    expect(insertedRuleIds(h)).toEqual(["R2"]);
+  });
+
+  it("an asset satisfying both R2 and R6 produces both Stories (intended overlap)", async () => {
+    const h = makeClient();
+    const horizon = new Date("2026-05-09T05:00:00Z");
+    h.setHorizon(horizon);
+    h.setLowslowWatermark(null);
+    // S3-recurring overlaps the R6 selector set AND the rows carry ≥3
+    // distinct critical categories across ≥3 buckets, so R6 (persistent
+    // repetition) and R2 (multi-stage breadth) both fire — two rows, one
+    // per rule, per RFC §9 option A.
+    h.setCandidates(multiStageRows(["S3-recurring"]));
+    hoisted.connect = () => h.client;
+
+    const result = await runLowslowSweep(1, {});
+    expect(result.status).toBe("ok");
+    expect(result.storiesInserted).toBe(2);
+    expect([...insertedRuleIds(h)].sort()).toEqual(["R2", "R6"]);
+  });
+
+  it("does NOT fire R2 for a single-category beacon (R6-only)", async () => {
+    const h = makeClient();
+    const horizon = new Date("2026-05-09T05:00:00Z");
+    h.setHorizon(horizon);
+    h.setLowslowWatermark(null);
+    // beaconRows() carries one distinct category, below R2's
+    // ≥3-distinct-category floor — only R6 fires.
+    h.setCandidates(beaconRows());
+    hoisted.connect = () => h.client;
+
+    const result = await runLowslowSweep(1, {});
+    expect(result.storiesInserted).toBe(1);
+    expect(insertedRuleIds(h)).toEqual(["R6"]);
+  });
+});
+
 describe("runLowslowSweep — idempotency", () => {
   it("a suppressed event_group INSERT (ON CONFLICT DO NOTHING) does not count as a new story", async () => {
     const h = makeClient();

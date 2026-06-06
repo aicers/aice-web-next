@@ -224,4 +224,26 @@ export const R4P2 = \`WHERE resp_addr = ANY($3::inet[]) AND selector_tags && $5:
     ]);
     expect(violations).toEqual([]);
   });
+
+  it("flags an inlined R2 phase-1 cadence shape — `GROUP BY orig_addr ... COUNT(DISTINCT category) >= 3` (issue #702)", () => {
+    const violations = run([
+      {
+        relPath: "src/lib/triage/story/repository.ts",
+        source: `await client.query(\`SELECT host(orig_addr) FROM baseline_triaged_event WHERE category IS NOT NULL GROUP BY orig_addr HAVING COUNT(DISTINCT category) >= 3\`);`,
+      },
+    ]);
+    expect(violations).toHaveLength(1);
+    expect(violations[0].pattern).toMatch(/R2 phase-1 cadence shape/);
+  });
+
+  it("does not flag the sibling Story shared module when it carries the R2 / R6 phase-1 patterns", () => {
+    const violations = run([
+      {
+        relPath: "src/lib/triage/story/read-path-sql.mjs",
+        source: `export const R2P1 = \`GROUP BY orig_addr HAVING COUNT(DISTINCT date_trunc('hour', event_time AT TIME ZONE 'UTC')) >= 3 AND COUNT(DISTINCT category) >= 3\`;
+export const R2P2 = \`WHERE orig_addr = ANY($3::inet[]) AND category IS NOT NULL\`;`,
+      },
+    ]);
+    expect(violations).toEqual([]);
+  });
 });
