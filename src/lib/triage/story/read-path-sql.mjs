@@ -536,3 +536,110 @@ export function buildReadR5CandidatesPhase2Sql(opts) {
             AND category = ANY($3::text[])
             AND selector_tags && $4::text[]`;
 }
+
+// ── R6 persistent low-and-slow sweep per-page SELECTs (issue #701) ──
+//
+// R6 is single-source (`primary_asset = orig_addr`, like R3) but runs
+// over a 24h window from the hourly low-and-slow sweep, not per-page
+// step (f). It reuses `R1_R3_CANDIDATE_SELECT` for the member read
+// (no `resp_addr`). Two-phase like R3:
+//
+//   * Phase 1 pre-aggregates candidate assets with BOTH a member
+//     floor (`COUNT(*) >= 3`) AND a dispersion floor
+//     (`COUNT(DISTINCT date_trunc('hour', event_time AT TIME ZONE
+//     'UTC')) >= 3`). The dispersion floor is what excludes a burst
+//     (a ≤1h R3 cluster straddles at most two hour buckets), so R6
+//     does not overlap R3. The `AT TIME ZONE 'UTC'` anchor makes the
+//     hour bucketing independent of the DB/session timezone, matching
+//     the JS-side `utcHourBucket` in `rules.ts`.
+//   * Phase 2 reads the member rows for the candidate assets via
+//     `orig_addr = ANY($::inet[])`, riding the existing
+//     `baseline_triaged_event_orig_addr_gist` index.
+//
+// The `>= 3` literals mirror the rule-layer tunables `R6_MIN_MEMBERS`
+// / `LOWSLOW_MIN_BUCKETS` (`rules.ts`); the two must stay in sync.
+// They are inlined (not bound) for the same reason R3 inlines its
+// `>= 3`: this `.mjs` is Node-safe and cannot import the `.ts`
+// rule-layer tunables, and the R6 selector set — which IS shared —
+// already lives in `critical-sets.mjs` and binds as `$N::text[]`.
+//
+// As with R1/R3 the builders vary over `memberScanStartIsNull`
+// (first-tick omits the lower bound) and `endExclusive`. The sweep
+// always binds a non-null `memberScanStart` (its lower bound is
+// `wm − 24h`), so the first-tick shape exists only for measurement
+// parity with the other rules.
+
+/**
+ * R6 phase-1 — candidate-asset pre-aggregation with the member +
+ * dispersion floors. See `./repository.ts:readR6Candidates` and issue
+ * #701.
+ *
+ * Parameters (slop-replay):
+ *   $1 :: timestamptz — memberScanStart
+ *   $2 :: timestamptz — memberScanEnd
+ *   $3 :: text[]      — R6 selector set (`LOWSLOW_SELECTOR_SET`)
+ *
+ * Parameters (first-tick):
+ *   $1 :: timestamptz — memberScanEnd
+ *   $2 :: text[]      — R6 selector set
+ *
+ * @param {{ memberScanStartIsNull: boolean, endExclusive?: boolean }} opts
+ * @returns {string}
+ */
+export function buildReadR6CandidatesPhase1Sql(opts) {
+  const memberScanStartIsNull = Boolean(opts?.memberScanStartIsNull);
+  const endOp = opts?.endExclusive ? "<" : "<=";
+  return memberScanStartIsNull
+    ? `SELECT host(orig_addr) AS orig_addr
+           FROM baseline_triaged_event
+          WHERE event_time ${endOp} $1
+            AND orig_addr IS NOT NULL
+            AND selector_tags && $2::text[]
+          GROUP BY orig_addr
+         HAVING COUNT(*) >= 3
+            AND COUNT(DISTINCT date_trunc('hour', event_time AT TIME ZONE 'UTC')) >= 3`
+    : `SELECT host(orig_addr) AS orig_addr
+           FROM baseline_triaged_event
+          WHERE event_time >= $1
+            AND event_time ${endOp} $2
+            AND orig_addr IS NOT NULL
+            AND selector_tags && $3::text[]
+          GROUP BY orig_addr
+         HAVING COUNT(*) >= 3
+            AND COUNT(DISTINCT date_trunc('hour', event_time AT TIME ZONE 'UTC')) >= 3`;
+}
+
+/**
+ * R6 phase-2 — per-asset member scan against the candidate assets
+ * phase 1 returned. Same shape as R3 phase-2 but bound with the R6
+ * selector set; the rule layer (`detectR6`) re-applies the 24h
+ * sliding-window cluster, member floor, and hour-bucket dispersion.
+ *
+ * Parameters (slop-replay):
+ *   $1 :: timestamptz — memberScanStart
+ *   $2 :: timestamptz — memberScanEnd
+ *   $3 :: inet[]      — phase-1 candidate assets (deduped)
+ *   $4 :: text[]      — R6 selector set
+ *
+ * Parameters (first-tick):
+ *   $1 :: timestamptz — memberScanEnd
+ *   $2 :: inet[]      — phase-1 candidate assets (deduped)
+ *   $3 :: text[]      — R6 selector set
+ *
+ * @param {{ memberScanStartIsNull: boolean, endExclusive?: boolean }} opts
+ * @returns {string}
+ */
+export function buildReadR6CandidatesPhase2Sql(opts) {
+  const memberScanStartIsNull = Boolean(opts?.memberScanStartIsNull);
+  const endOp = opts?.endExclusive ? "<" : "<=";
+  return memberScanStartIsNull
+    ? `${R1_R3_CANDIDATE_SELECT}
+          WHERE event_time ${endOp} $1
+            AND orig_addr = ANY($2::inet[])
+            AND selector_tags && $3::text[]`
+    : `${R1_R3_CANDIDATE_SELECT}
+          WHERE event_time >= $1
+            AND event_time ${endOp} $2
+            AND orig_addr = ANY($3::inet[])
+            AND selector_tags && $4::text[]`;
+}

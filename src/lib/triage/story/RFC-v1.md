@@ -214,13 +214,66 @@ candidacy entirely.
   (campaign-wide); that is intended and not deduplicated at write
   time.
 
+### R6 — Persistent low-and-slow ("slow R3")
+
+> Within a **24-hour** sliding window, the **same `orig_addr`** has
+> **≥ `R6_MIN_MEMBERS` events** whose `selector_tags` overlap the R6
+> selector set, dispersed across **≥ `LOWSLOW_MIN_BUCKETS` distinct UTC
+> hour buckets** (`date_trunc('hour', event_time AT TIME ZONE 'UTC')`).
+
+- Window: **24 hours** (`LOWSLOW_WINDOW_MS`).
+- Grouping key / `primary_asset`: `orig_addr` (single-source).
+- R6 selector set: **`{S2-severe, unlabeled-cluster, S3-recurring}`** —
+  extends R3's `CRITICAL_SELECTOR_SET` with `S3-recurring`, since
+  recurrence is the defining beacon signature. Defined in
+  `critical-sets.mjs` (Node-safe) so the phase-1/phase-2 push-down and
+  the measurement harness bind it from plain Node.
+- Thresholds: `R6_MIN_MEMBERS = 3` events **and**
+  `LOWSLOW_MIN_BUCKETS = 3` distinct UTC hour buckets. The ≥3-bucket
+  **dispersion** floor is what excludes a burst (a ≤1h R3 cluster
+  straddles at most two hour boundaries), so R6 does **not** overlap
+  R3.
+- `correlation_key = NULL` — R6 dedups on the re-scoped
+  `event_group_auto_dedup_idx` (the R1/R3 NULL-`correlation_key`
+  branch), **not** the `correlation_key` index.
+- Score: **member count** (post-cap), like R3.
+- `correlation_rule_id = 'R6'`.
+- **Separate sweep, not step (f).** R6 is produced ONLY by the hourly
+  low-and-slow sweep (`baseline/lowslow-sweep.ts`), never by per-page
+  step (f). It is NOT in `RULE_REGISTRY`. A 24h window in step (f)
+  would push `max_rule_window` to 24h and make every page commit
+  rescan 24h of events; the sweep avoids that by reading the
+  already-ingested local corpus directly (no REview fetch). See §4
+  "Low-and-slow sweep" for the horizon / watermark protocol.
+- **SQL push-down (§5).** Two-phase like R3. Phase 1 pre-aggregates
+  candidate assets with both floors:
+
+  ```sql
+  SELECT host(orig_addr) AS orig_addr
+    FROM baseline_triaged_event
+   WHERE event_time IN [memberScanStart, memberScanEnd]
+     AND orig_addr IS NOT NULL
+     AND selector_tags && $lowslowSelectors::text[]
+   GROUP BY orig_addr
+  HAVING COUNT(*) >= 3
+     AND COUNT(DISTINCT date_trunc('hour', event_time AT TIME ZONE 'UTC')) >= 3
+  ```
+
+  The `AT TIME ZONE 'UTC'` anchor makes hour bucketing independent of
+  the DB/session timezone, matching the JS-side `utcHourBucket`. Phase
+  2 reads members for the candidate assets via
+  `orig_addr = ANY($::inet[])`.
+
 ### `max_rule_window`
 
 `max_rule_window = max(R1.window, R3.window, R4.window, R5.window)
 = 1 hour`. R4/R5 share R3's 1-hour window, so adding them does not
 move it. Consumed by the §4 slop-replay member-scan lookback. Adding
 any rule with a larger window forces a Story RFC bump because the
-slop-replay window grows with it.
+slop-replay window grows with it. **R6's 24-hour window does NOT
+enter `max_rule_window`**: R6 runs only from the separate low-and-slow
+sweep (§4), so per-page step (f) and its slop-replay lookback stay at
+1 hour.
 
 ## §4 — Slop window and watermark protocol
 
@@ -271,6 +324,72 @@ slop-replay window grows with it.
   partial unique index plus `INSERT … ON CONFLICT DO NOTHING` on
   `event_group` is the dedup mechanism. Members upsert into
   `event_group_member` via the existing composite PK.
+
+### Low-and-slow sweep (issue #701)
+
+R6 is finalized by a **separate hourly sweep**
+(`baseline/lowslow-sweep.ts`), decoupled from per-page step (f), with
+its own `baseline_corpus_state.lowslow_finalized_through` watermark
+(migration 0025, additive) and its own per-customer advisory lock
+(`triage_lowslow_sweep:`). It scans the already-ingested local corpus
+over a 24-hour window — no REview fetch.
+
+- **Cadence-watermark-bounded horizon.** `H = story_finalized_through`
+  (read from `baseline_corpus_state`). The sweep never advances past
+  cadence's settled point, inheriting cadence's slop guarantee. The
+  horizon is **not** wall-clock `NOW() − slop`: a late-arriving event
+  (low `event_time`, committed later by cadence) would be skipped
+  forever once a wall-clock watermark passed it. Bounding by `H`
+  instead means such a row IS finalized on the next sweep once cadence
+  has included it by advancing `story_finalized_through`. When
+  `H IS NULL`, the sweep is a no-op until cadence settles once.
+- **Skip when cadence has not progressed** (cost optimization, not
+  correctness): if `H ≤ lowslow_finalized_through`, early-return before
+  the member-scan — the finalization range `(wm, H]` is empty and the
+  `GREATEST` advance is already a no-op.
+- **Member-scan range:** `[wm − LOWSLOW_WINDOW_MS, H]` (lookback one
+  full window so a cluster ending just past the watermark still sees
+  its earlier members).
+- **Finalization range** (`time_window_end` allowed): `(wm, H]`.
+- **First run (`lowslow_finalized_through IS NULL`):** clamp BOTH
+  ranges to the most recent window — member-scan
+  `[H − LOWSLOW_WINDOW_MS, H]` and finalize `(H − LOWSLOW_WINDOW_MS, H]`
+  — **no full 180d backfill**. This intentionally **differs from
+  cadence's first-tick rule** above (which degenerates both ranges to
+  `(-∞, H]`): the sweep must NOT degenerate the lower bound to `-∞`, or
+  the first run would scan the entire corpus. Historical low-and-slow
+  is not retroactively mined.
+- **Watermark advance:**
+  `lowslow_finalized_through = GREATEST(lowslow_finalized_through, H)`
+  — advanced **even on 0-Story runs** (a wall-clock/progress sweep; not
+  advancing would rescan the same settled range forever).
+- **Contract / non-goal:** once `lowslow_finalized_through` has
+  advanced past a range, a row that later appears *in* that range is
+  not recovered — by design. Such a row would violate cadence's own
+  watermark contract (cadence must not advance `story_finalized_through`
+  past an `event_time` it may still receive). The sweep inherits that
+  guarantee.
+- **Per-page `max_rule_window` is unchanged** — R6 never runs in step
+  (f), so the 1-hour slop-replay lookback is untouched, and R1/R3/R4/R5
+  behavior is unaffected.
+
+### Rebuild interaction
+
+- **Baseline force-rebuild** (`baseline/rebuild.ts`) re-fills corpus
+  rows without re-deriving any Stories or touching
+  `story_finalized_through`; it likewise does **not** touch
+  `lowslow_finalized_through`.
+- **Story force-rebuild** (`story/rebuild.ts`, via
+  `runStoryCorrelationForWindow`) re-derives the cadence-path rules
+  **R1/R3/R4/R5** (post-#694 the core reads those candidates and calls
+  `detectR1`/`detectR3`/`detectR4`/`detectR5` directly), while still
+  not touching `story_finalized_through`.
+- **R6 is re-derived by neither.** `detectR6` is not added to
+  `runStoryCorrelationForWindow`, and the low-and-slow sweep /
+  `lowslow_finalized_through` are not wired into either rebuild path —
+  unless a future issue explicitly extends rebuild to the low-and-slow
+  sweep rules. This is consistent with the no-retroactive-backfill
+  contract above.
 
 ## §5 — Persistence
 
@@ -331,6 +450,20 @@ The cadence pager imports `runStepF` from
 `src/lib/triage/story/correlator.ts` and calls it immediately after
 `insertBaselineTriagedEventBatch`, inside the same per-page
 transaction the runner already opens.
+
+### `lowslow_finalized_through` watermark (issue #701)
+
+Migration `migrations/customer/0025_lowslow_finalized_through.sql`
+adds the additive `lowslow_finalized_through TIMESTAMPTZ` column on the
+`baseline_corpus_state` singleton — the low-and-slow sweep's own
+monotonic watermark (§4 "Low-and-slow sweep"). No `event_group` schema
+change: R6 carries `correlation_key = NULL` and reuses the re-scoped
+`event_group_auto_dedup_idx` (the #694 index), so it dedups exactly
+like R1/R3 via `insertAutoStory`'s NULL-`correlationKey` branch. R6's
+candidate read (`readR6Candidates`) rides the existing `event_time` /
+`orig_addr` indexes on `baseline_triaged_event`; the optional
+`selector_tags` GIN index is a measurement-gated follow-up, not added
+by default.
 
 ### Per-rule SQL push-down
 
@@ -412,6 +545,10 @@ warranted. Mixing R1/R3/R4/R5 rows under one `'v1'` cohort is
 intentional — score comparisons remain within-cohort by
 construction (§2).
 
+The R6 low-and-slow rule (issue #701) likewise keeps `story_version =
+'v1'`: another additive `correlation_rule_id` value produced by the
+separate sweep, no version bump.
+
 ## §7 — `summary_payload` JSONB contract
 
 Fixed key set so #490 binds to a stable shape across rule
@@ -424,7 +561,7 @@ a `story_version` bump.
 | `categoryHistogram`  | `Record<string, number>`   | Per-`category` count over members; NULL categories are not bucketed. |
 | `memberCount`        | `number`                   | Length of the persisted member list (post-§8 cap). |
 | `durationMs`         | `number`                   | `max(event_time) − min(event_time)` across members, in ms. |
-| `distinctAssetCount` | `number`                   | Distinct non-NULL `orig_addr` across members. For the asset-keyed rules R1/R3 this is typically `1`; for the multi-source rules R4/R5 (issue #694) it legitimately exceeds 1 and is the meaningful source fan-out figure. |
+| `distinctAssetCount` | `number`                   | Distinct non-NULL `orig_addr` across members. For the asset-keyed rules R1/R3 this is typically `1`; for the multi-source rules R4/R5 (issue #694) it legitimately exceeds 1 and is the meaningful source fan-out figure. R6 (issue #701) is single-source so `distinctAssetCount = 1`, but its signal is `durationMs` / recurrence (≥3 dispersed hour buckets over 24h), not asset fan-out. |
 | `topRawScore`        | `number`                   | Max `raw_score` over members. Story-internal sort hint, NOT surfaced to UI as a baseline percentile. |
 
 The correlator computes `summary_payload` at step (f) from the
@@ -611,6 +748,32 @@ Result: one `event_group` row with `correlation_rule_id = 'R5'`,
 (distinct source count), `time_window_start = 10:00:00`,
 `time_window_end = 10:40:00`, `summary_payload.distinctAssetCount =
 5`.
+
+### Example 6 — R6 persistent low-and-slow beacon (issue #701)
+
+One source asset `10.0.0.5` beacons once an hour over a 24-hour span,
+each event overlapping the R6 selector set (here `S3-recurring`):
+
+| event_key | event_time                | orig_addr | selector_tags        |
+|-----------|---------------------------|-----------|----------------------|
+| 1         | 2026-05-09 01:05:00 +0000 | `10.0.0.5`| `['S3-recurring']`   |
+| 2         | 2026-05-09 02:10:00 +0000 | `10.0.0.5`| `['S3-recurring']`   |
+| 3         | 2026-05-09 03:15:00 +0000 | `10.0.0.5`| `['S3-recurring']`   |
+
+- The 24h cluster on `10.0.0.5` has 3 members ≥ `R6_MIN_MEMBERS` and
+  spans 3 distinct UTC hour buckets (`01`, `02`, `03`) ≥
+  `LOWSLOW_MIN_BUCKETS`. R6 fires (from the hourly sweep, not step
+  (f)).
+- A burst of the same 3 events inside a single hour would span ≤ 2
+  UTC hour buckets and is **excluded** — that is the R3 case, and R6
+  does not double-report it.
+
+Result: one `event_group` row with `correlation_rule_id = 'R6'`,
+`primary_asset = '10.0.0.5'`, `correlation_key = NULL`, `score = 3`
+(member count), `time_window_start = 01:05:00`,
+`time_window_end = 03:15:00`, `summary_payload.distinctAssetCount =
+1`. The sweep advances `lowslow_finalized_through` to its horizon `H`
+(`= story_finalized_through`).
 
 ## §12 — Out of scope of this RFC
 

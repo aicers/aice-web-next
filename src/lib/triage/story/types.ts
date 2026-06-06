@@ -24,12 +24,16 @@ export const TRIAGE_STORY_PAGE_SIZE = 200;
  * surface. `'R4'` (fan-in) and `'R5'` (campaign) are the
  * multi-source rules added by #694 — both additive new
  * `correlation_rule_id` values that keep `story_version = 'v1'`.
+ * `'R6'` (persistent low-and-slow) is the dispersed-activity rule
+ * added by #701 — produced only by the hourly low-and-slow sweep, NOT
+ * by per-page step (f), and likewise additive under
+ * `story_version = 'v1'`.
  *
  * NOTE: kept in sync with the `ACTIVE_RULE_IDS` tuple in
  * `./rules.ts` (the two definitions are intentionally duplicated;
  * single-sourcing is a separate follow-up).
  */
-export type StoryRuleId = "R1" | "R3" | "R4" | "R5";
+export type StoryRuleId = "R1" | "R3" | "R4" | "R5" | "R6";
 
 /**
  * `event_group.kind` discriminator. Auto-correlated rows are produced

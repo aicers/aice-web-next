@@ -12,6 +12,13 @@
 # Triage baseline cadence — 15-minute per-customer fan-out
 */15 * * * * /usr/local/bin/run-triage-baseline-dispatch.sh
 
+# Triage low-and-slow Story sweep (#701) — hourly per-customer fan-out
+# for R6 (persistent low-and-slow). Decoupled from the 15-minute
+# cadence: own advisory lock and `lowslow_finalized_through` watermark,
+# 24h detection window over the already-ingested local corpus (no
+# REview fetch). Runs at minute 0 of every hour.
+0 * * * * /usr/local/bin/run-triage-lowslow-sweep.sh
+
 # Triage exclusion fanout — minute-scale drain of the durable queue
 # (#457 ships the route, 1B-7 wires the cadence). Matches the worker's
 # exponential-backoff schedule (1m / 5m / 25m / 2h / 12h) so the first

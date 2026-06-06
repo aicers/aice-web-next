@@ -150,6 +150,22 @@ const PATTERNS = [
       /\bresp_addr\s*=\s*ANY\s*\(\s*\$\d+::inet\[\]\s*\)/i.test(source) &&
       /\bselector_tags\s*&&\s*\$\d+::text\[\]/i.test(source),
   },
+  // Issue #701: R6 (persistent low-and-slow) phase-1 cadence shape. The
+  // R6 phase-1 SQL is the only `GROUP BY orig_addr` co-occurring with a
+  // `COUNT(DISTINCT date_trunc('hour', … AT TIME ZONE 'UTC'))`
+  // dispersion floor — the UTC-anchored hour bucketing that excludes
+  // bursts. An inlined copy would silently diverge from the harness's
+  // `MEASURED_QUERIES` entry the moment one side is edited. (R6's
+  // phase-2 read is structurally identical to R3's and is already
+  // covered by the R3 phase-2 pattern above.)
+  {
+    label:
+      "`GROUP BY orig_addr ... COUNT(DISTINCT date_trunc('hour', ... AT TIME ZONE 'UTC'))` (R6 phase-1 cadence shape)",
+    test: (source) =>
+      /\bGROUP\s+BY\s+orig_addr\b[\s\S]*?\bCOUNT\s*\(\s*DISTINCT\s+date_trunc\s*\(\s*'hour'[\s\S]*?AT\s+TIME\s+ZONE\s+'UTC'/i.test(
+        source,
+      ),
+  },
 ];
 
 const SOURCE_EXTS = new Set([

@@ -14,6 +14,7 @@ import {
 import {
   CRITICAL_CATEGORIES,
   CRITICAL_SELECTOR_SET,
+  LOWSLOW_SELECTOR_SET,
   R4_MIN_SOURCES,
   R5_MIN_SOURCES,
   R5_MIN_VICTIMS,
@@ -26,6 +27,8 @@ import {
   buildReadR4CandidatesPhase2Sql,
   buildReadR5CandidatesPhase1Sql,
   buildReadR5CandidatesPhase2Sql,
+  buildReadR6CandidatesPhase1Sql,
+  buildReadR6CandidatesPhase2Sql,
 } from "@/lib/triage/story/read-path-sql.mjs";
 import { STRICTNESS_STOPS } from "@/lib/triage/strictness/stops";
 
@@ -52,14 +55,16 @@ describe("read-path-sql shared module", () => {
   });
 
   describe("query coverage", () => {
-    it("exposes the menu queries plus the R1 / R3 / R4 / R5 cadence entries as (name, context) pairs in MEASURED_QUERIES", () => {
+    it("exposes the menu queries plus the R1 / R3 / R4 / R5 / R6 cadence entries as (name, context) pairs in MEASURED_QUERIES", () => {
       // #471 adds two queries — `selectStoryProtectedCohort` (branch
       // B force-union) and `countEligibleByStop` (per-stop preview
       // hints). #601 adds R1 + R3 phase-1 + R3 phase-2 cadence
       // entries, each in two contexts (first-tick / slop-replay).
       // #694 adds R4 phase-1/phase-2 and R5 phase-1/phase-2, also in
-      // two contexts each, so the flat (query, context) list has
-      // seven menu entries plus fourteen cadence entries.
+      // two contexts each. #701 adds R6 phase-1/phase-2 (the
+      // low-and-slow sweep), again two contexts each, so the flat
+      // (query, context) list has seven menu entries plus eighteen
+      // cadence/sweep entries.
       const pairs = MEASURED_QUERIES.map((q) => `${q.name}:${q.context}`);
       expect(pairs).toEqual([
         "selectMenuCohort:default",
@@ -83,6 +88,10 @@ describe("read-path-sql shared module", () => {
         "readR5CandidatesPhase1:slop-replay",
         "readR5CandidatesPhase2:first-tick",
         "readR5CandidatesPhase2:slop-replay",
+        "readR6CandidatesPhase1:first-tick",
+        "readR6CandidatesPhase1:slop-replay",
+        "readR6CandidatesPhase2:first-tick",
+        "readR6CandidatesPhase2:slop-replay",
       ]);
     });
 
@@ -607,6 +616,107 @@ describe("read-path-sql shared module", () => {
       expect(r4).toMatch(/resp_addr = ANY\(\$2::inet\[\]\)/);
       expect(r5).toMatch(/host\(resp_addr\)\s+AS resp_addr/);
       expect(r5).toMatch(/category = ANY\(\$2::text\[\]\)/);
+    });
+  });
+
+  describe("R6 low-and-slow sweep entries (issue #701)", () => {
+    const ctx = {
+      periodStartIso: "2026-04-12T00:00:00.000Z",
+      periodEndIso: "2026-05-12T00:00:00.000Z",
+      observedFromIso: "2026-04-12T00:00:00.000Z",
+      addresses: [],
+      memberScanStartIso: "2026-05-11T00:00:00.000Z",
+      memberScanEndIso: "2026-05-12T00:00:00.000Z",
+      r6CandidateAssets: {
+        firstTick: ["10.0.0.4"],
+        slopReplay: ["10.0.0.5", "10.0.0.6"],
+      },
+    };
+
+    const lookup = (name: string, context: "first-tick" | "slop-replay") => {
+      const q = MEASURED_QUERIES.find(
+        (e) => e.name === name && e.context === context,
+      );
+      if (q === undefined) {
+        throw new Error(`missing measured entry: ${name}:${context}`);
+      }
+      return q;
+    };
+
+    it("R6 SQL matches the cadence builders byte-for-byte", () => {
+      expect(lookup("readR6CandidatesPhase1", "first-tick").sql).toBe(
+        buildReadR6CandidatesPhase1Sql({ memberScanStartIsNull: true }),
+      );
+      expect(lookup("readR6CandidatesPhase1", "slop-replay").sql).toBe(
+        buildReadR6CandidatesPhase1Sql({ memberScanStartIsNull: false }),
+      );
+      expect(lookup("readR6CandidatesPhase2", "first-tick").sql).toBe(
+        buildReadR6CandidatesPhase2Sql({ memberScanStartIsNull: true }),
+      );
+      expect(lookup("readR6CandidatesPhase2", "slop-replay").sql).toBe(
+        buildReadR6CandidatesPhase2Sql({ memberScanStartIsNull: false }),
+      );
+    });
+
+    it("R6 phase-1 binds the R6 selector set; first-tick omits the lower bound", () => {
+      expect(
+        lookup("readR6CandidatesPhase1", "first-tick").buildParams(ctx),
+      ).toEqual([ctx.memberScanEndIso, Array.from(LOWSLOW_SELECTOR_SET)]);
+      expect(
+        lookup("readR6CandidatesPhase1", "slop-replay").buildParams(ctx),
+      ).toEqual([
+        ctx.memberScanStartIso,
+        ctx.memberScanEndIso,
+        Array.from(LOWSLOW_SELECTOR_SET),
+      ]);
+    });
+
+    it("R6 phase-2 binds the probed asset list", () => {
+      expect(
+        lookup("readR6CandidatesPhase2", "first-tick").buildParams(ctx),
+      ).toEqual([
+        ctx.memberScanEndIso,
+        ctx.r6CandidateAssets.firstTick,
+        Array.from(LOWSLOW_SELECTOR_SET),
+      ]);
+      expect(
+        lookup("readR6CandidatesPhase2", "slop-replay").buildParams(ctx),
+      ).toEqual([
+        ctx.memberScanStartIso,
+        ctx.memberScanEndIso,
+        ctx.r6CandidateAssets.slopReplay,
+        Array.from(LOWSLOW_SELECTOR_SET),
+      ]);
+    });
+
+    it("R6 phase-1 SQL pre-aggregates by orig_addr with both member and UTC-hour dispersion floors", () => {
+      const sql = buildReadR6CandidatesPhase1Sql({
+        memberScanStartIsNull: false,
+      });
+      expect(sql).toMatch(/GROUP BY orig_addr/);
+      expect(sql).toMatch(/HAVING COUNT\(\*\) >= 3/);
+      expect(sql).toMatch(
+        /COUNT\(DISTINCT date_trunc\('hour', event_time AT TIME ZONE 'UTC'\)\) >= 3/,
+      );
+      expect(sql).toMatch(/selector_tags && \$3::text\[\]/);
+    });
+
+    it("R6 phase-2 SQL is the single-source per-asset read (no resp_addr)", () => {
+      const sql = buildReadR6CandidatesPhase2Sql({
+        memberScanStartIsNull: false,
+      });
+      expect(sql).toMatch(/orig_addr = ANY\(\$3::inet\[\]\)/);
+      expect(sql).toMatch(/selector_tags && \$4::text\[\]/);
+      expect(sql).not.toMatch(/resp_addr/);
+    });
+
+    it("the R6 selector set extends the critical set with S3-recurring", () => {
+      expect(Array.from(LOWSLOW_SELECTOR_SET)).toEqual(
+        expect.arrayContaining([
+          ...Array.from(CRITICAL_SELECTOR_SET),
+          "S3-recurring",
+        ]),
+      );
     });
   });
 });

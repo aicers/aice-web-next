@@ -165,6 +165,7 @@ import {
 import {
   CRITICAL_CATEGORIES,
   CRITICAL_SELECTOR_SET,
+  LOWSLOW_SELECTOR_SET,
   R4_MIN_SOURCES,
   R5_MIN_SOURCES,
   R5_MIN_VICTIMS,
@@ -173,6 +174,7 @@ import {
   buildReadR3CandidatesPhase1Sql,
   buildReadR4CandidatesPhase1Sql,
   buildReadR5CandidatesPhase1Sql,
+  buildReadR6CandidatesPhase1Sql,
 } from "../src/lib/triage/story/read-path-sql.mjs";
 import {
   assertRepresentativeProfile,
@@ -193,6 +195,7 @@ const MAX_RULE_WINDOW_MS = 60 * 60 * 1000;
 const SLOP_WINDOW_MS = 30 * 60 * 1000;
 const CRITICAL_SELECTOR_ARRAY = Array.from(CRITICAL_SELECTOR_SET);
 const CRITICAL_CATEGORIES_ARRAY = Array.from(CRITICAL_CATEGORIES);
+const LOWSLOW_SELECTOR_ARRAY = Array.from(LOWSLOW_SELECTOR_SET);
 
 const DEFAULT_WARMUPS = 5;
 const DEFAULT_SAMPLES = 30;
@@ -713,6 +716,47 @@ async function runR5Phase1Probe(pool, { memberScanStartIsNull, params }) {
 }
 
 /**
+ * R6 (persistent low-and-slow) candidate-asset probe — the
+ * counterpart to {@link probeR3CandidateAssets} but bound with the R6
+ * selector set and the phase-1 member + UTC-hour-dispersion floors.
+ * Phase-2's `$N::inet[]` bind is the deduped asset set phase-1's
+ * `GROUP BY orig_addr HAVING COUNT(*) >= 3 AND COUNT(DISTINCT
+ * date_trunc('hour', …)) >= 3` returned. Returns `{firstTick,
+ * slopReplay}`, each a string[]; either may be empty (→ a
+ * `meta.notMeasurable` skip). Issue #701.
+ */
+export async function probeR6CandidateAssets(pool, ctx) {
+  const firstTick = await runR6Phase1Probe(pool, {
+    memberScanStartIsNull: true,
+    params: [ctx.memberScanEndIso, LOWSLOW_SELECTOR_ARRAY],
+  });
+  const slopReplay =
+    ctx.memberScanStartIso === null
+      ? []
+      : await runR6Phase1Probe(pool, {
+          memberScanStartIsNull: false,
+          params: [
+            ctx.memberScanStartIso,
+            ctx.memberScanEndIso,
+            LOWSLOW_SELECTOR_ARRAY,
+          ],
+        });
+  return { firstTick, slopReplay };
+}
+
+async function runR6Phase1Probe(pool, { memberScanStartIsNull, params }) {
+  const sql = buildReadR6CandidatesPhase1Sql({ memberScanStartIsNull });
+  const { rows } = await pool.query(sql, params);
+  return Array.from(
+    new Set(
+      rows
+        .map((r) => r.orig_addr)
+        .filter((a) => typeof a === "string" && a.length > 0),
+    ),
+  );
+}
+
+/**
  * Read `baseline_corpus_state.story_finalized_through` from the probe
  * pool, returning the value as ms since epoch or `null` when the
  * cadence has never advanced the watermark. The slop-replay
@@ -799,6 +843,18 @@ export function partitionMeasurableQueries(queries, ctx) {
         continue;
       }
     }
+    if (q.name === "readR6CandidatesPhase2") {
+      const key = q.context === "first-tick" ? "firstTick" : "slopReplay";
+      const assets = ctx.r6CandidateAssets?.[key] ?? [];
+      if (assets.length === 0) {
+        notMeasurable.push({
+          query: q.name,
+          context: q.context,
+          reason: "phase-1 returned 0 assets",
+        });
+        continue;
+      }
+    }
     measurable.push(q);
   }
   return { measurable, notMeasurable };
@@ -838,6 +894,7 @@ async function main(argv) {
   let r3CandidateAssets = { firstTick: [], slopReplay: [] };
   let r4CandidateVictims = { firstTick: [], slopReplay: [] };
   let r5CandidateCategories = { firstTick: [], slopReplay: [] };
+  let r6CandidateAssets = { firstTick: [], slopReplay: [] };
   // `memberScanStartIso` mirrors the cadence's
   // `previous_watermark − MAX_RULE_WINDOW_MS` (slop replay). Null
   // when the tenant has never finalized a watermark — in that case
@@ -909,6 +966,13 @@ async function main(argv) {
         memberScanStartIso,
         memberScanEndIso,
       });
+      // R6 (issue #701) follows the same prefetch contract: phase-2
+      // binds the candidate assets phase-1 pre-aggregated under the
+      // member + UTC-hour dispersion floors.
+      r6CandidateAssets = await probeR6CandidateAssets(probePool, {
+        memberScanStartIso,
+        memberScanEndIso,
+      });
     } finally {
       await probePool.end();
     }
@@ -924,6 +988,7 @@ async function main(argv) {
     r3CandidateAssets,
     r4CandidateVictims,
     r5CandidateCategories,
+    r6CandidateAssets,
   };
 
   // Partition MEASURED_QUERIES by measurability against `ctx`. A
@@ -1001,6 +1066,10 @@ async function main(argv) {
         r5CandidateCategoryCounts: {
           firstTick: r5CandidateCategories.firstTick.length,
           slopReplay: r5CandidateCategories.slopReplay.length,
+        },
+        r6CandidateAssetCounts: {
+          firstTick: r6CandidateAssets.firstTick.length,
+          slopReplay: r6CandidateAssets.slopReplay.length,
         },
         warmups: args.warmups,
         samples: args.samples,

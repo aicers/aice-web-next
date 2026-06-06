@@ -856,6 +856,10 @@ Each Story renders as one card with:
     same attack signature.
   - `R5` — campaign: the same attack signature from many source IPs
     across multiple victims (this Story has no single primary asset).
+  - `R6` — persistent low-and-slow: one asset with dispersed activity
+    spread thinly across at least three distinct hours within a
+    24-hour window (a periodic beacon or slow recon), detected by a
+    separate hourly sweep rather than the per-page cadence.
 - **Score** — `event_group.score`, two decimal places.
 - **Member count** — the stored
   `summary_payload.memberCount` (NOT the runtime-joined count);

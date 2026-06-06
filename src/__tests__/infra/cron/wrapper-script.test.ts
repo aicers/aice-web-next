@@ -15,6 +15,10 @@ const WRAPPER_PATH = resolve(
   __dirname,
   "../../../../infra/cron/run-triage-baseline-dispatch.sh",
 );
+const LOWSLOW_WRAPPER_PATH = resolve(
+  __dirname,
+  "../../../../infra/cron/run-triage-lowslow-sweep.sh",
+);
 const CRONTAB_PATH = resolve(__dirname, "../../../../infra/cron/crontab");
 const DOCKERFILE_PATH = resolve(__dirname, "../../../../infra/cron/Dockerfile");
 const ENTRYPOINT_PATH = resolve(
@@ -23,6 +27,7 @@ const ENTRYPOINT_PATH = resolve(
 );
 
 const wrapper = readFileSync(WRAPPER_PATH, "utf8");
+const lowslowWrapper = readFileSync(LOWSLOW_WRAPPER_PATH, "utf8");
 const crontab = readFileSync(CRONTAB_PATH, "utf8");
 const dockerfile = readFileSync(DOCKERFILE_PATH, "utf8");
 const entrypoint = readFileSync(ENTRYPOINT_PATH, "utf8");
@@ -93,6 +98,54 @@ describe("infra/cron/crontab — static contract", () => {
 
   it("fires every 15 minutes", () => {
     expect(crontab).toMatch(/^\*\/15 \* \* \* \*/m);
+  });
+
+  it("fires the low-and-slow sweep hourly at minute 0 (#701)", () => {
+    expect(crontab).toMatch(
+      /^0 \* \* \* \* \/usr\/local\/bin\/run-triage-lowslow-sweep\.sh/m,
+    );
+  });
+});
+
+describe("infra/cron/run-triage-lowslow-sweep.sh — static contract (#701)", () => {
+  it("reads the dedicated low-and-slow token, not the cadence token", () => {
+    expect(lowslowWrapper).toMatch(
+      /\$\{TRIAGE_LOWSLOW_SWEEP_INTERNAL_TOKEN:-\}/,
+    );
+    expect(lowslowWrapper).not.toMatch(
+      /TRIAGE_BASELINE_CADENCE_INTERNAL_TOKEN/,
+    );
+  });
+
+  it("hits the low-and-slow sweep route", () => {
+    expect(lowslowWrapper).toMatch(
+      /\/api\/internal\/triage\/baseline\/lowslow-sweep/,
+    );
+  });
+
+  it("does not use `set -e` (so curl exit ≠ 0 reaches the failure block)", () => {
+    const lines = lowslowWrapper
+      .split("\n")
+      .filter((l) => l.trim().startsWith("set"));
+    for (const line of lines) {
+      expect(line).not.toMatch(/-[a-z]*e/);
+    }
+  });
+
+  it("invokes curl with --connect-timeout AND --max-time and captures its exit code", () => {
+    expect(lowslowWrapper).toMatch(/--connect-timeout/);
+    expect(lowslowWrapper).toMatch(/--max-time/);
+    expect(lowslowWrapper).toMatch(/curl_exit=\$\?/);
+  });
+
+  it("derives --max-time from LOWSLOW_SWEEP_DISPATCH_TOTAL_TIMEOUT_MS, clamped to the 55-minute ceiling", () => {
+    expect(lowslowWrapper).toMatch(/LOWSLOW_SWEEP_DISPATCH_TOTAL_TIMEOUT_MS/);
+    expect(lowslowWrapper).toMatch(/MAX_TIME_CEILING_S=3300/);
+  });
+
+  it("auth-failure (HTTP 401/403) exits non-zero; the 200 path exits 0", () => {
+    expect(lowslowWrapper).toMatch(/401\|403\)/);
+    expect(lowslowWrapper.trimEnd()).toMatch(/exit 0$/);
   });
 });
 
@@ -545,6 +598,14 @@ describe("infra/cron/entrypoint.sh — static contract", () => {
     // `skipped-timeout` row exists to prevent.
     expect(entrypoint).toMatch(/TRIAGE_BASELINE_DISPATCH_TOTAL_TIMEOUT_MS/);
   });
+
+  it("allowlists the low-and-slow sweep token and its total-timeout knob (#701)", () => {
+    // busybox cron does not inherit container env, so an unlisted var
+    // never reaches the wrapper — the token would surface only as a
+    // silent "refusing to fire" and the sweep would never run.
+    expect(entrypoint).toMatch(/TRIAGE_LOWSLOW_SWEEP_INTERNAL_TOKEN/);
+    expect(entrypoint).toMatch(/LOWSLOW_SWEEP_DISPATCH_TOTAL_TIMEOUT_MS/);
+  });
 });
 
 describe("infra/cron/Dockerfile — static contract", () => {
@@ -558,5 +619,12 @@ describe("infra/cron/Dockerfile — static contract", () => {
 
   it("installs bash so the wrapper's parameter-expansion shapes work portably", () => {
     expect(dockerfile).toMatch(/apk add[^\n]*\bbash\b/);
+  });
+
+  it("copies and chmods the low-and-slow sweep wrapper into the image (#701)", () => {
+    expect(dockerfile).toMatch(
+      /COPY run-triage-lowslow-sweep\.sh \/usr\/local\/bin\/run-triage-lowslow-sweep\.sh/,
+    );
+    expect(dockerfile).toMatch(/chmod \+x[\s\S]*run-triage-lowslow-sweep\.sh/);
   });
 });
