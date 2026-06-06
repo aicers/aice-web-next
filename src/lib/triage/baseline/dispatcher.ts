@@ -47,6 +47,7 @@ import "server-only";
  *     'failed'` — they live in `perCustomer[]`.
  */
 
+import { listActiveCustomers as defaultListActiveCustomers } from "@/lib/triage/baseline/active-customers";
 import {
   type CadencePager,
   type CadenceRunResult,
@@ -226,22 +227,6 @@ function buildSelfFailureLogLine(error: string): DispatchLogLine {
     skippedTimeout: 0,
     error,
   };
-}
-
-/**
- * Default active-customer enumerator. Kept in the dispatcher module so
- * tests can mock the whole `listActiveCustomers` callback without
- * stubbing `pg`.
- */
-async function defaultListActiveCustomers(): Promise<number[]> {
-  // Imported lazily so test harnesses that stub `listActiveCustomers`
-  // never load the real `pg` client (and therefore never fail to read
-  // `DATABASE_URL`).
-  const { query } = await import("@/lib/db/client");
-  const result = await query<{ id: number }>(
-    "SELECT id FROM customers WHERE status = 'active' ORDER BY id",
-  );
-  return result.rows.map((r) => Number(r.id));
 }
 
 /**

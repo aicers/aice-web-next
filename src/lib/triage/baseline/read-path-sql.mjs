@@ -462,6 +462,7 @@ export const COUNT_ELIGIBLE_BY_STOP_SQL = `WITH scored AS (
 import {
   CRITICAL_CATEGORIES,
   CRITICAL_SELECTOR_SET,
+  LOWSLOW_SELECTOR_SET,
   R4_MIN_SOURCES,
   R5_MIN_SOURCES,
   R5_MIN_VICTIMS,
@@ -474,10 +475,13 @@ import {
   buildReadR4CandidatesPhase2Sql,
   buildReadR5CandidatesPhase1Sql,
   buildReadR5CandidatesPhase2Sql,
+  buildReadR6CandidatesPhase1Sql,
+  buildReadR6CandidatesPhase2Sql,
 } from "../story/read-path-sql.mjs";
 
 const CRITICAL_CATEGORIES_ARRAY = Array.from(CRITICAL_CATEGORIES);
 const CRITICAL_SELECTOR_ARRAY = Array.from(CRITICAL_SELECTOR_SET);
+const LOWSLOW_SELECTOR_ARRAY = Array.from(LOWSLOW_SELECTOR_SET);
 
 /**
  * Ordered list of measured (query × context) entries. Each entry
@@ -720,6 +724,49 @@ export const MEASURED_QUERIES = [
       ctx.memberScanEndIso,
       ctx.r5CandidateCategories?.slopReplay ?? [],
       CRITICAL_SELECTOR_ARRAY,
+    ],
+  },
+  // ── R6 low-and-slow sweep entries (issue #701) ──────────────────
+  // Same first-tick / slop-replay split as R3. The sweep itself only
+  // ever binds the slop-replay shape (its lower bound is `wm − 24h`,
+  // never null); the first-tick entry exists for measurement parity.
+  // Phase-2 depends on a phase-1 probe (`ctx.r6CandidateAssets`); an
+  // empty list records a `meta.notMeasurable` skip.
+  {
+    name: "readR6CandidatesPhase1",
+    context: "first-tick",
+    sql: buildReadR6CandidatesPhase1Sql({ memberScanStartIsNull: true }),
+    buildParams: (ctx) => [ctx.memberScanEndIso, LOWSLOW_SELECTOR_ARRAY],
+  },
+  {
+    name: "readR6CandidatesPhase1",
+    context: "slop-replay",
+    sql: buildReadR6CandidatesPhase1Sql({ memberScanStartIsNull: false }),
+    buildParams: (ctx) => [
+      ctx.memberScanStartIso,
+      ctx.memberScanEndIso,
+      LOWSLOW_SELECTOR_ARRAY,
+    ],
+  },
+  {
+    name: "readR6CandidatesPhase2",
+    context: "first-tick",
+    sql: buildReadR6CandidatesPhase2Sql({ memberScanStartIsNull: true }),
+    buildParams: (ctx) => [
+      ctx.memberScanEndIso,
+      ctx.r6CandidateAssets?.firstTick ?? [],
+      LOWSLOW_SELECTOR_ARRAY,
+    ],
+  },
+  {
+    name: "readR6CandidatesPhase2",
+    context: "slop-replay",
+    sql: buildReadR6CandidatesPhase2Sql({ memberScanStartIsNull: false }),
+    buildParams: (ctx) => [
+      ctx.memberScanStartIso,
+      ctx.memberScanEndIso,
+      ctx.r6CandidateAssets?.slopReplay ?? [],
+      LOWSLOW_SELECTOR_ARRAY,
     ],
   },
 ];

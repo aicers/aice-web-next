@@ -89,6 +89,15 @@ export interface HarnessContext {
     firstTick: ReadonlyArray<string>;
     slopReplay: ReadonlyArray<string>;
   };
+  /**
+   * Phase-1 candidate-asset lists for R6 (persistent low-and-slow),
+   * fetched by the harness probe so R6 phase-2's `$N::inet[]` bind has
+   * a value at `buildParams` time. Issue #701.
+   */
+  r6CandidateAssets?: {
+    firstTick: ReadonlyArray<string>;
+    slopReplay: ReadonlyArray<string>;
+  };
 }
 
 export interface MeasuredQuery {

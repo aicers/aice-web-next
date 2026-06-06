@@ -26,6 +26,12 @@ ENV_ALLOWLIST=(
     # 840s default, recreating the transport-failure / no-body mode
     # the structured `skipped-timeout` row exists to prevent.
     TRIAGE_BASELINE_DISPATCH_TOTAL_TIMEOUT_MS
+    # #701 low-and-slow sweep. Own internal token (per-surface
+    # isolation) plus its total-timeout knob, from which
+    # `run-triage-lowslow-sweep.sh` derives its `--max-time` (same
+    # passthrough rationale as the dispatch total-timeout above).
+    TRIAGE_LOWSLOW_SWEEP_INTERNAL_TOKEN
+    LOWSLOW_SWEEP_DISPATCH_TOTAL_TIMEOUT_MS
     # 1B-7 cleanup tokens. Each retention / recovery surface uses its
     # own internal-token env var so a leaked secret cannot pivot
     # between surfaces.

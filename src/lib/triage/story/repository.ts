@@ -40,6 +40,8 @@ import {
   buildReadR4CandidatesPhase2Sql,
   buildReadR5CandidatesPhase1Sql,
   buildReadR5CandidatesPhase2Sql,
+  buildReadR6CandidatesPhase1Sql,
+  buildReadR6CandidatesPhase2Sql,
   buildSelectStoriesForPeriodSql,
   SELECT_BASELINE_EVENTS_BY_KEY_SQL,
   SELECT_STORY_MEMBERS_DETAIL_SQL,
@@ -50,6 +52,7 @@ import {
   applyMemberCap,
   buildSummaryPayload,
   CRITICAL_SELECTOR_SET,
+  LOWSLOW_SELECTOR_SET,
   R4_MIN_SOURCES,
   R5_MIN_SOURCES,
   R5_MIN_VICTIMS,
@@ -377,6 +380,65 @@ export async function readR5Candidates(
   return result.rows.map(rowToCandidate);
 }
 
+/**
+ * R6's low-and-slow candidate scan (issue #701).
+ *
+ * Two-phase per-asset access pattern mirroring R3, but bound with the
+ * R6 selector set (`LOWSLOW_SELECTOR_SET = CRITICAL_SELECTOR_SET ∪
+ * {S3-recurring}`) and with an additional UTC-hour dispersion floor in
+ * phase 1:
+ *
+ *   SELECT host(orig_addr) AS orig_addr
+ *     FROM baseline_triaged_event
+ *    WHERE event_time IN [memberScanStart, memberScanEnd]
+ *      AND orig_addr IS NOT NULL
+ *      AND selector_tags && $lowslowSelectors::text[]
+ *    GROUP BY orig_addr
+ *   HAVING COUNT(*) >= 3
+ *      AND COUNT(DISTINCT date_trunc('hour', event_time AT TIME ZONE 'UTC')) >= 3
+ *
+ * Phase 2 reads the member rows for the candidate assets via
+ * `orig_addr = ANY($::inet[])`. The 24h sliding-window cluster, member
+ * floor, and hour-bucket dispersion are re-applied in the rule layer
+ * (`detectR6`). Called only from the low-and-slow sweep
+ * (`baseline/lowslow-sweep.ts`); the sweep always passes a non-null
+ * `memberScanStart` (`watermark − 24h`).
+ */
+export async function readR6Candidates(
+  args: ReadCandidatesArgs,
+): Promise<CandidateEvent[]> {
+  const { client, memberScanStart, memberScanEnd, endExclusive } = args;
+  const selectors = Array.from(LOWSLOW_SELECTOR_SET);
+  const memberScanStartIsNull = memberScanStart === null;
+  const endExclusiveBool = Boolean(endExclusive);
+
+  const phase1Sql = buildReadR6CandidatesPhase1Sql({
+    memberScanStartIsNull,
+    endExclusive: endExclusiveBool,
+  });
+  const phase1Params = memberScanStartIsNull
+    ? [memberScanEnd, selectors]
+    : [memberScanStart, memberScanEnd, selectors];
+  const phase1 = await client.query<{ orig_addr: string }>(
+    phase1Sql,
+    phase1Params,
+  );
+  const assets = Array.from(
+    new Set(phase1.rows.map((r) => r.orig_addr).filter((a) => a !== null)),
+  );
+  if (assets.length === 0) return [];
+
+  const phase2Sql = buildReadR6CandidatesPhase2Sql({
+    memberScanStartIsNull,
+    endExclusive: endExclusiveBool,
+  });
+  const phase2Params = memberScanStartIsNull
+    ? [memberScanEnd, assets, selectors]
+    : [memberScanStart, memberScanEnd, assets, selectors];
+  const result = await client.query<CandidateRow>(phase2Sql, phase2Params);
+  return result.rows.map(rowToCandidate);
+}
+
 export interface InsertAutoStoryResult {
   /** Newly-inserted `event_group.id`, or `null` when the partial
    *  unique index suppressed the insert (idempotent replay). */
@@ -673,6 +735,49 @@ export async function readStoryWatermark(
       WHERE id = true`,
   );
   return result.rows[0]?.story_finalized_through ?? null;
+}
+
+/**
+ * Advance `baseline_corpus_state.lowslow_finalized_through` (issue
+ * #701). Mirrors {@link advanceStoryWatermark}: the hourly low-and-slow
+ * sweep calls this once per tick with `new_horizon = H`
+ * (`= story_finalized_through`, cadence's settled point). `GREATEST(...)`
+ * keeps the column `>=`-monotonic so a re-run over the same settled
+ * range never pushes the watermark backwards. Advanced even on 0-result
+ * sweeps — it is a wall-clock/progress watermark, not a Stories-produced
+ * one.
+ */
+export async function advanceLowslowWatermark(
+  client: pg.PoolClient,
+  newHorizon: Date,
+): Promise<void> {
+  await client.query(
+    `UPDATE baseline_corpus_state
+        SET lowslow_finalized_through =
+              GREATEST(lowslow_finalized_through, $1)
+      WHERE id = true`,
+    [newHorizon],
+  );
+}
+
+/**
+ * Read the singleton's current `lowslow_finalized_through` value
+ * (issue #701). Returns `null` on a tenant where the low-and-slow
+ * sweep has never advanced its watermark — the sweep treats `null` as
+ * the first-run case, clamping both ranges to `[H − LOWSLOW_WINDOW_MS,
+ * H]` (no 180d backfill).
+ */
+export async function readLowslowWatermark(
+  client: pg.PoolClient,
+): Promise<Date | null> {
+  const result = await client.query<{
+    lowslow_finalized_through: Date | null;
+  }>(
+    `SELECT lowslow_finalized_through
+       FROM baseline_corpus_state
+      WHERE id = true`,
+  );
+  return result.rows[0]?.lowslow_finalized_through ?? null;
 }
 
 // ── Stories tab read path (#490) ─────────────────────────────────

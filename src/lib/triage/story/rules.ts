@@ -43,6 +43,7 @@ import type { ThreatCategory } from "@/lib/detection";
 import { CRITICAL_CATEGORIES } from "@/lib/triage/baseline/categories";
 import {
   CRITICAL_SELECTOR_SET as CRITICAL_SELECTOR_SET_RAW,
+  LOWSLOW_SELECTOR_SET as LOWSLOW_SELECTOR_SET_RAW,
   R4_MIN_SOURCES as R4_MIN_SOURCES_RAW,
   R5_MIN_SOURCES as R5_MIN_SOURCES_RAW,
   R5_MIN_VICTIMS as R5_MIN_VICTIMS_RAW,
@@ -128,6 +129,45 @@ export const MAX_RULE_WINDOW_MS = Math.max(
 export const SLOP_WINDOW_MS = 30 * 60 * 1000;
 
 /**
+ * R6 (persistent low-and-slow) sliding window — 24 hours (issue
+ * #701). Deliberately decoupled from `MAX_RULE_WINDOW_MS`: R6 runs
+ * only from the hourly low-and-slow sweep
+ * (`baseline/lowslow-sweep.ts`), never from per-page step (f), so its
+ * 24h window does NOT widen `MAX_RULE_WINDOW_MS` and does not force
+ * every page commit to rescan 24h of events.
+ */
+export const LOWSLOW_WINDOW_MS = 24 * 60 * 60 * 1000;
+
+/**
+ * R6 dispersion floor — minimum distinct UTC hour buckets
+ * (`date_trunc('hour', event_time AT TIME ZONE 'UTC')`) a cluster must
+ * span. `≥ 3` buckets is what excludes a burst (a ≤1h R3 cluster
+ * straddles at most two hour boundaries), giving R6 no overlap with
+ * R3. This literal mirrors the phase-1 SQL's
+ * `COUNT(DISTINCT date_trunc('hour', …)) >= 3` in
+ * `./read-path-sql.mjs`; the two must stay in sync.
+ */
+export const LOWSLOW_MIN_BUCKETS = 3;
+
+/**
+ * R6 member floor — minimum events on one asset overlapping the R6
+ * selector set inside the 24h window. Mirrors the phase-1 SQL's
+ * `COUNT(*) >= 3` (`./read-path-sql.mjs`); the two must stay in sync.
+ */
+export const R6_MIN_MEMBERS = 3;
+
+/**
+ * R6 selector set (issue #701). Extends R3's `CRITICAL_SELECTOR_SET`
+ * with `S3-recurring` — recurrence is the defining beacon signature.
+ *
+ * Re-exported from `./critical-sets.mjs` so the rule layer, the R6
+ * push-down SQL, and the measurement harness all read one Node-safe
+ * source of truth (the R6 selector set is NOT a `rules.ts` tunable —
+ * see the module's header rationale for `CRITICAL_SELECTOR_SET`).
+ */
+export const LOWSLOW_SELECTOR_SET = LOWSLOW_SELECTOR_SET_RAW;
+
+/**
  * λ coefficient for R1's score (Story RFC §3.R1). The R1 score is
  * `member_count + R1_LAMBDA * distinct_category_count`, a Story-side
  * count that is NOT a function of `raw_score`.
@@ -150,10 +190,12 @@ export const CRITICAL_SELECTOR_SET = CRITICAL_SELECTOR_SET_RAW;
 /**
  * Active rule IDs the correlator emits. `'R2'` is intentionally
  * absent — the slot is reserved by the Story RFC for the v2
- * kill-chain bump. R4/R5 are the multi-source rules (#694). Kept in
- * sync with the literal `StoryRuleId` union in `./types.ts`.
+ * kill-chain bump. R4/R5 are the multi-source rules (#694); R6 is the
+ * persistent low-and-slow rule (#701), produced only by the hourly
+ * sweep. Kept in sync with the literal `StoryRuleId` union in
+ * `./types.ts`.
  */
-export const ACTIVE_RULE_IDS = ["R1", "R3", "R4", "R5"] as const;
+export const ACTIVE_RULE_IDS = ["R1", "R3", "R4", "R5", "R6"] as const;
 export type StoryRuleId = (typeof ACTIVE_RULE_IDS)[number];
 
 /**
@@ -600,6 +642,72 @@ export function detectR5(events: ReadonlyArray<CandidateEvent>): StoryDraft[] {
 }
 
 /**
+ * UTC-anchored hour-bucket identity for a candidate event. Floors the
+ * epoch-ms timestamp to its UTC hour so the bucket never depends on
+ * the DB / session / host timezone. Equivalent to the phase-1 SQL's
+ * `date_trunc('hour', event_time AT TIME ZONE 'UTC')`: two timestamps
+ * land in the same bucket iff they truncate to the same UTC hour, so a
+ * row near a local-midnight boundary buckets identically on the JS and
+ * SQL sides.
+ */
+function utcHourBucket(eventTime: Date): number {
+  return Math.floor(eventTime.getTime() / (60 * 60 * 1000));
+}
+
+/**
+ * R6 — Persistent low-and-slow ("slow R3"). Within a 24-hour sliding
+ * window, the same `orig_addr` has ≥`R6_MIN_MEMBERS` events whose
+ * `selector_tags` overlap the R6 selector set, dispersed across
+ * ≥`LOWSLOW_MIN_BUCKETS` distinct UTC hour buckets.
+ *
+ *   - Grouping key / `primary_asset`: `orig_addr` (single-source).
+ *   - `correlation_key = NULL` — R6 dedups on the re-scoped
+ *     `event_group_auto_dedup_idx` via `insertAutoStory`'s
+ *     NULL-`correlationKey` branch, exactly like R1/R3.
+ *   - Score: member count (post-cap), like R3.
+ *
+ * The ≥3-bucket dispersion floor is what excludes a burst (a ≤1h R3
+ * cluster straddles at most two hour boundaries), so R6 does not
+ * overlap R3. Called ONLY from the low-and-slow sweep's correlation
+ * function (`baseline/lowslow-sweep.ts`), never from `runStepF` — this
+ * keeps `MAX_RULE_WINDOW_MS` at 1 hour. The JS hour bucketing is UTC
+ * ({@link utcHourBucket}), matching the phase-1 SQL.
+ */
+export function detectR6(events: ReadonlyArray<CandidateEvent>): StoryDraft[] {
+  const drafts: StoryDraft[] = [];
+  const byAsset = groupByAsset(
+    events.filter((e) =>
+      e.selectorTags.some((t) => LOWSLOW_SELECTOR_SET.has(t)),
+    ),
+  );
+  for (const [asset, perAsset] of byAsset) {
+    const clusters = clusterByWindow(perAsset, LOWSLOW_WINDOW_MS);
+    for (const cluster of clusters) {
+      if (cluster.length < R6_MIN_MEMBERS) continue;
+      // Dispersion is computed over the FULL cluster (pre-cap), so the
+      // ≥3-bucket test reflects the semantic match window rather than
+      // the sampled member subset.
+      const buckets = new Set(cluster.map((m) => utcHourBucket(m.eventTime)));
+      if (buckets.size < LOWSLOW_MIN_BUCKETS) continue;
+      const capped = applyMemberCap(cluster);
+      const start = cluster[0].eventTime;
+      const end = cluster[cluster.length - 1].eventTime;
+      drafts.push({
+        ruleId: "R6",
+        primaryAsset: asset,
+        correlationKey: null,
+        timeWindowStart: start,
+        timeWindowEnd: end,
+        members: capped,
+        score: capped.length,
+        summary: buildSummaryPayload(capped),
+      });
+    }
+  }
+  return drafts;
+}
+
+/**
  * Typed registry of the shared-candidate-set rules (R1/R3). Adding a
  * future rule that reads the same broad candidate set is a
  * registry-level change.
@@ -611,6 +719,11 @@ export function detectR5(events: ReadonlyArray<CandidateEvent>): StoryDraft[] {
  * the `(events) => StoryDraft[]` shared-set signature. They are wired
  * directly in the correlator (`correlator.ts`
  * `runStoryCorrelationForWindow`) alongside their reads.
+ *
+ * R6 is likewise NOT registered: it runs only from the hourly
+ * low-and-slow sweep (`baseline/lowslow-sweep.ts`) over a 24h window,
+ * never from per-page step (f). Adding it here would pull `detectR6`
+ * into the cadence path and widen `MAX_RULE_WINDOW_MS` to 24h.
  */
 export const RULE_REGISTRY: ReadonlyArray<{
   id: StoryRuleId;

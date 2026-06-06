@@ -10,10 +10,14 @@ import {
   detectR3,
   detectR4,
   detectR5,
+  detectR6,
+  LOWSLOW_MIN_BUCKETS,
+  LOWSLOW_SELECTOR_SET,
   R1_LAMBDA,
   R4_MIN_SOURCES,
   R5_MIN_SOURCES,
   R5_MIN_VICTIMS,
+  R6_MIN_MEMBERS,
   STORY_MEMBER_CAP,
 } from "@/lib/triage/story/rules";
 
@@ -592,6 +596,190 @@ describe("detectR5 — campaign", () => {
       );
     }
     expect(detectR5(events)).toEqual([]);
+  });
+});
+
+describe("detectR6 — persistent low-and-slow", () => {
+  // A beacon: 3 events on one asset, one per hour over a 3-hour span
+  // (3 distinct UTC hour buckets), all overlapping the R6 selector
+  // set, well within the 24h window.
+  function beacon(): CandidateEvent[] {
+    return [
+      event({
+        eventKey: "b1",
+        eventTime: "2026-05-09T01:05:00Z",
+        selectorTags: ["S3-recurring"],
+      }),
+      event({
+        eventKey: "b2",
+        eventTime: "2026-05-09T02:10:00Z",
+        selectorTags: ["S3-recurring"],
+      }),
+      event({
+        eventKey: "b3",
+        eventTime: "2026-05-09T03:15:00Z",
+        selectorTags: ["S3-recurring"],
+      }),
+    ];
+  }
+
+  it("fires for ≥3 events across ≥3 hour buckets within 24h (beacon)", () => {
+    const stories = detectR6(beacon());
+    expect(stories).toHaveLength(1);
+    const s = stories[0];
+    expect(s.ruleId).toBe("R6");
+    expect(s.primaryAsset).toBe("10.0.0.5");
+    expect(s.correlationKey).toBeNull();
+    // Score is the member count, like R3.
+    expect(s.score).toBe(3);
+    expect(s.members).toHaveLength(3);
+    expect(s.timeWindowStart).toEqual(new Date("2026-05-09T01:05:00Z"));
+    expect(s.timeWindowEnd).toEqual(new Date("2026-05-09T03:15:00Z"));
+  });
+
+  it("includes S3-recurring beyond R3's critical set", () => {
+    // S3-recurring is in the R6 set but NOT in CRITICAL_SELECTOR_SET,
+    // so an all-S3-recurring cluster is R6-eligible but R3-invisible.
+    expect(LOWSLOW_SELECTOR_SET.has("S3-recurring")).toBe(true);
+    expect(CRITICAL_SELECTOR_SET.has("S3-recurring")).toBe(false);
+    expect(detectR3(beacon())).toEqual([]);
+    expect(detectR6(beacon())).toHaveLength(1);
+  });
+
+  it("does NOT fire for a single burst spanning ≤2 hour buckets", () => {
+    // 3 events inside a ~40-minute window straddling exactly two UTC
+    // hour boundaries (01:50, 02:05, 02:25 → buckets {01, 02}). This
+    // is the R3 burst case; R6 must not double-report it.
+    const burst = [
+      event({
+        eventKey: "x1",
+        eventTime: "2026-05-09T01:50:00Z",
+        selectorTags: ["S2-severe"],
+      }),
+      event({
+        eventKey: "x2",
+        eventTime: "2026-05-09T02:05:00Z",
+        selectorTags: ["S2-severe"],
+      }),
+      event({
+        eventKey: "x3",
+        eventTime: "2026-05-09T02:25:00Z",
+        selectorTags: ["S2-severe"],
+      }),
+    ];
+    expect(detectR6(burst)).toEqual([]);
+  });
+
+  it("dispersion boundary: exactly LOWSLOW_MIN_BUCKETS buckets fires; one fewer does not", () => {
+    expect(LOWSLOW_MIN_BUCKETS).toBe(3);
+    // Two buckets only (00 and 23 of the prior day are >24h apart, so
+    // pick 10:xx and 11:xx → buckets {10, 11}) with 3 members.
+    const twoBuckets = [
+      event({
+        eventKey: "t1",
+        eventTime: "2026-05-09T10:10:00Z",
+        selectorTags: ["unlabeled-cluster"],
+      }),
+      event({
+        eventKey: "t2",
+        eventTime: "2026-05-09T10:40:00Z",
+        selectorTags: ["unlabeled-cluster"],
+      }),
+      event({
+        eventKey: "t3",
+        eventTime: "2026-05-09T11:10:00Z",
+        selectorTags: ["unlabeled-cluster"],
+      }),
+    ];
+    expect(detectR6(twoBuckets)).toEqual([]);
+  });
+
+  it("does NOT fire below the member floor even when dispersed", () => {
+    expect(R6_MIN_MEMBERS).toBe(3);
+    // 2 events in 2 distinct hour buckets — dispersed but under the
+    // member floor.
+    const sparse = [
+      event({
+        eventKey: "s1",
+        eventTime: "2026-05-09T01:00:00Z",
+        selectorTags: ["S3-recurring"],
+      }),
+      event({
+        eventKey: "s2",
+        eventTime: "2026-05-09T05:00:00Z",
+        selectorTags: ["S3-recurring"],
+      }),
+    ];
+    expect(detectR6(sparse)).toEqual([]);
+  });
+
+  it("ignores events whose selector_tags do not overlap the R6 set", () => {
+    const offSet = [
+      event({
+        eventKey: "o1",
+        eventTime: "2026-05-09T01:00:00Z",
+        selectorTags: ["S1-high"],
+      }),
+      event({
+        eventKey: "o2",
+        eventTime: "2026-05-09T02:00:00Z",
+        selectorTags: ["S4-correlated"],
+      }),
+      event({
+        eventKey: "o3",
+        eventTime: "2026-05-09T03:00:00Z",
+        selectorTags: ["S1-high"],
+      }),
+    ];
+    expect(detectR6(offSet)).toEqual([]);
+  });
+
+  it("UTC-anchored bucketing: events near a local-midnight boundary bucket by UTC hour", () => {
+    // Three events at 22:30, 23:30, 00:30 UTC → buckets are three
+    // consecutive UTC hours regardless of any local offset.
+    const acrossMidnight = [
+      event({
+        eventKey: "m1",
+        eventTime: "2026-05-09T22:30:00Z",
+        selectorTags: ["S3-recurring"],
+      }),
+      event({
+        eventKey: "m2",
+        eventTime: "2026-05-09T23:30:00Z",
+        selectorTags: ["S3-recurring"],
+      }),
+      event({
+        eventKey: "m3",
+        eventTime: "2026-05-10T00:30:00Z",
+        selectorTags: ["S3-recurring"],
+      }),
+    ];
+    expect(detectR6(acrossMidnight)).toHaveLength(1);
+  });
+
+  it("does NOT cluster events more than 24h apart", () => {
+    // First event and the rest are >24h apart, so the sliding window
+    // cannot bind them into one ≥3-member cluster.
+    const tooWide = [
+      event({
+        eventKey: "w1",
+        eventTime: "2026-05-09T01:00:00Z",
+        selectorTags: ["S3-recurring"],
+      }),
+      event({
+        eventKey: "w2",
+        eventTime: "2026-05-10T02:00:00Z",
+        selectorTags: ["S3-recurring"],
+      }),
+      event({
+        eventKey: "w3",
+        eventTime: "2026-05-10T03:00:00Z",
+        selectorTags: ["S3-recurring"],
+      }),
+    ];
+    // The last two are only 1h apart (2 members, 2 buckets) — under
+    // both floors — and the first is >24h before them, so no R6.
+    expect(detectR6(tooWide)).toEqual([]);
   });
 });
 

@@ -46,3 +46,13 @@ export function buildReadR5CandidatesPhase2Sql(opts: {
   memberScanStartIsNull: boolean;
   endExclusive?: boolean;
 }): string;
+
+export function buildReadR6CandidatesPhase1Sql(opts: {
+  memberScanStartIsNull: boolean;
+  endExclusive?: boolean;
+}): string;
+
+export function buildReadR6CandidatesPhase2Sql(opts: {
+  memberScanStartIsNull: boolean;
+  endExclusive?: boolean;
+}): string;

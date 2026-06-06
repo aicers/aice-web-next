@@ -55,6 +55,25 @@ export const CRITICAL_SELECTOR_SET = new Set([
   "unlabeled-cluster",
 ]);
 
+/**
+ * Selector membership for R6's low-and-slow sweep SQL filter (issue
+ * #701). Extends R3's `CRITICAL_SELECTOR_SET` with `S3-recurring`,
+ * since recurrence is the defining beacon signature of persistent
+ * low-and-slow ("암약") activity. Defined here — alongside
+ * `CRITICAL_SELECTOR_SET`, NOT as an inline `rules.ts` tunable —
+ * because the R6 phase-1/phase-2 push-down (`story/read-path-sql.mjs`)
+ * and the measurement harness bind it from plain Node; a `.ts` import
+ * would break the harness. `story/rules.ts` re-exports it as the
+ * rule-layer's `LOWSLOW_SELECTOR_SET`.
+ *
+ * @type {ReadonlySet<string>}
+ */
+export const LOWSLOW_SELECTOR_SET = new Set([
+  "S2-severe",
+  "unlabeled-cluster",
+  "S3-recurring",
+]);
+
 // ── Multi-source rule thresholds (R4 / R5, issue #694) ────────────
 //
 // The R4/R5 phase-1 SQL binds these as `$N` parameters, and the
