@@ -19,21 +19,21 @@ export const TRIAGE_STORY_PAGE_SIZE = 200;
 
 /**
  * Heuristic correlation rule identifiers persisted on
- * `event_group.correlation_rule_id`. `'R2'` is reserved by #489 for
- * the v2 kill-chain RFC bump and is intentionally absent from the
- * surface. `'R4'` (fan-in) and `'R5'` (campaign) are the
- * multi-source rules added by #694 — both additive new
- * `correlation_rule_id` values that keep `story_version = 'v1'`.
- * `'R6'` (persistent low-and-slow) is the dispersed-activity rule
- * added by #701 — produced only by the hourly low-and-slow sweep, NOT
- * by per-page step (f), and likewise additive under
- * `story_version = 'v1'`.
+ * `event_group.correlation_rule_id`. `'R2'` (multi-stage low-and-slow)
+ * is the order-agnostic "slow R1" added by #702 — pulled forward into
+ * v1 with redefined, order-agnostic semantics (no kill-chain ordering)
+ * and produced only by the hourly low-and-slow sweep, NOT by per-page
+ * step (f). `'R4'` (fan-in) and `'R5'` (campaign) are the multi-source
+ * rules added by #694 — both additive new `correlation_rule_id` values
+ * that keep `story_version = 'v1'`. `'R6'` (persistent low-and-slow) is
+ * the dispersed-activity rule added by #701 — also sweep-only and
+ * likewise additive under `story_version = 'v1'`.
  *
  * NOTE: kept in sync with the `ACTIVE_RULE_IDS` tuple in
  * `./rules.ts` (the two definitions are intentionally duplicated;
  * single-sourcing is a separate follow-up).
  */
-export type StoryRuleId = "R1" | "R3" | "R4" | "R5" | "R6";
+export type StoryRuleId = "R1" | "R2" | "R3" | "R4" | "R5" | "R6";
 
 /**
  * `event_group.kind` discriminator. Auto-correlated rows are produced

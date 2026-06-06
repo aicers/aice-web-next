@@ -1,13 +1,16 @@
 import "server-only";
 
 /**
- * Persistent low-and-slow Story sweep runner (issue #701).
+ * Persistent low-and-slow Story sweep runner (issues #701, #702).
  *
  * A periodic sweep, decoupled from per-page cadence step (f), that
  * detects dispersed ("암약") activity over a 24-hour window on a single
- * source asset and ships rule R6. It mirrors the cadence dispatch path
- * but runs hourly and reads only the already-ingested local corpus —
- * no REview fetch, no pager. Per-page `MAX_RULE_WINDOW_MS` stays 1h
+ * source asset and ships two sweep-only rules: R6 (persistent
+ * low-and-slow, selector-keyed, #701) and R2 (multi-stage low-and-slow,
+ * category-keyed, #702). Each runs as its own two-phase candidate read
+ * over the same window/horizon. The sweep mirrors the cadence dispatch
+ * path but runs hourly and reads only the already-ingested local corpus
+ * — no REview fetch, no pager. Per-page `MAX_RULE_WINDOW_MS` stays 1h
  * and R1/R3/R4/R5 are untouched.
  *
  * ## Horizon, ranges, watermark (Story RFC §4 low-and-slow addendum)
@@ -76,10 +79,15 @@ import {
   advanceLowslowWatermark,
   insertAutoStory,
   readLowslowWatermark,
+  readR2Candidates,
   readR6Candidates,
   readStoryWatermark,
 } from "@/lib/triage/story/repository";
-import { detectR6, LOWSLOW_WINDOW_MS } from "@/lib/triage/story/rules";
+import {
+  detectR2,
+  detectR6,
+  LOWSLOW_WINDOW_MS,
+} from "@/lib/triage/story/rules";
 
 export type LowslowSweepStatus = "ok" | "skipped" | "failed";
 
@@ -96,7 +104,7 @@ export interface LowslowSweepResult {
    *     the message.
    */
   status: LowslowSweepStatus;
-  /** Number of `event_group` (R6) rows inserted this sweep. */
+  /** Number of `event_group` (R6 + R2) rows inserted this sweep. */
   storiesInserted: number;
   /**
    * The horizon `H` the watermark advanced to this tick, or `null`
@@ -227,7 +235,7 @@ export async function runLowslowSweep(
         LOWSLOW_WINDOW_MS,
     );
 
-    const candidates = await readR6Candidates({
+    const r6Candidates = await readR6Candidates({
       client: db,
       memberScanStart,
       memberScanEnd: horizon,
@@ -237,10 +245,27 @@ export async function runLowslowSweep(
     });
 
     if (signal?.aborted) {
-      throw new Error("Low-and-slow sweep aborted after candidate scan");
+      throw new Error("Low-and-slow sweep aborted after R6 candidate scan");
     }
 
-    const drafts = detectR6(candidates);
+    // Second candidate-read pass for R2 (multi-stage low-and-slow,
+    // #702). Same 24h window and horizon, but a category-keyed
+    // candidate set rather than R6's selector-keyed one — so it is a
+    // separate two-phase read, not a re-filter of the R6 rows. No new
+    // dispatch path or per-page cadence change: both rules ship from
+    // this one sweep.
+    const r2Candidates = await readR2Candidates({
+      client: db,
+      memberScanStart,
+      memberScanEnd: horizon,
+      endExclusive: false,
+    });
+
+    if (signal?.aborted) {
+      throw new Error("Low-and-slow sweep aborted after R2 candidate scan");
+    }
+
+    const drafts = [...detectR6(r6Candidates), ...detectR2(r2Candidates)];
     let storiesInserted = 0;
     for (const draft of drafts) {
       if (signal?.aborted) {

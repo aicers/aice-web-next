@@ -851,6 +851,14 @@ Each Story renders as one card with:
 - **Rule badge** — the correlation rule for auto-correlated
   Stories, `analyst-curated` for the curated kind. Auto rules are:
   - `R1` — one asset, multiple critical categories in a short window.
+  - `R2` — multi-stage low-and-slow: one asset that touches at least
+    three distinct categories (at least one critical) in any order —
+    revisits allowed — spread thinly across at least three distinct
+    hours within a 24-hour window. The "slow R1": it keys on the
+    breadth of distinct stages over dispersed time, not on any fixed
+    kill-chain order, since real attackers oscillate between stages.
+    Detected by a separate hourly sweep rather than the per-page
+    cadence; the same asset and window may also produce an `R6` Story.
   - `R3` — one asset, repeated critical-selector activity.
   - `R4` — fan-in: many source IPs converging on one victim with the
     same attack signature.

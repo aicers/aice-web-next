@@ -31,11 +31,21 @@ compares within the same `story_version` cohort by construction.
 
 ## §3 — Rule definitions and parameters
 
-Four rules ship under `story_version = 'v1'`: the original asset-keyed
-R1/R3, plus the multi-source R4 (fan-in) and R5 (campaign) added by
-issue #694. R2 (kill-chain progression) is intentionally deferred to a
-v2 RFC bump; the `correlation_rule_id = 'R2'` slot stays reserved so
-the rule-ID enum does not shift.
+The v1 rule set under `story_version = 'v1'`: the original asset-keyed
+R1/R3, the multi-source R4 (fan-in) and R5 (campaign) from issue #694,
+the persistent low-and-slow R6 from #701, and the multi-stage
+low-and-slow R2 from #702. **R2 is pulled forward into v1 with
+redefined, order-agnostic semantics** (issue #702): it does NOT detect
+monotonic kill-chain *progression* — that naive ordering is
+deliberately rejected (§12) because real attackers oscillate across
+stages (recon → lateral move → back to recon), so monotonic detection
+would miss them. Instead R2 keys on **breadth of distinct stages over
+dispersed time**: the same `orig_addr` touching ≥`R2_MIN_CATEGORIES`
+distinct `category` values in any order, dispersed across
+≥`LOWSLOW_MIN_BUCKETS` UTC hour buckets within the 24h window, with ≥1
+critical category. This redefinition supersedes the earlier
+"deferred-to-v2" reservation of the `correlation_rule_id = 'R2'` slot
+(§10/§12).
 
 R4 and R5 treat events as "the same attack" using the conservative v1
 identity — **same critical `category` AND overlapping critical
@@ -264,16 +274,85 @@ candidacy entirely.
   2 reads members for the candidate assets via
   `orig_addr = ANY($::inet[])`.
 
+### R2 — Multi-stage low-and-slow ("slow R1", order-agnostic)
+
+> Within a **24-hour** sliding window, the **same `orig_addr`** touches
+> **≥`R2_MIN_CATEGORIES` distinct `category` values** — in **any order**,
+> revisits allowed — dispersed across **≥`LOWSLOW_MIN_BUCKETS` distinct
+> UTC hour buckets** (`date_trunc('hour', event_time AT TIME ZONE
+> 'UTC')`), with **≥1 category in `CRITICAL_CATEGORIES`**.
+
+- Window: **24 hours** (`LOWSLOW_WINDOW_MS`, shared with R6).
+- Grouping key / `primary_asset`: `orig_addr` (single-source).
+- **Order-agnostic by design.** The signal is breadth of distinct
+  stages over dispersed time, measured by distinct-`category` **count**
+  — no kill-chain rank/order table is introduced. Monotonic-progression
+  detection is deliberately rejected (§12): attacker oscillation makes
+  naive ordering unreliable, so breadth-over-dispersed-time is the
+  robust signal.
+- **Data source — the existing `category` column.** R2 keys entirely on
+  `baseline_triaged_event.category` (already consumed by R1 and R6) plus
+  `event_time` dispersion. No `payload_summary` extension and no new
+  `baseline_triaged_event` columns are needed — this satisfies the §10
+  requirement that an R2 implementation specify its data source before
+  merging.
+- Thresholds: `R2_MIN_CATEGORIES = 3` distinct categories **and**
+  `LOWSLOW_MIN_BUCKETS = 3` distinct UTC hour buckets. The ≥3-bucket
+  **dispersion** floor is what excludes a single-window multi-category
+  burst already covered by R1.
+- ≥1-critical guard: at least one member's `category` is in
+  `CRITICAL_CATEGORIES` (the category-level set in `critical-sets.mjs`,
+  as R1 uses — NOT R6's selector-level `LOWSLOW_SELECTOR_SET`). Enforced
+  in the rule layer.
+- `correlation_key = NULL` — like R1/R3/R6, R2 dedups on the re-scoped
+  `event_group_auto_dedup_idx` (the NULL-`correlation_key` branch), so
+  no schema change.
+- **Score: distinct-`category` count over the FULL cluster (pre-cap).**
+  Both the `≥ R2_MIN_CATEGORIES` gate and the score are computed over
+  the full semantic-match cluster, **before** the §8 member cap —
+  mirroring R6's pre-cap dispersion. If taken after the cap, a large
+  cluster could drop a whole category and destabilize the score (and
+  even the gate). `members`/`summary` use the capped subset.
+- `correlation_rule_id = 'R2'`.
+- **Separate sweep, not step (f).** Like R6, R2 is produced ONLY by the
+  hourly low-and-slow sweep (`baseline/lowslow-sweep.ts`) as a second
+  candidate-read pass alongside R6, never by per-page step (f). It is
+  NOT in `RULE_REGISTRY`. The 24h window therefore does NOT enter
+  `max_rule_window`.
+- **SQL push-down (§5).** Two-phase like R6. Phase 1 pre-aggregates
+  candidate assets with a distinct-category floor and the same UTC-hour
+  dispersion floor R6 uses:
+
+  ```sql
+  SELECT host(orig_addr) AS orig_addr
+    FROM baseline_triaged_event
+   WHERE event_time IN [memberScanStart, memberScanEnd]
+     AND orig_addr IS NOT NULL
+     AND category IS NOT NULL
+   GROUP BY orig_addr
+  HAVING COUNT(DISTINCT date_trunc('hour', event_time AT TIME ZONE 'UTC')) >= 3
+     AND COUNT(DISTINCT category) >= 3
+  ```
+
+  R2 keys on `category IS NOT NULL` — far broader than R6's
+  `selector_tags && LOWSLOW_SELECTOR_SET` — so the phase-1 pushdown is
+  **mandatory** (not just an optimization) to keep phase 2 bounded.
+  Phase 2 reads members for the candidate assets via
+  `orig_addr = ANY($::inet[])`, also carrying `AND category IS NOT NULL`
+  so null-category rows the rule layer would only discard are never
+  read. The ≥1-critical guard stays a rule-layer re-validation on the
+  phase-2 rows.
+
 ### `max_rule_window`
 
 `max_rule_window = max(R1.window, R3.window, R4.window, R5.window)
 = 1 hour`. R4/R5 share R3's 1-hour window, so adding them does not
 move it. Consumed by the §4 slop-replay member-scan lookback. Adding
 any rule with a larger window forces a Story RFC bump because the
-slop-replay window grows with it. **R6's 24-hour window does NOT
-enter `max_rule_window`**: R6 runs only from the separate low-and-slow
-sweep (§4), so per-page step (f) and its slop-replay lookback stay at
-1 hour.
+slop-replay window grows with it. **The R6 and R2 24-hour windows do
+NOT enter `max_rule_window`**: both run only from the separate
+low-and-slow sweep (§4), so per-page step (f) and its slop-replay
+lookback stay at 1 hour.
 
 ## §4 — Slop window and watermark protocol
 
@@ -599,6 +678,15 @@ ambiguous. The Stories UI can deduplicate by
 `(primary_asset, time_window_start, time_window_end)` overlap at
 render time if visual clutter is a problem.
 
+**Intended R2/R6 overlap (issue #702).** The same asset/window can
+satisfy both R6 (persistent same-character repetition) and R2
+(multi-stage breadth), producing two Stories. Per option A this is
+**intended and not deduplicated at write time**: the two rules write
+through the same `event_group_auto_dedup_idx` but with different
+`correlation_rule_id` (`'R6'` vs `'R2'`), so both rows persist. The
+rules stay traceable, and the UI may dedupe by overlap at render time
+exactly as for the R1/R3 case above.
+
 ## §10 — Future-rule format
 
 A future rule that reads the **same shared candidate set** as R1/R3
@@ -618,11 +706,15 @@ candidate source follows the R4/R5 precedent (direct correlator
 wiring); one that can share the R1/R3 candidate set joins
 `RULE_REGISTRY`. Either way no schema change is required.
 
-v2 R2 specifically must specify its data source — cadence-side
-`payload_summary` extension, or new normalized columns on
-`baseline_triaged_event`, or both — before merging. The
-`correlation_rule_id = 'R2'` slot is reserved by this RFC for that
-bump.
+**R2 (issue #702) ships under v1, not a v2 bump.** The earlier
+reservation note required an R2 implementation to specify its data
+source before merging. R2 satisfies that requirement by keying entirely
+on the **existing `category` column** (already consumed by R1 and R6)
+plus `event_time` dispersion — **no `payload_summary` extension and no
+new `baseline_triaged_event` columns**. R2 follows the R6 sweep-only
+precedent: its own predicate-pushed two-phase reads
+(`readR2Candidates`), wired directly into the low-and-slow sweep rather
+than `RULE_REGISTRY`. No schema change.
 
 ## §11 — Worked examples
 
@@ -775,12 +867,49 @@ Result: one `event_group` row with `correlation_rule_id = 'R6'`,
 1`. The sweep advances `lowslow_finalized_through` to its horizon `H`
 (`= story_finalized_through`).
 
+### Example 7 — R2 multi-stage low-and-slow oscillation (issue #702)
+
+One source asset `10.0.0.5` touches several kill-chain stages over a
+dispersed span, **oscillating** (not monotonically progressing) and
+revisiting a stage:
+
+| event_key | event_time                | category               |
+|-----------|---------------------------|------------------------|
+| 1         | 2026-05-09 01:05:00 +0000 | `INITIAL_ACCESS`       |
+| 2         | 2026-05-09 06:30:00 +0000 | `COMMAND_AND_CONTROL`  |
+| 3         | 2026-05-09 14:10:00 +0000 | `INITIAL_ACCESS`       |
+| 4         | 2026-05-09 21:45:00 +0000 | `EXFILTRATION`         |
+
+- The 24h cluster on `10.0.0.5` touches 3 distinct categories
+  `{INITIAL_ACCESS, COMMAND_AND_CONTROL, EXFILTRATION}` ≥
+  `R2_MIN_CATEGORIES`, even though `INITIAL_ACCESS` is revisited and the
+  order is non-monotonic. It spans 4 distinct UTC hour buckets (`01`,
+  `06`, `14`, `21`) ≥ `LOWSLOW_MIN_BUCKETS`, and ≥1 category is critical.
+  R2 fires (from the hourly sweep, not step (f)). Score = distinct
+  category count = `3`.
+- The same 4 events compressed into a single 10-minute window would span
+  ≤ 2 UTC hour buckets and is **excluded** from R2 — that burst is the
+  R1 case, and R2 does not double-report it.
+- If this asset ALSO beaconed enough to satisfy R6 over the same window,
+  both an `R2` and an `R6` `event_group` row would persist — the
+  intended overlap (§9).
+
+Result: one `event_group` row with `correlation_rule_id = 'R2'`,
+`primary_asset = '10.0.0.5'`, `correlation_key = NULL`, `score = 3`
+(distinct category count, pre-cap), `time_window_start = 01:05:00`,
+`time_window_end = 21:45:00`, `summary_payload.distinctAssetCount = 1`.
+
 ## §12 — Out of scope of this RFC
 
 - LLM-driven correlation — Phase 2 concern.
 - Multi-window packaging (`role = 'context'`) — Phase 2 Y4
   (#495). v1 only writes `role = 'primary'`.
-- R2 kill-chain rule — v2 Story RFC bump.
+- Strict **ordered** kill-chain progression detection — deliberately
+  rejected. R2 (issue #702) ships under v1 as an **order-agnostic**
+  multi-stage rule (§3); a rule keyed on monotonic stage *ordering* is
+  not pursued, because attacker oscillation across stages makes naive
+  ordering unreliable and breadth-over-dispersed-time is the robust
+  signal.
 - Display-side strictness-slider exemption for Story members
   — owned by #471 and consumed by #490 / #458.
 - Stories UI tab in the Triage menu — owned by #490.

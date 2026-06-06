@@ -21,6 +21,8 @@ import {
 } from "@/lib/triage/story/critical-sets.mjs";
 import {
   buildReadR1CandidatesSql,
+  buildReadR2CandidatesPhase1Sql,
+  buildReadR2CandidatesPhase2Sql,
   buildReadR3CandidatesPhase1Sql,
   buildReadR3CandidatesPhase2Sql,
   buildReadR4CandidatesPhase1Sql,
@@ -55,16 +57,17 @@ describe("read-path-sql shared module", () => {
   });
 
   describe("query coverage", () => {
-    it("exposes the menu queries plus the R1 / R3 / R4 / R5 / R6 cadence entries as (name, context) pairs in MEASURED_QUERIES", () => {
+    it("exposes the menu queries plus the R1 / R3 / R4 / R5 / R6 / R2 cadence entries as (name, context) pairs in MEASURED_QUERIES", () => {
       // #471 adds two queries — `selectStoryProtectedCohort` (branch
       // B force-union) and `countEligibleByStop` (per-stop preview
       // hints). #601 adds R1 + R3 phase-1 + R3 phase-2 cadence
       // entries, each in two contexts (first-tick / slop-replay).
       // #694 adds R4 phase-1/phase-2 and R5 phase-1/phase-2, also in
       // two contexts each. #701 adds R6 phase-1/phase-2 (the
-      // low-and-slow sweep), again two contexts each, so the flat
-      // (query, context) list has seven menu entries plus eighteen
-      // cadence/sweep entries.
+      // low-and-slow sweep), again two contexts each. #702 adds R2
+      // phase-1/phase-2 (the multi-stage low-and-slow sweep pass), again
+      // two contexts each — so the flat (query, context) list now has
+      // seven menu entries plus twenty-two cadence/sweep entries.
       const pairs = MEASURED_QUERIES.map((q) => `${q.name}:${q.context}`);
       expect(pairs).toEqual([
         "selectMenuCohort:default",
@@ -92,6 +95,10 @@ describe("read-path-sql shared module", () => {
         "readR6CandidatesPhase1:slop-replay",
         "readR6CandidatesPhase2:first-tick",
         "readR6CandidatesPhase2:slop-replay",
+        "readR2CandidatesPhase1:first-tick",
+        "readR2CandidatesPhase1:slop-replay",
+        "readR2CandidatesPhase2:first-tick",
+        "readR2CandidatesPhase2:slop-replay",
       ]);
     });
 
@@ -717,6 +724,95 @@ describe("read-path-sql shared module", () => {
           "S3-recurring",
         ]),
       );
+    });
+  });
+
+  describe("R2 multi-stage low-and-slow sweep entries (issue #702)", () => {
+    const ctx = {
+      periodStartIso: "2026-04-12T00:00:00.000Z",
+      periodEndIso: "2026-05-12T00:00:00.000Z",
+      observedFromIso: "2026-04-12T00:00:00.000Z",
+      addresses: [],
+      memberScanStartIso: "2026-05-11T00:00:00.000Z",
+      memberScanEndIso: "2026-05-12T00:00:00.000Z",
+      r2CandidateAssets: {
+        firstTick: ["10.0.0.4"],
+        slopReplay: ["10.0.0.5", "10.0.0.6"],
+      },
+    };
+
+    const lookup = (name: string, context: "first-tick" | "slop-replay") => {
+      const q = MEASURED_QUERIES.find(
+        (e) => e.name === name && e.context === context,
+      );
+      if (q === undefined) {
+        throw new Error(`missing measured entry: ${name}:${context}`);
+      }
+      return q;
+    };
+
+    it("R2 SQL matches the cadence builders byte-for-byte", () => {
+      expect(lookup("readR2CandidatesPhase1", "first-tick").sql).toBe(
+        buildReadR2CandidatesPhase1Sql({ memberScanStartIsNull: true }),
+      );
+      expect(lookup("readR2CandidatesPhase1", "slop-replay").sql).toBe(
+        buildReadR2CandidatesPhase1Sql({ memberScanStartIsNull: false }),
+      );
+      expect(lookup("readR2CandidatesPhase2", "first-tick").sql).toBe(
+        buildReadR2CandidatesPhase2Sql({ memberScanStartIsNull: true }),
+      );
+      expect(lookup("readR2CandidatesPhase2", "slop-replay").sql).toBe(
+        buildReadR2CandidatesPhase2Sql({ memberScanStartIsNull: false }),
+      );
+    });
+
+    it("R2 phase-1 binds only the time bound(s) — no selector/category array", () => {
+      expect(
+        lookup("readR2CandidatesPhase1", "first-tick").buildParams(ctx),
+      ).toEqual([ctx.memberScanEndIso]);
+      expect(
+        lookup("readR2CandidatesPhase1", "slop-replay").buildParams(ctx),
+      ).toEqual([ctx.memberScanStartIso, ctx.memberScanEndIso]);
+    });
+
+    it("R2 phase-2 binds the probed asset list", () => {
+      expect(
+        lookup("readR2CandidatesPhase2", "first-tick").buildParams(ctx),
+      ).toEqual([ctx.memberScanEndIso, ctx.r2CandidateAssets.firstTick]);
+      expect(
+        lookup("readR2CandidatesPhase2", "slop-replay").buildParams(ctx),
+      ).toEqual([
+        ctx.memberScanStartIso,
+        ctx.memberScanEndIso,
+        ctx.r2CandidateAssets.slopReplay,
+      ]);
+    });
+
+    it("R2 phase-1 SQL pre-aggregates by orig_addr with distinct-category AND UTC-hour dispersion floors", () => {
+      const sql = buildReadR2CandidatesPhase1Sql({
+        memberScanStartIsNull: false,
+      });
+      expect(sql).toMatch(/GROUP BY orig_addr/);
+      expect(sql).toMatch(/COUNT\(DISTINCT category\) >= 3/);
+      expect(sql).toMatch(
+        /COUNT\(DISTINCT date_trunc\('hour', event_time AT TIME ZONE 'UTC'\)\) >= 3/,
+      );
+      expect(sql).toMatch(/category IS NOT NULL/);
+      // R2 keys on category, not selectors — no selector overlap.
+      expect(sql).not.toMatch(/selector_tags/);
+    });
+
+    it("R2 phase-2 SQL is the single-source per-asset read filtered on category IS NOT NULL (no resp_addr, no selector overlap)", () => {
+      const sql = buildReadR2CandidatesPhase2Sql({
+        memberScanStartIsNull: false,
+      });
+      expect(sql).toMatch(/orig_addr = ANY\(\$3::inet\[\]\)/);
+      expect(sql).toMatch(/category IS NOT NULL/);
+      expect(sql).not.toMatch(/resp_addr/);
+      // `selector_tags` is projected as a column (CandidateEvent needs
+      // it), but R2 keys on category — there must be no selector overlap
+      // FILTER (`selector_tags && $`).
+      expect(sql).not.toMatch(/selector_tags\s*&&/);
     });
   });
 });

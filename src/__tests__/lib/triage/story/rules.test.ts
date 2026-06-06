@@ -7,6 +7,7 @@ import {
   CRITICAL_SELECTOR_SET,
   detectAllStories,
   detectR1,
+  detectR2,
   detectR3,
   detectR4,
   detectR5,
@@ -14,6 +15,7 @@ import {
   LOWSLOW_MIN_BUCKETS,
   LOWSLOW_SELECTOR_SET,
   R1_LAMBDA,
+  R2_MIN_CATEGORIES,
   R4_MIN_SOURCES,
   R5_MIN_SOURCES,
   R5_MIN_VICTIMS,
@@ -780,6 +782,167 @@ describe("detectR6 — persistent low-and-slow", () => {
     // The last two are only 1h apart (2 members, 2 buckets) — under
     // both floors — and the first is >24h before them, so no R6.
     expect(detectR6(tooWide)).toEqual([]);
+  });
+});
+
+describe("detectR2 — multi-stage low-and-slow", () => {
+  // An oscillating multi-stage beacon: 3 distinct critical categories
+  // on one asset in non-monotonic order WITH a revisit
+  // (INITIAL_ACCESS appears twice), one event per hour over distinct UTC
+  // hour buckets, well within the 24h window.
+  function oscillation(): CandidateEvent[] {
+    return [
+      event({
+        eventKey: "o1",
+        eventTime: "2026-05-09T01:05:00Z",
+        category: "INITIAL_ACCESS",
+      }),
+      event({
+        eventKey: "o2",
+        eventTime: "2026-05-09T02:10:00Z",
+        category: "COMMAND_AND_CONTROL",
+      }),
+      event({
+        eventKey: "o3",
+        eventTime: "2026-05-09T03:15:00Z",
+        category: "INITIAL_ACCESS", // revisit — order-agnostic
+      }),
+      event({
+        eventKey: "o4",
+        eventTime: "2026-05-09T20:30:00Z",
+        category: "EXFILTRATION",
+      }),
+    ];
+  }
+
+  it("fires for ≥3 distinct categories (≥1 critical) across ≥3 hour buckets within 24h, order-agnostic", () => {
+    const stories = detectR2(oscillation());
+    expect(stories).toHaveLength(1);
+    const s = stories[0];
+    expect(s.ruleId).toBe("R2");
+    expect(s.primaryAsset).toBe("10.0.0.5");
+    expect(s.correlationKey).toBeNull();
+    // Score is the distinct-category count over the full (pre-cap)
+    // cluster: {INITIAL_ACCESS, COMMAND_AND_CONTROL, EXFILTRATION} = 3.
+    expect(s.score).toBe(3);
+    expect(s.members).toHaveLength(4);
+    expect(s.timeWindowStart).toEqual(new Date("2026-05-09T01:05:00Z"));
+    expect(s.timeWindowEnd).toEqual(new Date("2026-05-09T20:30:00Z"));
+  });
+
+  it("does NOT fire for a single-window multi-category burst (fails dispersion — the R1 case)", () => {
+    // 3 distinct critical categories inside a ~15-min window straddling
+    // ≤2 UTC hour buckets. R1's territory; R2 must not double-report it.
+    const burst = [
+      event({
+        eventKey: "x1",
+        eventTime: "2026-05-09T01:50:00Z",
+        category: "INITIAL_ACCESS",
+      }),
+      event({
+        eventKey: "x2",
+        eventTime: "2026-05-09T01:55:00Z",
+        category: "COMMAND_AND_CONTROL",
+      }),
+      event({
+        eventKey: "x3",
+        eventTime: "2026-05-09T02:05:00Z",
+        category: "EXFILTRATION",
+      }),
+    ];
+    expect(detectR2(burst)).toEqual([]);
+  });
+
+  it("does NOT fire below the distinct-category floor even when dispersed", () => {
+    expect(R2_MIN_CATEGORIES).toBe(3);
+    // Only 2 distinct categories, dispersed across 3 hour buckets.
+    const twoCats = [
+      event({
+        eventKey: "t1",
+        eventTime: "2026-05-09T01:05:00Z",
+        category: "INITIAL_ACCESS",
+      }),
+      event({
+        eventKey: "t2",
+        eventTime: "2026-05-09T02:10:00Z",
+        category: "COMMAND_AND_CONTROL",
+      }),
+      event({
+        eventKey: "t3",
+        eventTime: "2026-05-09T03:15:00Z",
+        category: "INITIAL_ACCESS",
+      }),
+    ];
+    expect(detectR2(twoCats)).toEqual([]);
+  });
+
+  it("does NOT fire when no member category is critical", () => {
+    // 3 distinct categories across 3 buckets, but none in
+    // CRITICAL_CATEGORIES — R2's ≥1-critical guard fails.
+    const noCritical = [
+      event({
+        eventKey: "n1",
+        eventTime: "2026-05-09T01:05:00Z",
+        category: "RECONNAISSANCE",
+      }),
+      event({
+        eventKey: "n2",
+        eventTime: "2026-05-09T02:10:00Z",
+        category: "RESOURCE_DEVELOPMENT",
+      }),
+      event({
+        eventKey: "n3",
+        eventTime: "2026-05-09T03:15:00Z",
+        category: "DISCOVERY",
+      }),
+    ];
+    expect(detectR2(noCritical)).toEqual([]);
+  });
+
+  it("ignores events with a null category", () => {
+    // Null-category rows can never contribute to a distinct-category
+    // count; here they would otherwise add buckets/members.
+    const withNulls = [
+      event({
+        eventKey: "z1",
+        eventTime: "2026-05-09T01:05:00Z",
+        category: null,
+      }),
+      event({
+        eventKey: "z2",
+        eventTime: "2026-05-09T02:10:00Z",
+        category: null,
+      }),
+      event({
+        eventKey: "z3",
+        eventTime: "2026-05-09T03:15:00Z",
+        category: null,
+      }),
+    ];
+    expect(detectR2(withNulls)).toEqual([]);
+  });
+
+  it("does NOT cluster events more than 24h apart", () => {
+    const tooWide = [
+      event({
+        eventKey: "w1",
+        eventTime: "2026-05-09T01:00:00Z",
+        category: "INITIAL_ACCESS",
+      }),
+      event({
+        eventKey: "w2",
+        eventTime: "2026-05-10T02:00:00Z",
+        category: "COMMAND_AND_CONTROL",
+      }),
+      event({
+        eventKey: "w3",
+        eventTime: "2026-05-10T03:00:00Z",
+        category: "EXFILTRATION",
+      }),
+    ];
+    // The last two are only 1h apart (2 categories, 2 buckets) — under
+    // both floors — and the first is >24h before them, so no R2.
+    expect(detectR2(tooWide)).toEqual([]);
   });
 });
 

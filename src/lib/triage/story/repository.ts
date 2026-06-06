@@ -34,6 +34,8 @@ import { CRITICAL_CATEGORIES } from "@/lib/triage/baseline/categories";
 import type { TriagePeriod } from "../period";
 import {
   buildReadR1CandidatesSql,
+  buildReadR2CandidatesPhase1Sql,
+  buildReadR2CandidatesPhase2Sql,
   buildReadR3CandidatesPhase1Sql,
   buildReadR3CandidatesPhase2Sql,
   buildReadR4CandidatesPhase1Sql,
@@ -435,6 +437,68 @@ export async function readR6Candidates(
   const phase2Params = memberScanStartIsNull
     ? [memberScanEnd, assets, selectors]
     : [memberScanStart, memberScanEnd, assets, selectors];
+  const result = await client.query<CandidateRow>(phase2Sql, phase2Params);
+  return result.rows.map(rowToCandidate);
+}
+
+/**
+ * R2's multi-stage low-and-slow candidate scan (issue #702).
+ *
+ * Two-phase per-asset access pattern mirroring R6, but keyed on
+ * `category` rather than the R6 selector set — the "slow R1". Phase 1
+ * carries BOTH a distinct-category floor AND the same UTC-hour
+ * dispersion floor R6 uses:
+ *
+ *   SELECT host(orig_addr) AS orig_addr
+ *     FROM baseline_triaged_event
+ *    WHERE event_time IN [memberScanStart, memberScanEnd]
+ *      AND orig_addr IS NOT NULL
+ *      AND category IS NOT NULL
+ *    GROUP BY orig_addr
+ *   HAVING COUNT(DISTINCT date_trunc('hour', event_time AT TIME ZONE 'UTC')) >= 3
+ *      AND COUNT(DISTINCT category) >= 3
+ *
+ * R2 keys on `category IS NOT NULL` (far broader than R6's
+ * `selector_tags && LOWSLOW_SELECTOR_SET`), so the phase-1 pushdown is
+ * mandatory to keep phase 2 bounded. Phase 2 reads the member rows for
+ * the candidate assets via `orig_addr = ANY($::inet[])`, also carrying
+ * `AND category IS NOT NULL` so null-category rows the rule layer would
+ * only discard are never read. The 24h sliding-window cluster, the
+ * distinct-category gate, hour-bucket dispersion, and the ≥1-critical
+ * guard are re-applied in the rule layer (`detectR2`). Called only from
+ * the low-and-slow sweep (`baseline/lowslow-sweep.ts`); the sweep always
+ * passes a non-null `memberScanStart` (`watermark − 24h`).
+ */
+export async function readR2Candidates(
+  args: ReadCandidatesArgs,
+): Promise<CandidateEvent[]> {
+  const { client, memberScanStart, memberScanEnd, endExclusive } = args;
+  const memberScanStartIsNull = memberScanStart === null;
+  const endExclusiveBool = Boolean(endExclusive);
+
+  const phase1Sql = buildReadR2CandidatesPhase1Sql({
+    memberScanStartIsNull,
+    endExclusive: endExclusiveBool,
+  });
+  const phase1Params = memberScanStartIsNull
+    ? [memberScanEnd]
+    : [memberScanStart, memberScanEnd];
+  const phase1 = await client.query<{ orig_addr: string }>(
+    phase1Sql,
+    phase1Params,
+  );
+  const assets = Array.from(
+    new Set(phase1.rows.map((r) => r.orig_addr).filter((a) => a !== null)),
+  );
+  if (assets.length === 0) return [];
+
+  const phase2Sql = buildReadR2CandidatesPhase2Sql({
+    memberScanStartIsNull,
+    endExclusive: endExclusiveBool,
+  });
+  const phase2Params = memberScanStartIsNull
+    ? [memberScanEnd, assets]
+    : [memberScanStart, memberScanEnd, assets];
   const result = await client.query<CandidateRow>(phase2Sql, phase2Params);
   return result.rows.map(rowToCandidate);
 }

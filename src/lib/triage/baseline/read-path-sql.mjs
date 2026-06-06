@@ -469,6 +469,8 @@ import {
 } from "../story/critical-sets.mjs";
 import {
   buildReadR1CandidatesSql,
+  buildReadR2CandidatesPhase1Sql,
+  buildReadR2CandidatesPhase2Sql,
   buildReadR3CandidatesPhase1Sql,
   buildReadR3CandidatesPhase2Sql,
   buildReadR4CandidatesPhase1Sql,
@@ -767,6 +769,44 @@ export const MEASURED_QUERIES = [
       ctx.memberScanEndIso,
       ctx.r6CandidateAssets?.slopReplay ?? [],
       LOWSLOW_SELECTOR_ARRAY,
+    ],
+  },
+  // ── R2 multi-stage low-and-slow sweep entries (issue #702) ──────
+  // Same first-tick / slop-replay split as R6. R2 keys on `category IS
+  // NOT NULL` (a bare predicate), so unlike every other cadence entry
+  // it binds NO `$N` selector/category array — phase 1 binds only the
+  // time bound(s); phase 2 adds the `$N::inet[]` asset list. Phase-2
+  // depends on a phase-1 probe (`ctx.r2CandidateAssets`); an empty list
+  // records a `meta.notMeasurable` skip.
+  {
+    name: "readR2CandidatesPhase1",
+    context: "first-tick",
+    sql: buildReadR2CandidatesPhase1Sql({ memberScanStartIsNull: true }),
+    buildParams: (ctx) => [ctx.memberScanEndIso],
+  },
+  {
+    name: "readR2CandidatesPhase1",
+    context: "slop-replay",
+    sql: buildReadR2CandidatesPhase1Sql({ memberScanStartIsNull: false }),
+    buildParams: (ctx) => [ctx.memberScanStartIso, ctx.memberScanEndIso],
+  },
+  {
+    name: "readR2CandidatesPhase2",
+    context: "first-tick",
+    sql: buildReadR2CandidatesPhase2Sql({ memberScanStartIsNull: true }),
+    buildParams: (ctx) => [
+      ctx.memberScanEndIso,
+      ctx.r2CandidateAssets?.firstTick ?? [],
+    ],
+  },
+  {
+    name: "readR2CandidatesPhase2",
+    context: "slop-replay",
+    sql: buildReadR2CandidatesPhase2Sql({ memberScanStartIsNull: false }),
+    buildParams: (ctx) => [
+      ctx.memberScanStartIso,
+      ctx.memberScanEndIso,
+      ctx.r2CandidateAssets?.slopReplay ?? [],
     ],
   },
 ];

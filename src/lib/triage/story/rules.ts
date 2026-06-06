@@ -21,8 +21,13 @@
  *     ≥`R5_MIN_SOURCES` distinct `orig_addr` against
  *     ≥`R5_MIN_VICTIMS` distinct `resp_addr`, within a 1-hour window.
  *
- * R2 (kill-chain progression) is reserved for the v2 Story RFC bump;
- * the `'R2'` slot stays empty so the rule-ID enum does not shift.
+ * R2 — multi-stage low-and-slow ("slow R1", #702): the same
+ * `orig_addr`, within the 24h low-and-slow window, touches ≥3 distinct
+ * `category` values in ANY order (revisits allowed), dispersed across
+ * ≥3 UTC hour buckets, with ≥1 category in the critical set. It keys on
+ * `category` (like R1) — order-agnostic by design, since real attackers
+ * oscillate across kill-chain stages. Produced only by the hourly
+ * low-and-slow sweep, alongside R6.
  *
  * R4/R5 share R1's category predicate and R3's selector predicate as
  * the conservative "same-attack" identity: an event is eligible only
@@ -157,6 +162,17 @@ export const LOWSLOW_MIN_BUCKETS = 3;
 export const R6_MIN_MEMBERS = 3;
 
 /**
+ * R2 distinct-category floor (issue #702) — minimum distinct
+ * `category` values one asset must touch, in any order, inside the 24h
+ * low-and-slow window for R2 (multi-stage low-and-slow) to fire.
+ * Mirrors the phase-1 SQL's `COUNT(DISTINCT category) >= 3`
+ * (`./read-path-sql.mjs`); the two must stay in sync. R2 reuses the
+ * shared `LOWSLOW_WINDOW_MS` window and `LOWSLOW_MIN_BUCKETS`
+ * dispersion floor.
+ */
+export const R2_MIN_CATEGORIES = 3;
+
+/**
  * R6 selector set (issue #701). Extends R3's `CRITICAL_SELECTOR_SET`
  * with `S3-recurring` — recurrence is the defining beacon signature.
  *
@@ -188,14 +204,14 @@ export const R1_LAMBDA = 1.0;
 export const CRITICAL_SELECTOR_SET = CRITICAL_SELECTOR_SET_RAW;
 
 /**
- * Active rule IDs the correlator emits. `'R2'` is intentionally
- * absent — the slot is reserved by the Story RFC for the v2
- * kill-chain bump. R4/R5 are the multi-source rules (#694); R6 is the
- * persistent low-and-slow rule (#701), produced only by the hourly
- * sweep. Kept in sync with the literal `StoryRuleId` union in
- * `./types.ts`.
+ * Active rule IDs the correlator emits. R2 (multi-stage low-and-slow,
+ * #702) is the order-agnostic "slow R1": pulled forward into v1 with
+ * redefined semantics (no kill-chain ordering), produced only by the
+ * hourly sweep. R4/R5 are the multi-source rules (#694); R6 is the
+ * persistent low-and-slow rule (#701), also sweep-only. Kept in sync
+ * with the literal `StoryRuleId` union in `./types.ts`.
  */
-export const ACTIVE_RULE_IDS = ["R1", "R3", "R4", "R5", "R6"] as const;
+export const ACTIVE_RULE_IDS = ["R1", "R2", "R3", "R4", "R5", "R6"] as const;
 export type StoryRuleId = (typeof ACTIVE_RULE_IDS)[number];
 
 /**
@@ -708,6 +724,87 @@ export function detectR6(events: ReadonlyArray<CandidateEvent>): StoryDraft[] {
 }
 
 /**
+ * R2 — Multi-stage low-and-slow ("slow R1", order-agnostic, issue
+ * #702). Within a 24-hour sliding window, the same `orig_addr` touches
+ * ≥`R2_MIN_CATEGORIES` distinct `category` values — in ANY order,
+ * revisits allowed — dispersed across ≥`LOWSLOW_MIN_BUCKETS` distinct
+ * UTC hour buckets, with ≥1 category in `CRITICAL_CATEGORIES`.
+ *
+ *   - Grouping key / `primary_asset`: `orig_addr` (single-source).
+ *   - `correlation_key = NULL` — like R1/R3/R6, R2 dedups on the
+ *     `event_group_auto_dedup_idx` NULL-`correlationKey` branch.
+ *   - Score: distinct-`category` count over the FULL cluster (pre-cap).
+ *
+ * Order-agnostic by design: the signal is breadth of distinct stages
+ * over dispersed time (distinct-category COUNT), NOT monotonic
+ * kill-chain progression — real attackers oscillate across stages
+ * (recon → lateral move → back to recon), so no rank/order table is
+ * introduced. R2 keys on the category-level `CRITICAL_CATEGORIES` set
+ * (as R1 does), NOT R6's selector-level `LOWSLOW_SELECTOR_SET`.
+ *
+ * The distinct-category count drives BOTH the `≥ R2_MIN_CATEGORIES`
+ * gate and the `score`, and is computed over the full semantic-match
+ * cluster BEFORE `applyMemberCap` — mirroring `detectR6`'s pre-cap
+ * dispersion. If the count were taken after the cap, a large cluster
+ * could drop a whole category and destabilize the score (and even the
+ * gate). So `members`/`summary` use the capped subset, but the gate and
+ * score use the pre-cap cluster.
+ *
+ * The ≥3-bucket dispersion floor is what excludes a single-window
+ * multi-category burst already covered by R1. Called ONLY from the
+ * low-and-slow sweep (`baseline/lowslow-sweep.ts`), never from
+ * `runStepF`, so the 24h window does not widen `MAX_RULE_WINDOW_MS`.
+ * The JS hour bucketing is UTC ({@link utcHourBucket}), matching the
+ * phase-1 SQL.
+ *
+ * R2 and R6 may both fire on the same asset/window (R2 = multi-stage
+ * breadth, R6 = persistent same-character repetition); per Story RFC §9
+ * (option A) the overlap is intended — both rows persist, keyed by
+ * distinct `correlation_rule_id`.
+ */
+export function detectR2(events: ReadonlyArray<CandidateEvent>): StoryDraft[] {
+  const drafts: StoryDraft[] = [];
+  const byAsset = groupByAsset(events.filter((e) => e.category !== null));
+  for (const [asset, perAsset] of byAsset) {
+    const clusters = clusterByWindow(perAsset, LOWSLOW_WINDOW_MS);
+    for (const cluster of clusters) {
+      // Dispersion and the distinct-category count are computed over the
+      // FULL cluster (pre-cap), so the gate and score reflect the
+      // semantic match window rather than the sampled member subset.
+      const buckets = new Set(cluster.map((m) => utcHourBucket(m.eventTime)));
+      if (buckets.size < LOWSLOW_MIN_BUCKETS) continue;
+      const distinctCategories = new Set(
+        cluster.map((m) => String(m.category)),
+      );
+      if (distinctCategories.size < R2_MIN_CATEGORIES) continue;
+      // ≥1-critical guard stays in the rule layer (simpler than encoding
+      // CRITICAL_CATEGORIES in the phase-1 SQL); uses the category-level
+      // set, as R1 does.
+      const hasCritical = cluster.some(
+        (m) =>
+          m.category !== null &&
+          CRITICAL_CATEGORIES.has(m.category as ThreatCategory),
+      );
+      if (!hasCritical) continue;
+      const capped = applyMemberCap(cluster);
+      const start = cluster[0].eventTime;
+      const end = cluster[cluster.length - 1].eventTime;
+      drafts.push({
+        ruleId: "R2",
+        primaryAsset: asset,
+        correlationKey: null,
+        timeWindowStart: start,
+        timeWindowEnd: end,
+        members: capped,
+        score: distinctCategories.size,
+        summary: buildSummaryPayload(capped),
+      });
+    }
+  }
+  return drafts;
+}
+
+/**
  * Typed registry of the shared-candidate-set rules (R1/R3). Adding a
  * future rule that reads the same broad candidate set is a
  * registry-level change.
@@ -720,10 +817,10 @@ export function detectR6(events: ReadonlyArray<CandidateEvent>): StoryDraft[] {
  * directly in the correlator (`correlator.ts`
  * `runStoryCorrelationForWindow`) alongside their reads.
  *
- * R6 is likewise NOT registered: it runs only from the hourly
+ * R6 and R2 are likewise NOT registered: both run only from the hourly
  * low-and-slow sweep (`baseline/lowslow-sweep.ts`) over a 24h window,
- * never from per-page step (f). Adding it here would pull `detectR6`
- * into the cadence path and widen `MAX_RULE_WINDOW_MS` to 24h.
+ * never from per-page step (f). Adding either here would pull its
+ * detector into the cadence path and widen `MAX_RULE_WINDOW_MS` to 24h.
  */
 export const RULE_REGISTRY: ReadonlyArray<{
   id: StoryRuleId;
