@@ -127,11 +127,17 @@ While the lock is held:
 ## β tracking carry-over
 
 When a rebuilt auto Story matches an old auto Story by the natural
-key `(correlation_rule_id, primary_asset, time_window_start,
-time_window_end)`, the β submission-tracking columns
-(`last_sent_at`, `send_count`, `last_sent_by`) are copied from the
-old row. Stories with no natural-key match get the column DEFAULTs
-(NULL / 0 / NULL).
+key `(correlation_rule_id, primary_asset, correlation_key,
+time_window_start, time_window_end)`, the β submission-tracking
+columns (`last_sent_at`, `send_count`, `last_sent_by`) are copied
+from the old row. Stories with no natural-key match get the column
+DEFAULTs (NULL / 0 / NULL).
+
+The `correlation_key` component is what makes the match unambiguous
+for the multi-source rules: an R5 campaign Story has no
+`primary_asset`, and two R4 fan-in Stories on the same victim and
+window can differ only by attack category. It is `NULL` for the
+asset-keyed rules R1/R3, whose carry-over behaviour is unchanged.
 
 This matches the most common rebuild trigger — "rules changed,
 recompute" — where, within the same window, asset, and rule, the
@@ -141,10 +147,13 @@ contract (#492) already exposes `force_refresh: true` as the
 explicit escape hatch for operators who want to re-analyze when
 content has materially changed.
 
-The natural key matches the partial unique index on `event_group`
-(`(rule, asset, start, end) WHERE kind = 'auto_correlated' AND
-primary_asset IS NOT NULL`), so curated Stories are excluded from
-carry-over by construction.
+The natural key matches the partial unique indexes on `event_group`
+— the asset index (`(rule, asset, start, end) WHERE kind =
+'auto_correlated' AND primary_asset IS NOT NULL AND correlation_key
+IS NULL`) for R1/R3 and the `correlation_key` index (`(rule,
+correlation_key, start, end) WHERE … correlation_key IS NOT NULL`)
+for R4/R5 — so curated Stories are excluded from carry-over by
+construction.
 
 ## Cascading with the baseline rebuild
 

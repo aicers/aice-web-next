@@ -339,3 +339,200 @@ export function buildReadR3CandidatesPhase2Sql(opts) {
             AND orig_addr = ANY($3::inet[])
             AND selector_tags && $4::text[]`;
 }
+
+// ── R4 / R5 multi-source cadence per-page SELECTs (issue #694) ─────
+//
+// The fan-in (R4) and campaign (R5) rules read a candidate set that
+// also carries `resp_addr` (the victim), so they cannot reuse
+// `R1_R3_CANDIDATE_SELECT`. Both follow the R3 two-phase pattern:
+// phase 1 pre-aggregates candidate keys with predicate push-down,
+// phase 2 reads the member rows for those keys; final sliding-window
+// clustering and distinct-source counting stay in the rule layer
+// (`rules.ts`). Both rules share the "same-attack" eligibility:
+// `category = ANY($criticalCategories::text[])` AND
+// `selector_tags && $criticalSelectors::text[]`, with both
+// `orig_addr` and `resp_addr` non-NULL.
+//
+// As with R1/R3 the builders vary over `memberScanStartIsNull`
+// (first-tick omits the lower bound) and `endExclusive` (rebuild
+// drops `event_time == memberScanEnd`).
+
+const MULTI_SOURCE_CANDIDATE_SELECT = `SELECT event_key::text   AS event_key,
+                              event_time,
+                              kind,
+                              host(orig_addr)   AS orig_addr,
+                              host(resp_addr)   AS resp_addr,
+                              category,
+                              selector_tags,
+                              raw_score
+                         FROM baseline_triaged_event`;
+
+/**
+ * R4 phase-1 — candidate `(resp_addr, category)` pre-aggregation:
+ * `GROUP BY resp_addr, category HAVING COUNT(DISTINCT orig_addr) >=
+ * $R4_MIN_SOURCES` (one candidate key per victim × signature) over
+ * the eligible rows. The `$N` placeholder for `R4_MIN_SOURCES` is
+ * bound (not inlined) so the rule-layer tunable is the single source
+ * of truth.
+ *
+ * Parameters (slop-replay):
+ *   $1 :: timestamptz — memberScanStart
+ *   $2 :: timestamptz — memberScanEnd
+ *   $3 :: text[]      — critical-category set
+ *   $4 :: text[]      — critical-selector set
+ *   $5 :: int         — R4_MIN_SOURCES
+ *
+ * Parameters (first-tick): the same list shifted left by one (no
+ * lower bound), so the threshold binds at `$4`.
+ *
+ * @param {{ memberScanStartIsNull: boolean, endExclusive?: boolean }} opts
+ * @returns {string}
+ */
+export function buildReadR4CandidatesPhase1Sql(opts) {
+  const memberScanStartIsNull = Boolean(opts?.memberScanStartIsNull);
+  const endOp = opts?.endExclusive ? "<" : "<=";
+  return memberScanStartIsNull
+    ? `SELECT host(resp_addr) AS resp_addr, category
+           FROM baseline_triaged_event
+          WHERE event_time ${endOp} $1
+            AND orig_addr IS NOT NULL
+            AND resp_addr IS NOT NULL
+            AND category = ANY($2::text[])
+            AND selector_tags && $3::text[]
+          GROUP BY resp_addr, category
+         HAVING COUNT(DISTINCT orig_addr) >= $4`
+    : `SELECT host(resp_addr) AS resp_addr, category
+           FROM baseline_triaged_event
+          WHERE event_time >= $1
+            AND event_time ${endOp} $2
+            AND orig_addr IS NOT NULL
+            AND resp_addr IS NOT NULL
+            AND category = ANY($3::text[])
+            AND selector_tags && $4::text[]
+          GROUP BY resp_addr, category
+         HAVING COUNT(DISTINCT orig_addr) >= $5`;
+}
+
+/**
+ * R4 phase-2 — per-victim member scan against the candidate victims
+ * phase 1 returned: `resp_addr = ANY($::inet[])` co-occurring with
+ * the eligibility predicate. The rule layer re-groups by
+ * `(resp_addr, category)` and re-applies the source threshold per
+ * sliding window, so over-reading a victim that only met the
+ * threshold for a different category is harmless.
+ *
+ * Parameters (slop-replay):
+ *   $1 :: timestamptz — memberScanStart
+ *   $2 :: timestamptz — memberScanEnd
+ *   $3 :: inet[]      — phase-1 candidate victims (deduped)
+ *   $4 :: text[]      — critical-category set
+ *   $5 :: text[]      — critical-selector set
+ *
+ * Parameters (first-tick): same list shifted left by one.
+ *
+ * @param {{ memberScanStartIsNull: boolean, endExclusive?: boolean }} opts
+ * @returns {string}
+ */
+export function buildReadR4CandidatesPhase2Sql(opts) {
+  const memberScanStartIsNull = Boolean(opts?.memberScanStartIsNull);
+  const endOp = opts?.endExclusive ? "<" : "<=";
+  return memberScanStartIsNull
+    ? `${MULTI_SOURCE_CANDIDATE_SELECT}
+          WHERE event_time ${endOp} $1
+            AND orig_addr IS NOT NULL
+            AND resp_addr = ANY($2::inet[])
+            AND category = ANY($3::text[])
+            AND selector_tags && $4::text[]`
+    : `${MULTI_SOURCE_CANDIDATE_SELECT}
+          WHERE event_time >= $1
+            AND event_time ${endOp} $2
+            AND orig_addr IS NOT NULL
+            AND resp_addr = ANY($3::inet[])
+            AND category = ANY($4::text[])
+            AND selector_tags && $5::text[]`;
+}
+
+/**
+ * R5 phase-1 — candidate `category` pre-aggregation:
+ * `GROUP BY category HAVING COUNT(DISTINCT orig_addr) >=
+ * $R5_MIN_SOURCES AND COUNT(DISTINCT resp_addr) >= $R5_MIN_VICTIMS`
+ * (one candidate key per signature). The `COUNT(DISTINCT resp_addr)`
+ * clause is what enforces the ≥2-victims floor that separates a
+ * campaign from an R4 fan-in.
+ *
+ * Parameters (slop-replay):
+ *   $1 :: timestamptz — memberScanStart
+ *   $2 :: timestamptz — memberScanEnd
+ *   $3 :: text[]      — critical-category set
+ *   $4 :: text[]      — critical-selector set
+ *   $5 :: int         — R5_MIN_SOURCES
+ *   $6 :: int         — R5_MIN_VICTIMS
+ *
+ * Parameters (first-tick): same list shifted left by one.
+ *
+ * @param {{ memberScanStartIsNull: boolean, endExclusive?: boolean }} opts
+ * @returns {string}
+ */
+export function buildReadR5CandidatesPhase1Sql(opts) {
+  const memberScanStartIsNull = Boolean(opts?.memberScanStartIsNull);
+  const endOp = opts?.endExclusive ? "<" : "<=";
+  return memberScanStartIsNull
+    ? `SELECT category
+           FROM baseline_triaged_event
+          WHERE event_time ${endOp} $1
+            AND orig_addr IS NOT NULL
+            AND resp_addr IS NOT NULL
+            AND category = ANY($2::text[])
+            AND selector_tags && $3::text[]
+          GROUP BY category
+         HAVING COUNT(DISTINCT orig_addr) >= $4
+            AND COUNT(DISTINCT resp_addr) >= $5`
+    : `SELECT category
+           FROM baseline_triaged_event
+          WHERE event_time >= $1
+            AND event_time ${endOp} $2
+            AND orig_addr IS NOT NULL
+            AND resp_addr IS NOT NULL
+            AND category = ANY($3::text[])
+            AND selector_tags && $4::text[]
+          GROUP BY category
+         HAVING COUNT(DISTINCT orig_addr) >= $5
+            AND COUNT(DISTINCT resp_addr) >= $6`;
+}
+
+/**
+ * R5 phase-2 — per-signature member scan against the candidate
+ * categories phase 1 returned: `category = ANY($::text[])`
+ * co-occurring with the eligibility predicate. The rule layer
+ * re-groups by `category` and re-applies the source/victim
+ * thresholds per sliding window.
+ *
+ * Parameters (slop-replay):
+ *   $1 :: timestamptz — memberScanStart
+ *   $2 :: timestamptz — memberScanEnd
+ *   $3 :: text[]      — phase-1 candidate categories (deduped)
+ *   $4 :: text[]      — critical-selector set
+ *
+ * Parameters (first-tick): same list shifted left by one.
+ *
+ * @param {{ memberScanStartIsNull: boolean, endExclusive?: boolean }} opts
+ * @returns {string}
+ */
+export function buildReadR5CandidatesPhase2Sql(opts) {
+  const memberScanStartIsNull = Boolean(opts?.memberScanStartIsNull);
+  const endOp = opts?.endExclusive ? "<" : "<=";
+  return memberScanStartIsNull
+    ? `${MULTI_SOURCE_CANDIDATE_SELECT}
+          WHERE event_time ${endOp} $1
+            AND orig_addr IS NOT NULL
+            AND resp_addr IS NOT NULL
+            AND category = ANY($2::text[])
+            AND selector_tags && $3::text[]`
+    : `${MULTI_SOURCE_CANDIDATE_SELECT}
+          WHERE event_time >= $1
+            AND event_time ${endOp} $2
+            AND orig_addr IS NOT NULL
+            AND resp_addr IS NOT NULL
+            AND category = ANY($3::text[])
+            AND selector_tags && $4::text[]`;
+}

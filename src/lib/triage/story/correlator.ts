@@ -51,11 +51,15 @@ import {
   insertAutoStory,
   readR1Candidates,
   readR3Candidates,
+  readR4Candidates,
+  readR5Candidates,
   readStoryWatermark,
 } from "./repository";
 import {
   detectR1,
   detectR3,
+  detectR4,
+  detectR5,
   MAX_RULE_WINDOW_MS,
   SLOP_WINDOW_MS,
   type StoryDraft,
@@ -176,17 +180,28 @@ export async function runStoryCorrelationForWindow(
   // R3 is two-phase: phase 1 pre-aggregates candidate assets
   // (`GROUP BY orig_addr HAVING COUNT(*) >= 3` over
   // `selector_tags && ...`), phase 2 reads per-asset rows via
-  // `orig_addr = ANY($::inet[])`. Final sliding-window clustering
-  // stays in the rule layer.
+  // `orig_addr = ANY($::inet[])`. R4/R5 (issue #694) follow the same
+  // two-phase pattern but with distinct phase-1 grouping shapes and a
+  // `resp_addr`-carrying member read: R4 groups by
+  // `(resp_addr, category)`, R5 by `category` with a distinct-victim
+  // floor. R4/R5 are wired directly here (not via RULE_REGISTRY) per
+  // Story RFC §10 option (a), because they need their own
+  // predicate-pushed candidate reads. Final sliding-window clustering
+  // and distinct-source counting stay in the rule layer.
   const readArgs = { client, memberScanStart, memberScanEnd, endExclusive };
-  const [r1Candidates, r3Candidates] = await Promise.all([
-    readR1Candidates(readArgs),
-    readR3Candidates(readArgs),
-  ]);
+  const [r1Candidates, r3Candidates, r4Candidates, r5Candidates] =
+    await Promise.all([
+      readR1Candidates(readArgs),
+      readR3Candidates(readArgs),
+      readR4Candidates(readArgs),
+      readR5Candidates(readArgs),
+    ]);
 
   const drafts: StoryDraft[] = [
     ...detectR1(r1Candidates),
     ...detectR3(r3Candidates),
+    ...detectR4(r4Candidates),
+    ...detectR5(r5Candidates),
   ];
 
   const insertFn = insertDraft ?? insertAutoStory;

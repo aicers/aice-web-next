@@ -54,3 +54,36 @@ export const CRITICAL_SELECTOR_SET = new Set([
   "S2-severe",
   "unlabeled-cluster",
 ]);
+
+// ── Multi-source rule thresholds (R4 / R5, issue #694) ────────────
+//
+// The R4/R5 phase-1 SQL binds these as `$N` parameters, and the
+// measurement harness (`scripts/measure-baseline-read-path.mjs`,
+// plain Node) supplies them when probing candidate keys. Like the
+// sets above they must be loadable from plain Node, so they live here
+// and `story/rules.ts` re-exports them as the rule-layer tunables.
+
+/**
+ * R4 (fan-in) — minimum distinct source IPs converging on one victim
+ * with the same critical category inside the window.
+ *
+ * @type {number}
+ */
+export const R4_MIN_SOURCES = 3;
+
+/**
+ * R5 (campaign) — minimum distinct source IPs driving the same
+ * critical category inside the window.
+ *
+ * @type {number}
+ */
+export const R5_MIN_SOURCES = 5;
+
+/**
+ * R5 (campaign) — minimum distinct victims the campaign must span.
+ * The ≥2-victims floor is what separates a campaign from an R4
+ * fan-in.
+ *
+ * @type {number}
+ */
+export const R5_MIN_VICTIMS = 2;

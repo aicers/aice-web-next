@@ -5,6 +5,8 @@ import {
   insertCuratedStory,
   readR1Candidates,
   readR3Candidates,
+  readR4Candidates,
+  readR5Candidates,
   readStoryMemberDetail,
 } from "@/lib/triage/story/repository";
 import type { CandidateEvent } from "@/lib/triage/story/rules";
@@ -20,6 +22,7 @@ function event(
   return {
     kind: "HttpThreat",
     origAddr: "10.0.0.5",
+    respAddr: null,
     category: null,
     selectorTags: [],
     rawScore: 0,
@@ -344,6 +347,253 @@ describe("readR3Candidates — two-phase per-asset access for measurement gate",
     expect(phase2.sql).toMatch(/orig_addr = ANY\(\$2::inet\[\]\)/);
     expect(phase2.sql).toMatch(/selector_tags && \$3::text\[\]/);
     expect(phase2.params).toHaveLength(3);
+  });
+});
+
+describe("readR4Candidates — two-phase per-victim access (issue #694)", () => {
+  function makeReadClient(opts?: {
+    phase1Rows?: Array<{ resp_addr: string; category: string }>;
+  }): {
+    client: unknown;
+    queries: Array<{ sql: string; params: unknown[] | undefined }>;
+  } {
+    const queries: Array<{ sql: string; params: unknown[] | undefined }> = [];
+    let queryIdx = 0;
+    const query = vi.fn(async (sql: string, params?: unknown[]) => {
+      queries.push({ sql, params });
+      const idx = queryIdx;
+      queryIdx += 1;
+      if (idx === 0 && opts?.phase1Rows) {
+        return { rows: opts.phase1Rows, rowCount: opts.phase1Rows.length };
+      }
+      return { rows: [], rowCount: 0 };
+    });
+    return { client: { query }, queries };
+  }
+
+  it("phase 1 pre-aggregates (resp_addr, category) with HAVING COUNT(DISTINCT orig_addr) >= R4_MIN_SOURCES", async () => {
+    const h = makeReadClient();
+    const start = new Date("2026-05-09T11:00:00Z");
+    const end = new Date("2026-05-09T13:00:00Z");
+    await readR4Candidates({
+      // biome-ignore lint/suspicious/noExplicitAny: fake test client
+      client: h.client as any,
+      memberScanStart: start,
+      memberScanEnd: end,
+    });
+    const phase1 = h.queries[0];
+    expect(phase1.sql).toMatch(/GROUP BY resp_addr, category/);
+    expect(phase1.sql).toMatch(/HAVING COUNT\(DISTINCT orig_addr\) >= \$5/);
+    expect(phase1.sql).toMatch(/resp_addr IS NOT NULL/);
+    // $3 categories, $4 selectors, $5 threshold.
+    expect(phase1.params?.[2]).toEqual(
+      expect.arrayContaining(Array.from(CRITICAL_CATEGORIES)),
+    );
+    expect(phase1.params?.[4]).toBe(3);
+  });
+
+  it("phase 2 reads members for the probed victims via resp_addr = ANY($::inet[])", async () => {
+    const h = makeReadClient({
+      phase1Rows: [
+        { resp_addr: "10.0.0.100", category: "IMPACT" },
+        { resp_addr: "10.0.0.100", category: "EXFILTRATION" },
+      ],
+    });
+    const start = new Date("2026-05-09T11:00:00Z");
+    const end = new Date("2026-05-09T13:00:00Z");
+    await readR4Candidates({
+      // biome-ignore lint/suspicious/noExplicitAny: fake test client
+      client: h.client as any,
+      memberScanStart: start,
+      memberScanEnd: end,
+    });
+    expect(h.queries).toHaveLength(2);
+    const phase2 = h.queries[1];
+    expect(phase2.sql).toMatch(/host\(resp_addr\)\s+AS resp_addr/);
+    expect(phase2.sql).toMatch(/resp_addr = ANY\(\$3::inet\[\]\)/);
+    // Victims deduped to a single entry despite two phase-1 rows.
+    expect(phase2.params?.[2]).toEqual(["10.0.0.100"]);
+  });
+
+  it("phase 1 returns no victims: phase 2 is skipped", async () => {
+    const h = makeReadClient();
+    const rows = await readR4Candidates({
+      // biome-ignore lint/suspicious/noExplicitAny: fake test client
+      client: h.client as any,
+      memberScanStart: new Date("2026-05-09T11:00:00Z"),
+      memberScanEnd: new Date("2026-05-09T13:00:00Z"),
+    });
+    expect(rows).toEqual([]);
+    expect(h.queries).toHaveLength(1);
+  });
+});
+
+describe("readR5Candidates — two-phase per-signature access (issue #694)", () => {
+  function makeReadClient(opts?: {
+    phase1Rows?: Array<{ category: string }>;
+  }): {
+    client: unknown;
+    queries: Array<{ sql: string; params: unknown[] | undefined }>;
+  } {
+    const queries: Array<{ sql: string; params: unknown[] | undefined }> = [];
+    let queryIdx = 0;
+    const query = vi.fn(async (sql: string, params?: unknown[]) => {
+      queries.push({ sql, params });
+      const idx = queryIdx;
+      queryIdx += 1;
+      if (idx === 0 && opts?.phase1Rows) {
+        return { rows: opts.phase1Rows, rowCount: opts.phase1Rows.length };
+      }
+      return { rows: [], rowCount: 0 };
+    });
+    return { client: { query }, queries };
+  }
+
+  it("phase 1 enforces the ≥2-victims floor via COUNT(DISTINCT resp_addr)", async () => {
+    const h = makeReadClient();
+    const start = new Date("2026-05-09T11:00:00Z");
+    const end = new Date("2026-05-09T13:00:00Z");
+    await readR5Candidates({
+      // biome-ignore lint/suspicious/noExplicitAny: fake test client
+      client: h.client as any,
+      memberScanStart: start,
+      memberScanEnd: end,
+    });
+    const phase1 = h.queries[0];
+    expect(phase1.sql).toMatch(/GROUP BY category/);
+    expect(phase1.sql).toMatch(/COUNT\(DISTINCT orig_addr\) >= \$5/);
+    expect(phase1.sql).toMatch(/COUNT\(DISTINCT resp_addr\) >= \$6/);
+    expect(phase1.params?.[4]).toBe(5); // R5_MIN_SOURCES
+    expect(phase1.params?.[5]).toBe(2); // R5_MIN_VICTIMS
+  });
+
+  it("phase 2 reads members for the probed categories via category = ANY($::text[])", async () => {
+    const h = makeReadClient({
+      phase1Rows: [{ category: "IMPACT" }, { category: "IMPACT" }],
+    });
+    await readR5Candidates({
+      // biome-ignore lint/suspicious/noExplicitAny: fake test client
+      client: h.client as any,
+      memberScanStart: new Date("2026-05-09T11:00:00Z"),
+      memberScanEnd: new Date("2026-05-09T13:00:00Z"),
+    });
+    expect(h.queries).toHaveLength(2);
+    const phase2 = h.queries[1];
+    expect(phase2.sql).toMatch(/category = ANY\(\$3::text\[\]\)/);
+    expect(phase2.sql).toMatch(/resp_addr IS NOT NULL/);
+    expect(phase2.params?.[2]).toEqual(["IMPACT"]); // deduped
+  });
+
+  it("phase 1 returns no campaign categories: phase 2 is skipped", async () => {
+    const h = makeReadClient();
+    const rows = await readR5Candidates({
+      // biome-ignore lint/suspicious/noExplicitAny: fake test client
+      client: h.client as any,
+      memberScanStart: new Date("2026-05-09T11:00:00Z"),
+      memberScanEnd: new Date("2026-05-09T13:00:00Z"),
+    });
+    expect(rows).toEqual([]);
+    expect(h.queries).toHaveLength(1);
+  });
+});
+
+describe("insertAutoStory — correlation_key dedup branch (issue #694)", () => {
+  function r4Draft() {
+    return {
+      ruleId: "R4" as const,
+      primaryAsset: "10.0.0.100",
+      correlationKey: "10.0.0.100|IMPACT",
+      timeWindowStart: new Date("2026-05-03T11:00:00Z"),
+      timeWindowEnd: new Date("2026-05-03T11:50:00Z"),
+      members: [
+        event({
+          eventKey: "1",
+          eventTime: "2026-05-03T11:00:00Z",
+          origAddr: "10.1.0.1",
+          respAddr: "10.0.0.100",
+          category: "IMPACT",
+          selectorTags: ["S2-severe"],
+        }),
+      ],
+      score: 3,
+      summary: {
+        kindHistogram: { HttpThreat: 1 },
+        categoryHistogram: { IMPACT: 1 },
+        memberCount: 1,
+        durationMs: 0,
+        distinctAssetCount: 1,
+        topRawScore: 0,
+      },
+    };
+  }
+
+  it("writes correlation_key and targets the correlation_key index for R4/R5", async () => {
+    const h = makeClient();
+    await insertAutoStory(
+      // biome-ignore lint/suspicious/noExplicitAny: fake test client
+      h.client as any,
+      r4Draft(),
+    );
+    const ins = h.queries.find((q) =>
+      q.sql.includes("INSERT INTO event_group "),
+    );
+    expect(ins).toBeDefined();
+    expect(ins?.sql).toContain("correlation_key");
+    expect(ins?.sql).toMatch(
+      /ON CONFLICT \(correlation_rule_id, correlation_key, time_window_start, time_window_end\)/,
+    );
+    expect(ins?.sql).toMatch(
+      /WHERE kind = 'auto_correlated' AND correlation_key IS NOT NULL/,
+    );
+    // correlation_key is the last positional INSERT bind ($8).
+    expect(ins?.params?.[7]).toBe("10.0.0.100|IMPACT");
+  });
+
+  it("R5 draft persists with NULL primary_asset under the correlation_key index", async () => {
+    const h = makeClient();
+    await insertAutoStory(
+      // biome-ignore lint/suspicious/noExplicitAny: fake test client
+      h.client as any,
+      {
+        ...r4Draft(),
+        ruleId: "R5",
+        primaryAsset: null,
+        correlationKey: "IMPACT",
+      },
+    );
+    const ins = h.queries.find((q) =>
+      q.sql.includes("INSERT INTO event_group "),
+    );
+    expect(ins?.params?.[4]).toBeNull(); // primary_asset
+    expect(ins?.params?.[7]).toBe("IMPACT"); // correlation_key
+    expect(ins?.sql).toMatch(/correlation_key IS NOT NULL/);
+  });
+
+  it("R1/R3 (correlation_key NULL) keep the legacy primary_asset index target", async () => {
+    const h = makeClient();
+    await insertAutoStory(
+      // biome-ignore lint/suspicious/noExplicitAny: fake test client
+      h.client as any,
+      {
+        ...r4Draft(),
+        ruleId: "R3",
+        primaryAsset: "10.0.0.5",
+        correlationKey: null,
+      },
+    );
+    const ins = h.queries.find((q) =>
+      q.sql.includes("INSERT INTO event_group "),
+    );
+    expect(ins?.sql).toMatch(
+      /ON CONFLICT \(correlation_rule_id, primary_asset, time_window_start, time_window_end\)/,
+    );
+    // The arbiter predicate must match the migration-0024 re-scoped
+    // index (`… AND correlation_key IS NULL`), else Postgres raises
+    // "no unique or exclusion constraint matching".
+    expect(ins?.sql).toMatch(
+      /WHERE kind = 'auto_correlated' AND primary_asset IS NOT NULL\s+AND correlation_key IS NULL/,
+    );
+    expect(ins?.params?.[7]).toBeNull(); // correlation_key bind is NULL
   });
 });
 

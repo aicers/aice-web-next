@@ -462,11 +462,18 @@ export const COUNT_ELIGIBLE_BY_STOP_SQL = `WITH scored AS (
 import {
   CRITICAL_CATEGORIES,
   CRITICAL_SELECTOR_SET,
+  R4_MIN_SOURCES,
+  R5_MIN_SOURCES,
+  R5_MIN_VICTIMS,
 } from "../story/critical-sets.mjs";
 import {
   buildReadR1CandidatesSql,
   buildReadR3CandidatesPhase1Sql,
   buildReadR3CandidatesPhase2Sql,
+  buildReadR4CandidatesPhase1Sql,
+  buildReadR4CandidatesPhase2Sql,
+  buildReadR5CandidatesPhase1Sql,
+  buildReadR5CandidatesPhase2Sql,
 } from "../story/read-path-sql.mjs";
 
 const CRITICAL_CATEGORIES_ARRAY = Array.from(CRITICAL_CATEGORIES);
@@ -615,6 +622,103 @@ export const MEASURED_QUERIES = [
       ctx.memberScanStartIso,
       ctx.memberScanEndIso,
       ctx.r3CandidateAssets?.slopReplay ?? [],
+      CRITICAL_SELECTOR_ARRAY,
+    ],
+  },
+  // ── R4 / R5 multi-source cadence entries (issue #694) ───────────
+  // Same first-tick / slop-replay split as R1/R3. Phase-2 entries
+  // depend on a phase-1 probe step (`ctx.r4CandidateVictims` /
+  // `ctx.r5CandidateCategories`) the harness runs before warm-up; an
+  // empty list records a `meta.notMeasurable` skip.
+  {
+    name: "readR4CandidatesPhase1",
+    context: "first-tick",
+    sql: buildReadR4CandidatesPhase1Sql({ memberScanStartIsNull: true }),
+    buildParams: (ctx) => [
+      ctx.memberScanEndIso,
+      CRITICAL_CATEGORIES_ARRAY,
+      CRITICAL_SELECTOR_ARRAY,
+      R4_MIN_SOURCES,
+    ],
+  },
+  {
+    name: "readR4CandidatesPhase1",
+    context: "slop-replay",
+    sql: buildReadR4CandidatesPhase1Sql({ memberScanStartIsNull: false }),
+    buildParams: (ctx) => [
+      ctx.memberScanStartIso,
+      ctx.memberScanEndIso,
+      CRITICAL_CATEGORIES_ARRAY,
+      CRITICAL_SELECTOR_ARRAY,
+      R4_MIN_SOURCES,
+    ],
+  },
+  {
+    name: "readR4CandidatesPhase2",
+    context: "first-tick",
+    sql: buildReadR4CandidatesPhase2Sql({ memberScanStartIsNull: true }),
+    buildParams: (ctx) => [
+      ctx.memberScanEndIso,
+      ctx.r4CandidateVictims?.firstTick ?? [],
+      CRITICAL_CATEGORIES_ARRAY,
+      CRITICAL_SELECTOR_ARRAY,
+    ],
+  },
+  {
+    name: "readR4CandidatesPhase2",
+    context: "slop-replay",
+    sql: buildReadR4CandidatesPhase2Sql({ memberScanStartIsNull: false }),
+    buildParams: (ctx) => [
+      ctx.memberScanStartIso,
+      ctx.memberScanEndIso,
+      ctx.r4CandidateVictims?.slopReplay ?? [],
+      CRITICAL_CATEGORIES_ARRAY,
+      CRITICAL_SELECTOR_ARRAY,
+    ],
+  },
+  {
+    name: "readR5CandidatesPhase1",
+    context: "first-tick",
+    sql: buildReadR5CandidatesPhase1Sql({ memberScanStartIsNull: true }),
+    buildParams: (ctx) => [
+      ctx.memberScanEndIso,
+      CRITICAL_CATEGORIES_ARRAY,
+      CRITICAL_SELECTOR_ARRAY,
+      R5_MIN_SOURCES,
+      R5_MIN_VICTIMS,
+    ],
+  },
+  {
+    name: "readR5CandidatesPhase1",
+    context: "slop-replay",
+    sql: buildReadR5CandidatesPhase1Sql({ memberScanStartIsNull: false }),
+    buildParams: (ctx) => [
+      ctx.memberScanStartIso,
+      ctx.memberScanEndIso,
+      CRITICAL_CATEGORIES_ARRAY,
+      CRITICAL_SELECTOR_ARRAY,
+      R5_MIN_SOURCES,
+      R5_MIN_VICTIMS,
+    ],
+  },
+  {
+    name: "readR5CandidatesPhase2",
+    context: "first-tick",
+    sql: buildReadR5CandidatesPhase2Sql({ memberScanStartIsNull: true }),
+    buildParams: (ctx) => [
+      ctx.memberScanEndIso,
+      ctx.r5CandidateCategories?.firstTick ?? [],
+      CRITICAL_SELECTOR_ARRAY,
+    ],
+  },
+  {
+    name: "readR5CandidatesPhase2",
+    context: "slop-replay",
+    sql: buildReadR5CandidatesPhase2Sql({ memberScanStartIsNull: false }),
+    buildParams: (ctx) => [
+      ctx.memberScanStartIso,
+      ctx.memberScanEndIso,
+      ctx.r5CandidateCategories?.slopReplay ?? [],
       CRITICAL_SELECTOR_ARRAY,
     ],
   },

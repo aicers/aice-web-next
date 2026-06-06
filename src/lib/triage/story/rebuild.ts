@@ -121,6 +121,7 @@ export interface StoryRebuildResult {
 interface OldAutoStoryRow {
   correlation_rule_id: string | null;
   primary_asset: string | null;
+  correlation_key: string | null;
   time_window_start: Date;
   time_window_end: Date;
   last_sent_at: Date | null;
@@ -129,33 +130,41 @@ interface OldAutoStoryRow {
 }
 
 /**
- * Natural key for the auto-Story partial unique index:
- * `(correlation_rule_id, primary_asset, time_window_start, time_window_end)`.
- * Used to join new drafts against the pre-rebuild snapshot so the
- * matching row's β columns are copied to the replacement.
+ * Natural key for the auto-Story dedup identity. Joins new drafts
+ * against the pre-rebuild snapshot so the matching row's β columns
+ * are copied to the replacement.
  *
- * `primary_asset` is normalized via `host()` server-side on read so
- * the snapshot string matches the draft's `primaryAsset` (which is
- * also the string form returned by `host()` in
- * `readR1Candidates` / `readR3Candidates`). The
- * `time_window_start` / `time_window_end` Dates are normalized to
- * their epoch-millisecond representation so two equivalent `Date`
- * instances (e.g., reconstructed across the pg JSON boundary)
- * collide on the same key.
+ * `correlation_key` is included because the bare
+ * `(correlation_rule_id, primary_asset, time_window_start,
+ * time_window_end)` tuple is ambiguous for the multi-source rules
+ * (issue #694): R5 has `primary_asset = NULL`, and two R4 rows on the
+ * same victim + window collide unless `category` (carried in
+ * `correlation_key`) discriminates them. The key thus matches the new
+ * dedup identity — `correlation_key IS NULL` for R1/R3 (asset index),
+ * non-NULL for R4/R5 (`correlation_key` index).
+ *
+ * `primary_asset` / `correlation_key` are normalized via `host()`
+ * server-side on read so the snapshot string matches the draft's
+ * `primaryAsset` / `correlationKey` (also the `host()` string form in
+ * the candidate reads). The `time_window_start` / `time_window_end`
+ * Dates are normalized to epoch-millisecond so two equivalent `Date`
+ * instances collide on the same key.
  */
 function snapshotKey(
   ruleId: string | null,
   primaryAsset: string | null,
+  correlationKey: string | null,
   start: Date,
   end: Date,
 ): string {
-  return `${ruleId ?? ""}|${primaryAsset ?? ""}|${start.getTime()}|${end.getTime()}`;
+  return `${ruleId ?? ""}|${primaryAsset ?? ""}|${correlationKey ?? ""}|${start.getTime()}|${end.getTime()}`;
 }
 
 function draftKey(draft: StoryDraft): string {
   return snapshotKey(
     draft.ruleId,
     draft.primaryAsset,
+    draft.correlationKey ?? null,
     draft.timeWindowStart,
     draft.timeWindowEnd,
   );
@@ -269,6 +278,7 @@ async function runRebuildTransaction(
     const snapshotRes = await client.query<OldAutoStoryRow>(
       `SELECT correlation_rule_id,
               host(primary_asset)::text AS primary_asset,
+              correlation_key,
               time_window_start,
               time_window_end,
               last_sent_at,
@@ -284,6 +294,7 @@ async function runRebuildTransaction(
       const key = snapshotKey(
         row.correlation_rule_id,
         row.primary_asset,
+        row.correlation_key,
         row.time_window_start,
         row.time_window_end,
       );

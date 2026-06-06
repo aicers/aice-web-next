@@ -119,6 +119,37 @@ const PATTERNS = [
       /\borig_addr\s*=\s*ANY\s*\(\s*\$\d+::inet\[\]\s*\)/i.test(source) &&
       /\bselector_tags\s*&&\s*\$\d+::text\[\]/i.test(source),
   },
+  // Issue #694: R4 (fan-in) / R5 (campaign) multi-source cadence
+  // shapes. R4's phase-1 is the only `GROUP BY resp_addr, category`
+  // with `HAVING COUNT(DISTINCT orig_addr)`; R5's phase-1 is the only
+  // `GROUP BY category` with `COUNT(DISTINCT resp_addr)`; the
+  // multi-source phase-2 reads are the only `resp_addr = ANY($N::inet[])`
+  // co-occurring with `selector_tags && $`. An inlined copy of any of
+  // these would silently diverge from the harness's `MEASURED_QUERIES`
+  // entry the moment one side is edited.
+  {
+    label:
+      "`GROUP BY resp_addr, category ... HAVING COUNT(DISTINCT orig_addr)` (R4 phase-1 cadence shape)",
+    test: (source) =>
+      /\bGROUP\s+BY\s+resp_addr,\s*category\b[\s\S]*?\bHAVING\s+COUNT\s*\(\s*DISTINCT\s+orig_addr\s*\)/i.test(
+        source,
+      ),
+  },
+  {
+    label:
+      "`GROUP BY category ... COUNT(DISTINCT resp_addr)` (R5 phase-1 cadence shape)",
+    test: (source) =>
+      /\bGROUP\s+BY\s+category\b[\s\S]*?\bCOUNT\s*\(\s*DISTINCT\s+resp_addr\s*\)/i.test(
+        source,
+      ),
+  },
+  {
+    label:
+      "`resp_addr = ANY(...::inet[])` co-occurring with `selector_tags && $` (R4/R5 phase-2 cadence shape)",
+    test: (source) =>
+      /\bresp_addr\s*=\s*ANY\s*\(\s*\$\d+::inet\[\]\s*\)/i.test(source) &&
+      /\bselector_tags\s*&&\s*\$\d+::text\[\]/i.test(source),
+  },
 ];
 
 const SOURCE_EXTS = new Set([

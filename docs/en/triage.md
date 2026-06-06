@@ -811,8 +811,8 @@ runs on the baseline corpus only; the policy corpus has no
 > **Note:** The figure above is a wireframe stand-in. Live PNG
 > captures land once a staging tenant with a representative Story
 > fixture is available; the screenshot debt is folded into the
-> manual-screenshot rollout tracked under [issue
-> #455](https://github.com/aicers/aice-web-next/issues/455).
+> Phase 1.B manual-screenshot rollout tracked under [issue
+> #463](https://github.com/aicers/aice-web-next/issues/463).
 
 ### Stories list
 
@@ -848,8 +848,14 @@ Each Story renders as one card with:
   `<primary asset> · <duration> · <top-3 categories>`. For an
   analyst-curated Story that supplied a title at save time the
   card renders the analyst's title verbatim instead.
-- **Rule badge** — `R1` / `R3` for auto-correlated Stories,
-  `analyst-curated` for the curated kind.
+- **Rule badge** — the correlation rule for auto-correlated
+  Stories, `analyst-curated` for the curated kind. Auto rules are:
+  - `R1` — one asset, multiple critical categories in a short window.
+  - `R3` — one asset, repeated critical-selector activity.
+  - `R4` — fan-in: many source IPs converging on one victim with the
+    same attack signature.
+  - `R5` — campaign: the same attack signature from many source IPs
+    across multiple victims (this Story has no single primary asset).
 - **Score** — `event_group.score`, two decimal places.
 - **Member count** — the stored
   `summary_payload.memberCount` (NOT the runtime-joined count);

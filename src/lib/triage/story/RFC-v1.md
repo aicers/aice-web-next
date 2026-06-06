@@ -31,9 +31,20 @@ compares within the same `story_version` cohort by construction.
 
 ## §3 — Rule definitions and parameters
 
-Two rules ship in v1. R2 (kill-chain progression) is intentionally
-deferred to a v2 RFC bump; the `correlation_rule_id = 'R2'` slot
-stays reserved so the rule-ID enum does not shift.
+Four rules ship under `story_version = 'v1'`: the original asset-keyed
+R1/R3, plus the multi-source R4 (fan-in) and R5 (campaign) added by
+issue #694. R2 (kill-chain progression) is intentionally deferred to a
+v2 RFC bump; the `correlation_rule_id = 'R2'` slot stays reserved so
+the rule-ID enum does not shift.
+
+R4 and R5 treat events as "the same attack" using the conservative v1
+identity — **same critical `category` AND overlapping critical
+`selector_tags`** (mirrors R1's category predicate + R3's selector
+predicate). Both additionally exclude `orig_addr IS NULL` and
+`resp_addr IS NULL`: R4 keys on the victim, and R5's distinct-victim
+floor cannot attribute a null-victim event, so a null-victim member
+contributes to neither rule's victim accounting and is dropped from
+candidacy entirely.
 
 ### R1 — Asset × multi-category window
 
@@ -128,12 +139,88 @@ stays reserved so the rule-ID enum does not shift.
   issue is a GIN index on `selector_tags` — migration-only, no
   callsite churn.
 
+### R4 — Fan-in (converging on one victim)
+
+> Within a **1-hour** window, **≥ `R4_MIN_SOURCES` distinct
+> `orig_addr`** target the **same `resp_addr`** with the **same
+> critical `category`**, all members satisfying the critical-selector
+> predicate.
+
+- Window: **1 hour** (sliding; same `clusterByWindow` semantics as R3).
+- Grouping key: `(resp_addr, category)`.
+- Threshold: `R4_MIN_SOURCES = 3` distinct source IPs (calibration
+  knob).
+- `primary_asset = resp_addr` (the victim — fits the existing `INET`
+  column).
+- `correlation_key = host(resp_addr) || '|' || category` (dedup
+  discriminator — see §5).
+- Score: **distinct source-IP count** in the window.
+- `correlation_rule_id = 'R4'`.
+- **SQL push-down (§5).** R4's read is two-phase. Phase 1
+  pre-aggregates candidate victims:
+
+  ```sql
+  SELECT host(resp_addr) AS resp_addr, category
+    FROM baseline_triaged_event
+   WHERE event_time IN [memberScanStart, memberScanEnd]
+     AND orig_addr IS NOT NULL AND resp_addr IS NOT NULL
+     AND category = ANY($criticalCategories::text[])
+     AND selector_tags && $criticalSelectors::text[]
+   GROUP BY resp_addr, category
+  HAVING COUNT(DISTINCT orig_addr) >= $R4_MIN_SOURCES
+  ```
+
+  Phase 2 reads members for the candidate victims via
+  `resp_addr = ANY($::inet[])` (riding
+  `baseline_triaged_event_resp_addr_gist`). Final
+  `(resp_addr, category)` grouping, sliding-window clustering, and
+  the distinct-source threshold stay in `rules.ts`.
+
+### R5 — Campaign (same signature, multiple victims)
+
+> Within a **1-hour** window, the **same critical `category`** is
+> driven by **≥ `R5_MIN_SOURCES` distinct `orig_addr`** against
+> **≥ `R5_MIN_VICTIMS` distinct `resp_addr`**, all members satisfying
+> the critical-selector predicate.
+
+- Window: **1 hour**.
+- Grouping key: `category` (the shared signature).
+- Thresholds: `R5_MIN_SOURCES = 5` distinct sources **and**
+  `R5_MIN_VICTIMS = 2` distinct victims. The `≥ 2 victims` floor is
+  what distinguishes a campaign from an R4 fan-in.
+- `primary_asset = NULL` (no single converging asset).
+- `correlation_key = category`.
+- Score: **distinct source-IP count** in the window.
+- `correlation_rule_id = 'R5'`.
+- **SQL push-down (§5).** Phase 1 pre-aggregates candidate
+  signatures:
+
+  ```sql
+  SELECT category
+    FROM baseline_triaged_event
+   WHERE event_time IN [memberScanStart, memberScanEnd]
+     AND orig_addr IS NOT NULL AND resp_addr IS NOT NULL
+     AND category = ANY($criticalCategories::text[])
+     AND selector_tags && $criticalSelectors::text[]
+   GROUP BY category
+  HAVING COUNT(DISTINCT orig_addr) >= $R5_MIN_SOURCES
+     AND COUNT(DISTINCT resp_addr) >= $R5_MIN_VICTIMS
+  ```
+
+  The `COUNT(DISTINCT resp_addr)` clause enforces the ≥2-victims
+  floor. Phase 2 reads members for the candidate categories via
+  `category = ANY($::text[])`. Per §9 (option A), a large attack may
+  legitimately produce both an R4 row (per victim) and an R5 row
+  (campaign-wide); that is intended and not deduplicated at write
+  time.
+
 ### `max_rule_window`
 
-`max_rule_window = max(R1.window, R3.window) = 1 hour`. Consumed
-by the §4 slop-replay member-scan lookback. Adding any rule with a
-larger window forces a Story RFC bump because the slop-replay
-window grows with it.
+`max_rule_window = max(R1.window, R3.window, R4.window, R5.window)
+= 1 hour`. R4/R5 share R3's 1-hour window, so adding them does not
+move it. Consumed by the §4 slop-replay member-scan lookback. Adding
+any rule with a larger window forces a Story RFC bump because the
+slop-replay window grows with it.
 
 ## §4 — Slop window and watermark protocol
 
@@ -188,10 +275,57 @@ window grows with it.
 ## §5 — Persistence
 
 Migration `migrations/customer/0008_event_group_story.sql` lands
-the schema (single new file). The only `ALTER` on existing tables
-is the additive `story_finalized_through` column on the
+the original schema (single new file). The only `ALTER` on existing
+tables is the additive `story_finalized_through` column on the
 `baseline_corpus_state` singleton; corpus A tables
 (`baseline_triaged_event`, `observed_event_meta`) are not touched.
+
+### `correlation_key` column and dedup re-scope (issue #694)
+
+Migration `migrations/customer/0024_event_group_correlation_key.sql`
+adds the multi-source rules' persistence:
+
+- `ALTER TABLE event_group ADD COLUMN correlation_key TEXT;`
+  (additive, nullable).
+- New partial unique index governing R4/R5:
+
+  ```sql
+  CREATE UNIQUE INDEX event_group_corrkey_dedup_idx ON event_group
+    (correlation_rule_id, correlation_key, time_window_start, time_window_end)
+    WHERE kind = 'auto_correlated' AND correlation_key IS NOT NULL;
+  ```
+
+- **Re-scope of the existing index** so an R4 row (which sets BOTH
+  `primary_asset` and `correlation_key`) is governed solely by the
+  new index. Without this, two same-victim/same-window R4 rows
+  differing only by `category` would collide on
+  `(R4, resp_addr, window)` and the old index would raise an
+  unhandled `unique_violation` (`ON CONFLICT` only arbitrates the
+  named `correlation_key` index). The fix narrows the old index with
+  `AND correlation_key IS NULL` (DROP + CREATE, no data change):
+
+  ```sql
+  DROP INDEX IF EXISTS event_group_auto_dedup_idx;
+  CREATE UNIQUE INDEX event_group_auto_dedup_idx ON event_group
+    (correlation_rule_id, primary_asset, time_window_start, time_window_end)
+    WHERE kind = 'auto_correlated' AND primary_asset IS NOT NULL
+      AND correlation_key IS NULL;
+  ```
+
+  This partitions cleanly by `correlation_key` NULL-ness: R1/R3
+  (`correlation_key IS NULL`) on the old index, R4/R5
+  (`correlation_key IS NOT NULL`) on the new one. The migration is
+  therefore **not purely additive** (it re-scopes one existing index)
+  but is data-preserving — R1/R3 dedup semantics are identical.
+
+- **`insertAutoStory` branches its `ON CONFLICT` target by whether
+  `correlationKey` is present**, not by rule id, and writes
+  `correlation_key` in both the plain and carry-over INSERT variants.
+  When `correlationKey` is set (R4/R5) it targets
+  `event_group_corrkey_dedup_idx`; when NULL (R1/R3) it keeps the
+  re-scoped `event_group_auto_dedup_idx`. Both paths stay
+  `… ON CONFLICT DO NOTHING`. R1/R3 always write
+  `correlation_key = NULL`.
 
 The cadence pager imports `runStepF` from
 `src/lib/triage/story/correlator.ts` and calls it immediately after
@@ -212,8 +346,13 @@ single broad-range candidate scan:
   `selector_tags && $criticalSelectors::text[]` predicate);
   phase 2 reads per-asset rows via
   `orig_addr = ANY($assets::inet[])`.
+- `readR4Candidates` / `readR5Candidates` (issue #694) — two-phase,
+  reading a candidate set that also carries `resp_addr`. R4 phase 1
+  groups by `(resp_addr, category)`, R5 phase 1 by `category` with a
+  distinct-victim floor; phase 2 reads members for the candidate
+  keys (`resp_addr = ANY(…)` for R4, `category = ANY(…)` for R5).
 
-The correlator runs both reads in parallel, then dispatches each
+The correlator runs all four reads in parallel, then dispatches each
 result set to its rule's pure in-memory clusterer. The split
 serves three goals:
 
@@ -266,6 +405,13 @@ the same natural-expiry model: a Story RFC bump produces new
 groups under the new version; old-version groups age out via
 retention without retroactive recomputation.
 
+The R4/R5 multi-source rules (issue #694) keep the `story_version`
+stamp at **`'v1'`**: they are additive new `correlation_rule_id`
+values that do not invalidate existing v1 rows, so no version bump is
+warranted. Mixing R1/R3/R4/R5 rows under one `'v1'` cohort is
+intentional — score comparisons remain within-cohort by
+construction (§2).
+
 ## §7 — `summary_payload` JSONB contract
 
 Fixed key set so #490 binds to a stable shape across rule
@@ -278,7 +424,7 @@ a `story_version` bump.
 | `categoryHistogram`  | `Record<string, number>`   | Per-`category` count over members; NULL categories are not bucketed. |
 | `memberCount`        | `number`                   | Length of the persisted member list (post-§8 cap). |
 | `durationMs`         | `number`                   | `max(event_time) − min(event_time)` across members, in ms. |
-| `distinctAssetCount` | `number`                   | Distinct non-NULL `orig_addr` across members. v1 rules are asset-keyed so this is typically `1`. |
+| `distinctAssetCount` | `number`                   | Distinct non-NULL `orig_addr` across members. For the asset-keyed rules R1/R3 this is typically `1`; for the multi-source rules R4/R5 (issue #694) it legitimately exceeds 1 and is the meaningful source fan-out figure. |
 | `topRawScore`        | `number`                   | Max `raw_score` over members. Story-internal sort hint, NOT surfaced to UI as a baseline percentile. |
 
 The correlator computes `summary_payload` at step (f) from the
@@ -318,13 +464,28 @@ render time if visual clutter is a problem.
 
 ## §10 — Future-rule format
 
-A future rule plugs into the runner as a typed predicate function
-plus metadata in `src/lib/triage/story/rules.ts`'s `RULE_REGISTRY`.
-No schema change is required. v2 R2 specifically must specify its
-data source — cadence-side `payload_summary` extension, or new
-normalized columns on `baseline_triaged_event`, or both — before
-merging. The `correlation_rule_id = 'R2'` slot is reserved by this
-RFC for that bump.
+A future rule that reads the **same shared candidate set** as R1/R3
+plugs into the runner as a typed predicate function plus metadata in
+`src/lib/triage/story/rules.ts`'s `RULE_REGISTRY`.
+
+**Amendment (issue #694, option (a)).** R4/R5 do *not* fit the
+`RULE_REGISTRY` shared-set signature: `RULE_REGISTRY` entries are
+`(events) => StoryDraft[]` over one shared candidate set, whereas
+R4/R5 need their own predicate-pushed reads
+(`readR4Candidates` / `readR5Candidates`, which select `resp_addr`
+and pre-aggregate on different keys). So R4/R5 are **wired directly
+in the correlator** (`correlator.ts` `runStoryCorrelationForWindow`),
+alongside their reads, and `RULE_REGISTRY` / `detectAllStories`
+deliberately list only R1/R3. A future rule that needs its own
+candidate source follows the R4/R5 precedent (direct correlator
+wiring); one that can share the R1/R3 candidate set joins
+`RULE_REGISTRY`. Either way no schema change is required.
+
+v2 R2 specifically must specify its data source — cadence-side
+`payload_summary` extension, or new normalized columns on
+`baseline_triaged_event`, or both — before merging. The
+`correlation_rule_id = 'R2'` slot is reserved by this RFC for that
+bump.
 
 ## §11 — Worked examples
 
@@ -401,6 +562,55 @@ carry the same `primary_asset = '10.0.0.9'`; the R1 row's
 `time_window_end = 09:09:00`, the R3 row's
 `time_window_end = 09:55:00`. The Stories UI may dedupe by
 overlap at render time.
+
+### Example 4 — R4 fan-in (issue #694)
+
+Three distinct source IPs hit victim `10.0.0.100` with the same
+critical category `IMPACT`, each carrying a critical selector, within
+50 minutes:
+
+| event_key | event_time                | orig_addr | resp_addr   | category | selector_tags   |
+|-----------|---------------------------|-----------|-------------|----------|-----------------|
+| 1         | 2026-05-09 10:00:00 +0000 | `10.1.0.1`| `10.0.0.100`| `IMPACT` | `['S2-severe']` |
+| 2         | 2026-05-09 10:20:00 +0000 | `10.1.0.2`| `10.0.0.100`| `IMPACT` | `['S2-severe']` |
+| 3         | 2026-05-09 10:50:00 +0000 | `10.1.0.3`| `10.0.0.100`| `IMPACT` | `['S2-severe']` |
+
+- The `(resp_addr, category) = ('10.0.0.100', 'IMPACT')` bucket has
+  3 distinct `orig_addr` ≥ `R4_MIN_SOURCES` within 1 hour. R4 fires.
+- R5 does not: a single victim cannot meet the `≥ 2 victims` floor.
+
+Result: one `event_group` row with `correlation_rule_id = 'R4'`,
+`primary_asset = '10.0.0.100'`,
+`correlation_key = '10.0.0.100|IMPACT'`, `score = 3` (distinct
+source count), `time_window_start = 10:00:00`,
+`time_window_end = 10:50:00`, `summary_payload.distinctAssetCount =
+3`.
+
+### Example 5 — R5 campaign (issue #694)
+
+The same critical category `IMPACT` is driven by five distinct
+source IPs against three victims within 40 minutes:
+
+| event_key | event_time                | orig_addr | resp_addr   | category | selector_tags   |
+|-----------|---------------------------|-----------|-------------|----------|-----------------|
+| 1         | 2026-05-09 10:00:00 +0000 | `10.1.0.1`| `10.0.0.100`| `IMPACT` | `['S2-severe']` |
+| 2         | 2026-05-09 10:10:00 +0000 | `10.1.0.2`| `10.0.0.100`| `IMPACT` | `['S2-severe']` |
+| 3         | 2026-05-09 10:20:00 +0000 | `10.1.0.3`| `10.0.0.200`| `IMPACT` | `['S2-severe']` |
+| 4         | 2026-05-09 10:30:00 +0000 | `10.1.0.4`| `10.0.0.200`| `IMPACT` | `['S2-severe']` |
+| 5         | 2026-05-09 10:40:00 +0000 | `10.1.0.5`| `10.0.0.30` | `IMPACT` | `['S2-severe']` |
+
+- The `category = 'IMPACT'` bucket has 5 distinct `orig_addr` ≥
+  `R5_MIN_SOURCES` and 3 distinct `resp_addr` ≥ `R5_MIN_VICTIMS`
+  within 1 hour. R5 fires.
+- No single victim has ≥ 3 sources, so R4 does not fire here. (Had
+  one victim met R4's threshold, option A would legitimately emit
+  both an R4 row and this R5 row.)
+
+Result: one `event_group` row with `correlation_rule_id = 'R5'`,
+`primary_asset = NULL`, `correlation_key = 'IMPACT'`, `score = 5`
+(distinct source count), `time_window_start = 10:00:00`,
+`time_window_end = 10:40:00`, `summary_payload.distinctAssetCount =
+5`.
 
 ## §12 — Out of scope of this RFC
 

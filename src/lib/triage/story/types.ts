@@ -20,9 +20,16 @@ export const TRIAGE_STORY_PAGE_SIZE = 200;
 /**
  * Heuristic correlation rule identifiers persisted on
  * `event_group.correlation_rule_id`. `'R2'` is reserved by #489 for
- * the v2 RFC bump and is intentionally absent from the v1 surface.
+ * the v2 kill-chain RFC bump and is intentionally absent from the
+ * surface. `'R4'` (fan-in) and `'R5'` (campaign) are the
+ * multi-source rules added by #694 — both additive new
+ * `correlation_rule_id` values that keep `story_version = 'v1'`.
+ *
+ * NOTE: kept in sync with the `ACTIVE_RULE_IDS` tuple in
+ * `./rules.ts` (the two definitions are intentionally duplicated;
+ * single-sourcing is a separate follow-up).
  */
-export type StoryRuleId = "R1" | "R3";
+export type StoryRuleId = "R1" | "R3" | "R4" | "R5";
 
 /**
  * `event_group.kind` discriminator. Auto-correlated rows are produced
