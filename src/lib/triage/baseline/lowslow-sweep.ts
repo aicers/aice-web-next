@@ -63,11 +63,12 @@ import "server-only";
  *
  * ## Rebuild interaction
  *
- * R6 is re-derived by NEITHER baseline force-rebuild (which re-derives
- * no Stories) NOR Story force-rebuild (`story/rebuild.ts`, which
- * re-derives the cadence-path rules R1/R3/R4/R5). The sweep and
- * `lowslow_finalized_through` are intentionally not wired into either
- * rebuild path — consistent with the no-retroactive-backfill contract.
+ * The low-and-slow sweep rules (R2 and R6) are re-derived by NEITHER
+ * baseline force-rebuild (which re-derives no Stories) NOR Story
+ * force-rebuild (`story/rebuild.ts`, which re-derives the cadence-path
+ * rules R1/R3/R4/R5). The sweep and `lowslow_finalized_through` are
+ * intentionally not wired into either rebuild path — consistent with
+ * the no-retroactive-backfill contract.
  */
 
 import { timingSafeEqual } from "node:crypto";
