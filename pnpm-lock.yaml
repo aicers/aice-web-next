@@ -30,11 +30,11 @@ importers:
         specifier: ^3.1.1
         version: 3.1.1
       graphql:
-        specifier: ^16.13.1
-        version: 16.13.2
+        specifier: ^16.14.1
+        version: 16.14.1
       graphql-request:
         specifier: ^7.4.0
-        version: 7.4.0(graphql@16.13.2)
+        version: 7.4.0(graphql@16.14.1)
       jose:
         specifier: ^6.2.3
         version: 6.2.3
@@ -2088,8 +2088,8 @@ packages:
     peerDependencies:
       graphql: 14 - 16
 
-  graphql@16.13.2:
-    resolution: {integrity: sha512-5bJ+nf/UCpAjHM8i06fl7eLyVC9iuNAjm9qzkiu2ZGhM0VscSvS6WDPfAwkdkBuoXGM9FJSbKl6wylMwP9Ktig==}
+  graphql@16.14.1:
+    resolution: {integrity: sha512-cQOsSMS/IrDz82PVyRDvf/Q1F/bRbBVjJlh+xYOkI1qw2bWRvWGiWc+m2O0d6l4Bt1fyY+8kzJ8JFWGJqNeDBg==}
     engines: {node: ^12.22.0 || ^14.16.0 || ^16.0.0 || >=17.0.0}
 
   html-encoding-sniffer@6.0.0:
@@ -3129,9 +3129,9 @@ snapshots:
     dependencies:
       '@formatjs/fast-memoize': 3.1.5
 
-  '@graphql-typed-document-node/core@3.2.0(graphql@16.13.2)':
+  '@graphql-typed-document-node/core@3.2.0(graphql@16.14.1)':
     dependencies:
-      graphql: 16.13.2
+      graphql: 16.14.1
 
   '@hexagon/base64@1.1.28': {}
 
@@ -4811,12 +4811,12 @@ snapshots:
 
   graceful-fs@4.2.11: {}
 
-  graphql-request@7.4.0(graphql@16.13.2):
+  graphql-request@7.4.0(graphql@16.14.1):
     dependencies:
-      '@graphql-typed-document-node/core': 3.2.0(graphql@16.13.2)
-      graphql: 16.13.2
+      '@graphql-typed-document-node/core': 3.2.0(graphql@16.14.1)
+      graphql: 16.14.1
 
-  graphql@16.13.2: {}
+  graphql@16.14.1: {}
 
   html-encoding-sniffer@6.0.0(@noble/hashes@2.2.0):
     dependencies:
