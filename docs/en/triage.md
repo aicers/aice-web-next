@@ -811,8 +811,8 @@ runs on the baseline corpus only; the policy corpus has no
 > **Note:** The figure above is a wireframe stand-in. Live PNG
 > captures land once a staging tenant with a representative Story
 > fixture is available; the screenshot debt is folded into the
-> manual-screenshot rollout tracked under [issue
-> #455](https://github.com/aicers/aice-web-next/issues/455).
+> Phase 1.B manual-screenshot rollout tracked under [issue
+> #463](https://github.com/aicers/aice-web-next/issues/463).
 
 ### Stories list
 
