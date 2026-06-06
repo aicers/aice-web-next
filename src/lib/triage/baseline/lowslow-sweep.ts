@@ -50,6 +50,14 @@ import "server-only";
  * the next hourly tick picks up via the watermark. Lock release is
  * automatic on commit/rollback.
  *
+ * The dispatcher passes a per-customer `timeoutMs`. Because the
+ * dispatcher's `AbortSignal` is only observed *between* statements —
+ * `client.query` does not honour it mid-flight — the sweep also binds
+ * `statement_timeout` DB-side (the deadline-bound client) so Postgres
+ * cancels a stuck 24h scan and the transaction rolls back, freeing the
+ * connection and the advisory lock within budget rather than holding
+ * them until the query finishes on its own.
+ *
  * ## Rebuild interaction
  *
  * R6 is re-derived by NEITHER baseline force-rebuild (which re-derives
@@ -60,6 +68,8 @@ import "server-only";
  */
 
 import { timingSafeEqual } from "node:crypto";
+
+import type pg from "pg";
 
 import { getCustomerPool } from "@/lib/triage/policy/customer-db";
 import {
@@ -118,9 +128,9 @@ function buildLockKeyParam(customerId: number): string {
  */
 export async function runLowslowSweep(
   customerId: number,
-  options: { signal?: AbortSignal },
+  options: { signal?: AbortSignal; timeoutMs?: number },
 ): Promise<LowslowSweepResult> {
-  const { signal } = options;
+  const { signal, timeoutMs } = options;
 
   // Lets `CustomerNotFoundError` propagate so the route handler / the
   // dispatcher can surface it appropriately.
@@ -155,8 +165,27 @@ export async function runLowslowSweep(
       };
     }
 
-    const horizon = await readStoryWatermark(client);
-    const watermark = await readLowslowWatermark(client);
+    // DB-side hard bound. The dispatcher's `AbortSignal` only frees the
+    // worker slot if the runner cooperates *between* statements — but the
+    // sweep spends its risk inside `client.query` (the 24h
+    // `readR6Candidates` scan), which never observes the signal mid-flight.
+    // Binding `statement_timeout` to the remaining per-customer budget
+    // (via the deadline-bound proxy, mirroring `rebuild.ts`) lets Postgres
+    // cancel a stuck statement with SQLSTATE 57014; the transaction then
+    // rolls back, releasing the connection and the xact-scoped advisory
+    // lock within budget. When no `timeoutMs` is supplied (e.g. a direct,
+    // unbounded call) the raw client is used unchanged.
+    const deadline =
+      typeof timeoutMs === "number" &&
+      Number.isFinite(timeoutMs) &&
+      timeoutMs > 0
+        ? Date.now() + Math.floor(timeoutMs)
+        : null;
+    const db =
+      deadline === null ? client : createDeadlineBoundClient(client, deadline);
+
+    const horizon = await readStoryWatermark(db);
+    const watermark = await readLowslowWatermark(db);
 
     // `H IS NULL`: cadence has not settled any Stories yet — nothing to
     // sweep. The degenerate case of the `H ≤ wm` guard below.
@@ -199,7 +228,7 @@ export async function runLowslowSweep(
     );
 
     const candidates = await readR6Candidates({
-      client,
+      client: db,
       memberScanStart,
       memberScanEnd: horizon,
       // Cadence's `<=`-inclusive horizon semantics: a draft ending at
@@ -220,14 +249,14 @@ export async function runLowslowSweep(
       const endMs = draft.timeWindowEnd.getTime();
       // Finalization range `(wm, H]` (first run: `(H − 24h, H]`).
       if (endMs <= finalizeLowerMs || endMs > horizonMs) continue;
-      const result = await insertAutoStory(client, draft);
+      const result = await insertAutoStory(db, draft);
       if (result.groupId !== null) storiesInserted += 1;
     }
 
     // Advance the watermark to `H` even on a 0-Story run — it is a
     // progress watermark, not a Stories-produced one. `GREATEST` keeps
     // it monotonic.
-    await advanceLowslowWatermark(client, horizon);
+    await advanceLowslowWatermark(db, horizon);
     await client.query("COMMIT");
     txOpen = false;
 
@@ -243,8 +272,11 @@ export async function runLowslowSweep(
         // Already rolled back or connection broken; nothing to do.
       });
     }
-    const message =
-      err instanceof Error ? err.message : "Low-and-slow sweep failed";
+    const message = isStatementTimeoutError(err)
+      ? `Low-and-slow sweep statement cancelled by statement_timeout (per-customer budget ${timeoutMs}ms)`
+      : err instanceof Error
+        ? err.message
+        : "Low-and-slow sweep failed";
     return {
       customerId,
       status: "failed",
@@ -255,6 +287,79 @@ export async function runLowslowSweep(
   } finally {
     client.release();
   }
+}
+
+/**
+ * SQLSTATE 57014 (`query_canceled`) is what Postgres raises when
+ * `statement_timeout` fires. The sweep treats it as a bounded timeout:
+ * the surrounding `catch` rolls back and surfaces it, so a stuck scan
+ * does not pin the connection or the advisory lock.
+ */
+function isStatementTimeoutError(err: unknown): boolean {
+  return (
+    typeof err === "object" &&
+    err !== null &&
+    (err as { code?: unknown }).code === "57014"
+  );
+}
+
+/**
+ * Wrap a {@link pg.PoolClient} so every `query()` issued through the
+ * proxy is preceded by `SET LOCAL statement_timeout = <remaining-ms>`,
+ * re-bound to the remaining wall-clock budget before each round-trip.
+ * Mirrors the deadline-bound client the rebuild path uses
+ * (`rebuild.ts`).
+ *
+ * Without it, the dispatcher's per-customer `AbortSignal` cannot bound
+ * the real sweep: `client.query` does not observe the signal, so a slow
+ * or stuck 24h `readR6Candidates` scan would keep the worker slot — and
+ * the transaction-scoped advisory lock — pinned until the query finished
+ * on its own, well past the per-customer timeout. Binding the timeout
+ * DB-side lets Postgres cancel the statement (SQLSTATE 57014); the
+ * transaction then rolls back and frees the slot/lock within budget.
+ *
+ * `statement_timeout` is *per statement*, so a single SET at BEGIN would
+ * let a chain of N statements each spend the full budget. The proxy
+ * re-binds the *remaining* budget before every statement and refuses to
+ * issue the round-trip once it is exhausted. BEGIN / COMMIT / ROLLBACK
+ * stay on the raw client and are never routed through the proxy.
+ */
+function createDeadlineBoundClient(
+  client: pg.PoolClient,
+  deadline: number,
+): pg.PoolClient {
+  // The proxy forwards arbitrary arg shapes through pg.PoolClient.query
+  // (string + params, QueryConfig, callback forms). `unknown[]` keeps
+  // the forwarding type-safe at the boundary; the cast back to
+  // `pg.PoolClient` re-applies the typed surface.
+  type AnyArgs = unknown[];
+  return new Proxy(client, {
+    get(target, prop, receiver) {
+      if (prop === "query") {
+        return async (...args: AnyArgs) => {
+          const remainingMs = deadline - Date.now();
+          if (remainingMs <= 0) {
+            throw new Error(
+              "Low-and-slow sweep exceeded its per-customer time budget before issuing the next statement",
+            );
+          }
+          // Issue the SET LOCAL on the **raw** client so it does not
+          // recurse through this proxy (which would prepend a SET LOCAL
+          // before the SET LOCAL).
+          await target.query(
+            `SET LOCAL statement_timeout = ${Math.floor(remainingMs)}`,
+          );
+          return (
+            target.query as unknown as (...a: AnyArgs) => Promise<unknown>
+          ).apply(target, args);
+        };
+      }
+      const value = Reflect.get(target, prop, receiver) as unknown;
+      return typeof value === "function"
+        ? (value as (...a: AnyArgs) => unknown).bind(target)
+        : value;
+    },
+  }) as pg.PoolClient;
 }
 
 /**
@@ -280,4 +385,6 @@ export function verifyTriageLowslowSweepToken(
 
 export const _testing = {
   buildLockKeyParam,
+  isStatementTimeoutError,
+  createDeadlineBoundClient,
 };

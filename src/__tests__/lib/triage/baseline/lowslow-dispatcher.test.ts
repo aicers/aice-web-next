@@ -217,6 +217,80 @@ describe("runLowslowSweepDispatch — total timeout", () => {
   });
 });
 
+describe("runLowslowSweepDispatch — DB-side timeout budget", () => {
+  it("passes the effective per-customer budget to the runner as timeoutMs", async () => {
+    const seen: Array<{ customerId: number; timeoutMs?: number }> = [];
+    const logSpy = vi.spyOn(console, "log").mockImplementation(() => {});
+    try {
+      await runLowslowSweepDispatch({
+        listActiveCustomers: async () => [7],
+        perCustomerTimeoutMs: 120_000,
+        totalTimeoutMs: 600_000,
+        runSweep: async (customerId, opts) => {
+          seen.push({ customerId, timeoutMs: opts.timeoutMs });
+          return okResult(customerId);
+        },
+      });
+    } finally {
+      logSpy.mockRestore();
+    }
+    expect(seen).toHaveLength(1);
+    // min(perCustomerTimeoutMs, remainingBudget) — remaining budget is
+    // ~600s here, so the per-customer 120s cap wins.
+    expect(seen[0].timeoutMs).toBe(120_000);
+  });
+
+  it("bounds a runner that ignores the abort signal but honours timeoutMs (DB-side enforcement)", async () => {
+    // Regression for the blocker: the real sweep does not observe the
+    // AbortSignal mid-query, so the dispatcher must hand the runner a
+    // budget it can enforce DB-side. This fake never listens to the
+    // signal; it self-bounds on the supplied timeoutMs (standing in for
+    // the statement_timeout cancel) and the dispatcher still returns a
+    // structured, bounded result.
+    const runSweep = vi.fn(
+      async (
+        customerId: number,
+        opts: { signal?: AbortSignal; timeoutMs?: number },
+      ): Promise<LowslowSweepResult> => {
+        expect(opts.timeoutMs).toBeGreaterThan(0);
+        // Deliberately do NOT attach an abort listener.
+        return {
+          customerId,
+          status: "failed",
+          storiesInserted: 0,
+          newWatermark: null,
+          error: `statement_timeout after ${opts.timeoutMs}ms`,
+        };
+      },
+    );
+
+    const startedAt = Date.now();
+    const logSpy = vi.spyOn(console, "log").mockImplementation(() => {});
+    let result: Awaited<ReturnType<typeof runLowslowSweepDispatch>>;
+    try {
+      result = await runLowslowSweepDispatch({
+        listActiveCustomers: async () => [1, 2],
+        runSweep,
+        perCustomerTimeoutMs: 50,
+        totalTimeoutMs: 600_000,
+        concurrency: 2,
+      });
+    } finally {
+      logSpy.mockRestore();
+    }
+    const elapsed = Date.now() - startedAt;
+
+    expect(elapsed).toBeLessThan(2000);
+    // The runner ignored the signal but still terminated, so the
+    // dispatcher reports each customer (failed) instead of hanging.
+    expect(result.perCustomer).toHaveLength(2);
+    for (const entry of result.perCustomer) {
+      expect(entry.status).toBe("failed");
+    }
+    expect(result.overall).toBe("partial");
+  });
+});
+
 describe("runLowslowSweepDispatch — total-timeout clamp", () => {
   it("clamps a totalTimeoutMs above 55 minutes to the cron-interval-safe ceiling and warns", async () => {
     // The hourly cron interval is 60 minutes; a resolved total timeout

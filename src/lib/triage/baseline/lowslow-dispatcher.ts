@@ -16,8 +16,11 @@ import "server-only";
  *   - `ok` / `skipped` / `failed`: forwarded from `runLowslowSweep`
  *     (`skipped` = advisory lock unavailable).
  *   - `timeout`: this customer's sweep exceeded its effective timeout
- *     (`min(perCustomerTimeoutMs, remainingBudget)`); the dispatcher
- *     aborted it and freed the slot.
+ *     (`min(perCustomerTimeoutMs, remainingBudget)`). The dispatcher
+ *     aborts the runner *and* passes the budget as `timeoutMs` so the
+ *     runner binds `statement_timeout` DB-side — the abort alone cannot
+ *     free a slot stuck inside `client.query`, so the DB-side cancel is
+ *     the hard backstop.
  *   - `skipped-timeout`: the dispatcher's overall timeout fired before
  *     this customer was attempted; the next hourly tick picks them up
  *     via the watermark.
@@ -90,7 +93,7 @@ export interface LowslowDispatcherOptions {
   /** Override the sweep runner. Tests inject a fake. */
   runSweep?: (
     customerId: number,
-    options: { signal?: AbortSignal },
+    options: { signal?: AbortSignal; timeoutMs?: number },
   ) => Promise<LowslowSweepResult>;
   /** Override `now()`. Defaults to `Date.now()`. */
   now?: () => number;
@@ -375,7 +378,14 @@ async function runOneCustomer(
   }
 
   try {
-    const result = await runSweep(customerId, { signal: controller.signal });
+    // Pass the effective budget so the runner can enforce it DB-side
+    // (`SET LOCAL statement_timeout`). The `AbortSignal` alone cannot
+    // bound a runner stuck inside `client.query`; the timeout is the
+    // hard backstop that frees this worker slot.
+    const result = await runSweep(customerId, {
+      signal: controller.signal,
+      timeoutMs,
+    });
     if (timedOut) {
       return {
         customerId,

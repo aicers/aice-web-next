@@ -33,6 +33,7 @@ interface FakeClientHandles {
   setHorizon: (value: Date | null) => void;
   setLowslowWatermark: (value: Date | null) => void;
   setLockAcquired: (value: boolean) => void;
+  setCandidateScanError: (err: Error | null) => void;
   suppressNextInsert: () => void;
   insertsMade: () => number;
   lastWatermarkUpdate: () => Date | null;
@@ -47,6 +48,7 @@ function makeClient(): FakeClientHandles {
   let horizon: Date | null = null;
   let lowslowWm: Date | null = null;
   let lockAcquired = true;
+  let candidateScanError: Error | null = null;
   let suppressNext = false;
   let inserts = 0;
   let nextGroupId = 1;
@@ -83,6 +85,9 @@ function makeClient(): FakeClientHandles {
       return { rows: [{ story_finalized_through: horizon }], rowCount: 1 };
     }
     if (sql.includes("FROM baseline_triaged_event")) {
+      // Simulate Postgres cancelling the 24h scan once
+      // `statement_timeout` fires (SQLSTATE 57014).
+      if (candidateScanError !== null) throw candidateScanError;
       if (sql.includes("GROUP BY orig_addr")) {
         // Phase 1: distinct candidate assets. The mock skips the
         // member/bucket HAVING floors — detectR6 re-applies them.
@@ -129,6 +134,9 @@ function makeClient(): FakeClientHandles {
     },
     setLockAcquired: (value) => {
       lockAcquired = value;
+    },
+    setCandidateScanError: (err) => {
+      candidateScanError = err;
     },
     suppressNextInsert: () => {
       suppressNext = true;
@@ -380,5 +388,85 @@ describe("runLowslowSweep — recoverable late arrival (regression)", () => {
     const r2 = await runLowslowSweep(1, {});
     expect(r2.storiesInserted).toBe(1);
     expect(r2.newWatermark).toEqual(new Date("2026-05-09T05:00:00Z"));
+  });
+});
+
+describe("runLowslowSweep — DB-side timeout enforcement", () => {
+  it("binds SET LOCAL statement_timeout (≤ budget) before the 24h member-scan when timeoutMs is supplied", async () => {
+    const h = makeClient();
+    const horizon = new Date("2026-05-09T05:00:00Z");
+    h.setHorizon(horizon);
+    h.setLowslowWatermark(null);
+    h.setCandidates(beaconRows());
+    hoisted.connect = () => h.client;
+
+    const result = await runLowslowSweep(1, { timeoutMs: 60_000 });
+    expect(result.status).toBe("ok");
+
+    // A `SET LOCAL statement_timeout = <ms>` precedes the phase-1 scan,
+    // so a stuck scan is bounded DB-side rather than only by the
+    // dispatcher's AbortSignal (which client.query never observes).
+    const scanIdx = h.queries.findIndex(
+      (q) =>
+        q.sql.includes("FROM baseline_triaged_event") &&
+        q.sql.includes("GROUP BY orig_addr"),
+    );
+    expect(scanIdx).toBeGreaterThan(0);
+    const setLocalBeforeScan = h.queries
+      .slice(0, scanIdx)
+      .reverse()
+      .find((q) => /SET LOCAL statement_timeout\s*=\s*\d+/i.test(q.sql));
+    expect(setLocalBeforeScan).toBeDefined();
+    const boundMs = Number(
+      /SET LOCAL statement_timeout\s*=\s*(\d+)/i.exec(
+        setLocalBeforeScan?.sql ?? "",
+      )?.[1],
+    );
+    expect(boundMs).toBeGreaterThan(0);
+    expect(boundMs).toBeLessThanOrEqual(60_000);
+  });
+
+  it("issues NO statement_timeout binding when timeoutMs is omitted (unbounded direct call)", async () => {
+    const h = makeClient();
+    h.setHorizon(new Date("2026-05-09T05:00:00Z"));
+    h.setLowslowWatermark(null);
+    h.setCandidates(beaconRows());
+    hoisted.connect = () => h.client;
+
+    await runLowslowSweep(1, {});
+    expect(
+      h.queries.some((q) => /SET LOCAL statement_timeout/i.test(q.sql)),
+    ).toBe(false);
+  });
+
+  it("rolls back and reports failed when the scan is cancelled by statement_timeout (57014), even if the abort signal was never observed", async () => {
+    // The blocker case: the runner is stuck inside the 24h scan and the
+    // AbortSignal is never seen mid-query. Postgres cancels the
+    // statement (57014); the sweep must roll back and free the
+    // connection + advisory lock — not hang the worker slot.
+    const h = makeClient();
+    h.setHorizon(new Date("2026-05-09T05:00:00Z"));
+    h.setLowslowWatermark(null);
+    h.setCandidates(beaconRows());
+    const cancel = Object.assign(
+      new Error("canceling statement due to statement timeout"),
+      { code: "57014" },
+    );
+    h.setCandidateScanError(cancel);
+    // An already-aborted signal is deliberately ignored by the stuck
+    // query path; enforcement comes from the DB-side cancel, not the
+    // signal.
+    const controller = new AbortController();
+    hoisted.connect = () => h.client;
+
+    const result = await runLowslowSweep(1, {
+      timeoutMs: 60_000,
+      signal: controller.signal,
+    });
+    expect(result.status).toBe("failed");
+    expect(result.error).toMatch(/statement_timeout/i);
+    expect(h.rolledBack()).toBe(true);
+    expect(h.committed()).toBe(false);
+    expect(h.lastWatermarkUpdate()).toBeNull();
   });
 });
