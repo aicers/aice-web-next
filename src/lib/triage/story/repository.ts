@@ -10,11 +10,22 @@ import "server-only";
  * advance.
  *
  * Auto-correlated rows take the `ON CONFLICT DO NOTHING` path against
- * the partial unique index
- * `(correlation_rule_id, primary_asset, time_window_start, time_window_end)
- *  WHERE kind = 'auto_correlated' AND primary_asset IS NOT NULL`
- * (migration 0008). A re-evaluated slop-window candidate therefore
- * never produces a duplicate `event_group` row.
+ * one of two partial unique indexes, selected by whether the draft
+ * carries a `correlation_key`:
+ *
+ *   - R1/R3 (`correlation_key IS NULL`) →
+ *     `(correlation_rule_id, primary_asset, time_window_start,
+ *      time_window_end) WHERE kind = 'auto_correlated' AND
+ *      primary_asset IS NOT NULL AND correlation_key IS NULL`
+ *     (`event_group_auto_dedup_idx`, re-scoped by migration 0024).
+ *   - R4/R5 (`correlation_key IS NOT NULL`) →
+ *     `(correlation_rule_id, correlation_key, time_window_start,
+ *      time_window_end) WHERE kind = 'auto_correlated' AND
+ *      correlation_key IS NOT NULL`
+ *     (`event_group_corrkey_dedup_idx`, added by migration 0024).
+ *
+ * A re-evaluated slop-window candidate therefore never produces a
+ * duplicate `event_group` row.
  */
 
 import type pg from "pg";
@@ -25,6 +36,10 @@ import {
   buildReadR1CandidatesSql,
   buildReadR3CandidatesPhase1Sql,
   buildReadR3CandidatesPhase2Sql,
+  buildReadR4CandidatesPhase1Sql,
+  buildReadR4CandidatesPhase2Sql,
+  buildReadR5CandidatesPhase1Sql,
+  buildReadR5CandidatesPhase2Sql,
   buildSelectStoriesForPeriodSql,
   SELECT_BASELINE_EVENTS_BY_KEY_SQL,
   SELECT_STORY_MEMBERS_DETAIL_SQL,
@@ -35,6 +50,9 @@ import {
   applyMemberCap,
   buildSummaryPayload,
   CRITICAL_SELECTOR_SET,
+  R4_MIN_SOURCES,
+  R5_MIN_SOURCES,
+  R5_MIN_VICTIMS,
   STORY_VERSION,
 } from "./rules";
 import type {
@@ -82,6 +100,9 @@ interface CandidateRow {
   event_time: Date;
   kind: string;
   orig_addr: string | null;
+  /** Present only on the R4/R5 multi-source candidate reads; absent
+   *  (→ `null`) on the R1/R3 reads that do not select it. */
+  resp_addr?: string | null;
   category: string | null;
   selector_tags: string[];
   raw_score: number;
@@ -93,6 +114,7 @@ function rowToCandidate(row: CandidateRow): CandidateEvent {
     eventTime: row.event_time,
     kind: row.kind,
     origAddr: row.orig_addr,
+    respAddr: row.resp_addr ?? null,
     category: row.category,
     selectorTags: row.selector_tags ?? [],
     rawScore: Number(row.raw_score),
@@ -224,6 +246,137 @@ export async function readR3Candidates(
   return result.rows.map(rowToCandidate);
 }
 
+/**
+ * R4's per-page candidate scan (Story RFC §3.R4, §5, issue #694).
+ *
+ * Two-phase per-victim access pattern mirroring R3. Phase 1
+ * pre-aggregates candidate victims:
+ *
+ *   SELECT host(resp_addr) AS resp_addr, category
+ *     FROM baseline_triaged_event
+ *    WHERE event_time IN [memberScanStart, memberScanEnd]
+ *      AND orig_addr IS NOT NULL AND resp_addr IS NOT NULL
+ *      AND category = ANY($criticalCategories::text[])
+ *      AND selector_tags && $criticalSelectors::text[]
+ *    GROUP BY resp_addr, category
+ *   HAVING COUNT(DISTINCT orig_addr) >= R4_MIN_SOURCES
+ *
+ * Phase 2 reads the member rows for the candidate victims via
+ * `resp_addr = ANY($::inet[])`, riding the existing
+ * `baseline_triaged_event_resp_addr_gist` (`gist_inet_ops` supports
+ * `=`). Final `(resp_addr, category)` grouping, sliding-window
+ * clustering, and the distinct-source threshold stay in `rules.ts`.
+ */
+export async function readR4Candidates(
+  args: ReadCandidatesArgs,
+): Promise<CandidateEvent[]> {
+  const { client, memberScanStart, memberScanEnd, endExclusive } = args;
+  const categories = Array.from(CRITICAL_CATEGORIES) as ThreatCategory[];
+  const selectors = Array.from(CRITICAL_SELECTOR_SET);
+  const memberScanStartIsNull = memberScanStart === null;
+  const endExclusiveBool = Boolean(endExclusive);
+
+  const phase1Sql = buildReadR4CandidatesPhase1Sql({
+    memberScanStartIsNull,
+    endExclusive: endExclusiveBool,
+  });
+  const phase1Params = memberScanStartIsNull
+    ? [memberScanEnd, categories, selectors, R4_MIN_SOURCES]
+    : [memberScanStart, memberScanEnd, categories, selectors, R4_MIN_SOURCES];
+  const phase1 = await client.query<{
+    resp_addr: string | null;
+    category: string | null;
+  }>(phase1Sql, phase1Params);
+  const victims = Array.from(
+    new Set(
+      phase1.rows
+        .map((r) => r.resp_addr)
+        .filter((a): a is string => typeof a === "string" && a.length > 0),
+    ),
+  );
+  if (victims.length === 0) return [];
+
+  const phase2Sql = buildReadR4CandidatesPhase2Sql({
+    memberScanStartIsNull,
+    endExclusive: endExclusiveBool,
+  });
+  const phase2Params = memberScanStartIsNull
+    ? [memberScanEnd, victims, categories, selectors]
+    : [memberScanStart, memberScanEnd, victims, categories, selectors];
+  const result = await client.query<CandidateRow>(phase2Sql, phase2Params);
+  return result.rows.map(rowToCandidate);
+}
+
+/**
+ * R5's per-page candidate scan (Story RFC §3.R5, §5, issue #694).
+ *
+ * Two-phase per-signature access pattern. Phase 1 pre-aggregates
+ * candidate categories:
+ *
+ *   SELECT category
+ *     FROM baseline_triaged_event
+ *    WHERE event_time IN [memberScanStart, memberScanEnd]
+ *      AND orig_addr IS NOT NULL AND resp_addr IS NOT NULL
+ *      AND category = ANY($criticalCategories::text[])
+ *      AND selector_tags && $criticalSelectors::text[]
+ *    GROUP BY category
+ *   HAVING COUNT(DISTINCT orig_addr) >= R5_MIN_SOURCES
+ *      AND COUNT(DISTINCT resp_addr) >= R5_MIN_VICTIMS
+ *
+ * The `COUNT(DISTINCT resp_addr)` clause enforces the ≥2-victims
+ * floor that separates a campaign from an R4 fan-in. Phase 2 reads
+ * the member rows for the candidate categories via
+ * `category = ANY($::text[])`. Final per-category grouping,
+ * sliding-window clustering, and the source/victim thresholds stay
+ * in `rules.ts`.
+ */
+export async function readR5Candidates(
+  args: ReadCandidatesArgs,
+): Promise<CandidateEvent[]> {
+  const { client, memberScanStart, memberScanEnd, endExclusive } = args;
+  const categories = Array.from(CRITICAL_CATEGORIES) as ThreatCategory[];
+  const selectors = Array.from(CRITICAL_SELECTOR_SET);
+  const memberScanStartIsNull = memberScanStart === null;
+  const endExclusiveBool = Boolean(endExclusive);
+
+  const phase1Sql = buildReadR5CandidatesPhase1Sql({
+    memberScanStartIsNull,
+    endExclusive: endExclusiveBool,
+  });
+  const phase1Params = memberScanStartIsNull
+    ? [memberScanEnd, categories, selectors, R5_MIN_SOURCES, R5_MIN_VICTIMS]
+    : [
+        memberScanStart,
+        memberScanEnd,
+        categories,
+        selectors,
+        R5_MIN_SOURCES,
+        R5_MIN_VICTIMS,
+      ];
+  const phase1 = await client.query<{ category: string | null }>(
+    phase1Sql,
+    phase1Params,
+  );
+  const campaignCategories = Array.from(
+    new Set(
+      phase1.rows
+        .map((r) => r.category)
+        .filter((c): c is string => typeof c === "string" && c.length > 0),
+    ),
+  );
+  if (campaignCategories.length === 0) return [];
+
+  const phase2Sql = buildReadR5CandidatesPhase2Sql({
+    memberScanStartIsNull,
+    endExclusive: endExclusiveBool,
+  });
+  const phase2Params = memberScanStartIsNull
+    ? [memberScanEnd, campaignCategories, selectors]
+    : [memberScanStart, memberScanEnd, campaignCategories, selectors];
+  const result = await client.query<CandidateRow>(phase2Sql, phase2Params);
+  return result.rows.map(rowToCandidate);
+}
+
 export interface InsertAutoStoryResult {
   /** Newly-inserted `event_group.id`, or `null` when the partial
    *  unique index suppressed the insert (idempotent replay). */
@@ -270,18 +423,46 @@ export async function insertAutoStory(
   draft: StoryDraft,
   carryOver?: AutoStoryBetaCarryOver,
 ): Promise<InsertAutoStoryResult> {
+  const correlationKey = draft.correlationKey ?? null;
+  // Branch the ON CONFLICT arbiter by whether the draft carries a
+  // `correlation_key`, NOT by rule id. R1/R3 (`correlation_key
+  // IS NULL`) dedup on the legacy asset index; R4/R5
+  // (`correlation_key IS NOT NULL`) dedup on the new
+  // `correlation_key` index. The two indexes partition cleanly by
+  // `correlation_key` NULL-ness (migration 0024 re-scopes the old
+  // index with `AND correlation_key IS NULL`), so a `correlation_key`
+  // -bearing row is governed solely by the new index and two
+  // same-victim/same-window R4 rows that differ only by `category`
+  // both persist without tripping an unhandled `unique_violation` on
+  // the old index.
+  // The ON CONFLICT inference predicate must match the target partial
+  // index's predicate exactly (Postgres partial-index arbiter rule),
+  // so the R1/R3 branch carries the `AND correlation_key IS NULL`
+  // clause migration 0024 added to `event_group_auto_dedup_idx`.
+  // Omitting it raises "no unique or exclusion constraint matching the
+  // ON CONFLICT specification".
+  const onConflict =
+    correlationKey !== null
+      ? `ON CONFLICT (correlation_rule_id, correlation_key, time_window_start, time_window_end)
+              WHERE kind = 'auto_correlated' AND correlation_key IS NOT NULL
+              DO NOTHING`
+      : `ON CONFLICT (correlation_rule_id, primary_asset, time_window_start, time_window_end)
+              WHERE kind = 'auto_correlated' AND primary_asset IS NOT NULL
+                AND correlation_key IS NULL
+              DO NOTHING`;
+  const summaryJson = JSON.stringify(
+    draft.summary satisfies StorySummaryPayload,
+  );
   const insertGroup =
     carryOver === undefined
       ? await client.query<{ id: string }>(
           `INSERT INTO event_group (
               kind, correlation_rule_id, story_version,
               time_window_start, time_window_end,
-              primary_asset, score, summary_payload
+              primary_asset, score, summary_payload, correlation_key
             )
-            VALUES ('auto_correlated', $1, $2, $3, $4, $5::inet, $6, $7::jsonb)
-            ON CONFLICT (correlation_rule_id, primary_asset, time_window_start, time_window_end)
-              WHERE kind = 'auto_correlated' AND primary_asset IS NOT NULL
-              DO NOTHING
+            VALUES ('auto_correlated', $1, $2, $3, $4, $5::inet, $6, $7::jsonb, $8)
+            ${onConflict}
             RETURNING id::text AS id`,
           [
             draft.ruleId,
@@ -290,21 +471,20 @@ export async function insertAutoStory(
             draft.timeWindowEnd,
             draft.primaryAsset,
             draft.score,
-            JSON.stringify(draft.summary satisfies StorySummaryPayload),
+            summaryJson,
+            correlationKey,
           ],
         )
       : await client.query<{ id: string }>(
           `INSERT INTO event_group (
               kind, correlation_rule_id, story_version,
               time_window_start, time_window_end,
-              primary_asset, score, summary_payload,
+              primary_asset, score, summary_payload, correlation_key,
               last_sent_at, send_count, last_sent_by
             )
-            VALUES ('auto_correlated', $1, $2, $3, $4, $5::inet, $6, $7::jsonb,
-                    $8, $9, $10::uuid)
-            ON CONFLICT (correlation_rule_id, primary_asset, time_window_start, time_window_end)
-              WHERE kind = 'auto_correlated' AND primary_asset IS NOT NULL
-              DO NOTHING
+            VALUES ('auto_correlated', $1, $2, $3, $4, $5::inet, $6, $7::jsonb, $8,
+                    $9, $10, $11::uuid)
+            ${onConflict}
             RETURNING id::text AS id`,
           [
             draft.ruleId,
@@ -313,7 +493,8 @@ export async function insertAutoStory(
             draft.timeWindowEnd,
             draft.primaryAsset,
             draft.score,
-            JSON.stringify(draft.summary satisfies StorySummaryPayload),
+            summaryJson,
+            correlationKey,
             carryOver.lastSentAt,
             carryOver.sendCount,
             carryOver.lastSentBy,
@@ -741,6 +922,10 @@ export async function readBaselineEventsByKey(
     eventTime: row.event_time,
     kind: row.kind,
     origAddr: row.orig_addr,
+    // The curated-save path is asset-keyed (orig_addr); `respAddr` is
+    // only consumed by the R4/R5 auto-correlation reads, so it is not
+    // selected here.
+    respAddr: null,
     category: row.category,
     selectorTags: row.selector_tags ?? [],
     rawScore: Number(row.raw_score),

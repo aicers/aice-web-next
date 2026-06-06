@@ -731,25 +731,79 @@ describe("runStoryRebuild — watermark invariant", () => {
 });
 
 describe("_testing — snapshot/draft key", () => {
-  it("snapshotKey and draftKey collapse to the same string for matching values", () => {
+  const emptySummary = {
+    kindHistogram: {},
+    categoryHistogram: {},
+    memberCount: 0,
+    durationMs: 0,
+    distinctAssetCount: 0,
+    topRawScore: 0,
+  };
+
+  it("snapshotKey and draftKey collapse to the same string for matching values (R3, NULL correlation_key)", () => {
     const start = new Date("2026-05-03T11:58:00.000Z");
     const end = new Date("2026-05-03T12:00:00.000Z");
-    expect(rebuildTesting.snapshotKey("R3", "10.0.0.2", start, end)).toBe(
+    expect(rebuildTesting.snapshotKey("R3", "10.0.0.2", null, start, end)).toBe(
       rebuildTesting.draftKey({
         ruleId: "R3",
         primaryAsset: "10.0.0.2",
+        correlationKey: null,
         timeWindowStart: start,
         timeWindowEnd: end,
         members: [],
         score: 0,
-        summary: {
-          kindHistogram: {},
-          categoryHistogram: {},
-          memberCount: 0,
-          durationMs: 0,
-          distinctAssetCount: 0,
-          topRawScore: 0,
-        },
+        summary: emptySummary,
+      }),
+    );
+  });
+
+  it("includes correlation_key so R4 rows differing only by category get distinct keys", () => {
+    const start = new Date("2026-05-03T11:58:00.000Z");
+    const end = new Date("2026-05-03T12:00:00.000Z");
+    const keyC2 = rebuildTesting.snapshotKey(
+      "R4",
+      "10.0.0.2",
+      "10.0.0.2|IMPACT",
+      start,
+      end,
+    );
+    const keyExfil = rebuildTesting.snapshotKey(
+      "R4",
+      "10.0.0.2",
+      "10.0.0.2|EXFILTRATION",
+      start,
+      end,
+    );
+    expect(keyC2).not.toBe(keyExfil);
+    expect(keyC2).toBe(
+      rebuildTesting.draftKey({
+        ruleId: "R4",
+        primaryAsset: "10.0.0.2",
+        correlationKey: "10.0.0.2|IMPACT",
+        timeWindowStart: start,
+        timeWindowEnd: end,
+        members: [],
+        score: 0,
+        summary: emptySummary,
+      }),
+    );
+  });
+
+  it("matches an R5 draft (NULL primary_asset) by its category correlation_key", () => {
+    const start = new Date("2026-05-03T11:58:00.000Z");
+    const end = new Date("2026-05-03T12:00:00.000Z");
+    expect(
+      rebuildTesting.snapshotKey("R5", null, "EXFILTRATION", start, end),
+    ).toBe(
+      rebuildTesting.draftKey({
+        ruleId: "R5",
+        primaryAsset: null,
+        correlationKey: "EXFILTRATION",
+        timeWindowStart: start,
+        timeWindowEnd: end,
+        members: [],
+        score: 0,
+        summary: emptySummary,
       }),
     );
   });

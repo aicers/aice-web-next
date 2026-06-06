@@ -7,3 +7,6 @@ import type { ThreatCategory } from "@/lib/detection";
 
 export const CRITICAL_CATEGORIES: ReadonlySet<ThreatCategory>;
 export const CRITICAL_SELECTOR_SET: ReadonlySet<string>;
+export const R4_MIN_SOURCES: number;
+export const R5_MIN_SOURCES: number;
+export const R5_MIN_VICTIMS: number;

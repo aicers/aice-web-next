@@ -162,8 +162,18 @@ import {
   MENU_CANDIDATES_PER_BUCKET,
   SELECT_MENU_COHORT_SQL,
 } from "../src/lib/triage/baseline/read-path-sql.mjs";
-import { CRITICAL_SELECTOR_SET } from "../src/lib/triage/story/critical-sets.mjs";
-import { buildReadR3CandidatesPhase1Sql } from "../src/lib/triage/story/read-path-sql.mjs";
+import {
+  CRITICAL_CATEGORIES,
+  CRITICAL_SELECTOR_SET,
+  R4_MIN_SOURCES,
+  R5_MIN_SOURCES,
+  R5_MIN_VICTIMS,
+} from "../src/lib/triage/story/critical-sets.mjs";
+import {
+  buildReadR3CandidatesPhase1Sql,
+  buildReadR4CandidatesPhase1Sql,
+  buildReadR5CandidatesPhase1Sql,
+} from "../src/lib/triage/story/read-path-sql.mjs";
 import {
   assertRepresentativeProfile,
   formatProfileAssertionFailure,
@@ -182,6 +192,7 @@ const MAX_RULE_WINDOW_MS = 60 * 60 * 1000;
 // representative cadence horizon, not an out-of-corpus future point.
 const SLOP_WINDOW_MS = 30 * 60 * 1000;
 const CRITICAL_SELECTOR_ARRAY = Array.from(CRITICAL_SELECTOR_SET);
+const CRITICAL_CATEGORIES_ARRAY = Array.from(CRITICAL_CATEGORIES);
 
 const DEFAULT_WARMUPS = 5;
 const DEFAULT_SAMPLES = 30;
@@ -609,6 +620,99 @@ async function runPhase1Probe(pool, { memberScanStartIsNull, params }) {
 }
 
 /**
+ * R4 (fan-in) candidate-victim probe — the counterpart to
+ * {@link probeR3CandidateAssets}. Phase-2's `$N::inet[]` bind is the
+ * deduped victim (`resp_addr`) set phase-1's
+ * `GROUP BY resp_addr, category HAVING COUNT(DISTINCT orig_addr) >=
+ * R4_MIN_SOURCES` returned. Returns `{firstTick, slopReplay}`, each a
+ * string[]; either may be empty (→ a `meta.notMeasurable` skip).
+ */
+export async function probeR4CandidateVictims(pool, ctx) {
+  const firstTick = await runR4Phase1Probe(pool, {
+    memberScanStartIsNull: true,
+    params: [
+      ctx.memberScanEndIso,
+      CRITICAL_CATEGORIES_ARRAY,
+      CRITICAL_SELECTOR_ARRAY,
+      R4_MIN_SOURCES,
+    ],
+  });
+  const slopReplay =
+    ctx.memberScanStartIso === null
+      ? []
+      : await runR4Phase1Probe(pool, {
+          memberScanStartIsNull: false,
+          params: [
+            ctx.memberScanStartIso,
+            ctx.memberScanEndIso,
+            CRITICAL_CATEGORIES_ARRAY,
+            CRITICAL_SELECTOR_ARRAY,
+            R4_MIN_SOURCES,
+          ],
+        });
+  return { firstTick, slopReplay };
+}
+
+async function runR4Phase1Probe(pool, { memberScanStartIsNull, params }) {
+  const sql = buildReadR4CandidatesPhase1Sql({ memberScanStartIsNull });
+  const { rows } = await pool.query(sql, params);
+  return Array.from(
+    new Set(
+      rows
+        .map((r) => r.resp_addr)
+        .filter((a) => typeof a === "string" && a.length > 0),
+    ),
+  );
+}
+
+/**
+ * R5 (campaign) candidate-category probe. Phase-2's `$N::text[]` bind
+ * is the deduped `category` set phase-1's
+ * `GROUP BY category HAVING COUNT(DISTINCT orig_addr) >=
+ * R5_MIN_SOURCES AND COUNT(DISTINCT resp_addr) >= R5_MIN_VICTIMS`
+ * returned. Returns `{firstTick, slopReplay}`, each a string[].
+ */
+export async function probeR5CandidateCategories(pool, ctx) {
+  const firstTick = await runR5Phase1Probe(pool, {
+    memberScanStartIsNull: true,
+    params: [
+      ctx.memberScanEndIso,
+      CRITICAL_CATEGORIES_ARRAY,
+      CRITICAL_SELECTOR_ARRAY,
+      R5_MIN_SOURCES,
+      R5_MIN_VICTIMS,
+    ],
+  });
+  const slopReplay =
+    ctx.memberScanStartIso === null
+      ? []
+      : await runR5Phase1Probe(pool, {
+          memberScanStartIsNull: false,
+          params: [
+            ctx.memberScanStartIso,
+            ctx.memberScanEndIso,
+            CRITICAL_CATEGORIES_ARRAY,
+            CRITICAL_SELECTOR_ARRAY,
+            R5_MIN_SOURCES,
+            R5_MIN_VICTIMS,
+          ],
+        });
+  return { firstTick, slopReplay };
+}
+
+async function runR5Phase1Probe(pool, { memberScanStartIsNull, params }) {
+  const sql = buildReadR5CandidatesPhase1Sql({ memberScanStartIsNull });
+  const { rows } = await pool.query(sql, params);
+  return Array.from(
+    new Set(
+      rows
+        .map((r) => r.category)
+        .filter((c) => typeof c === "string" && c.length > 0),
+    ),
+  );
+}
+
+/**
  * Read `baseline_corpus_state.story_finalized_through` from the probe
  * pool, returning the value as ms since epoch or `null` when the
  * cadence has never advanced the watermark. The slop-replay
@@ -671,6 +775,30 @@ export function partitionMeasurableQueries(queries, ctx) {
         continue;
       }
     }
+    if (q.name === "readR4CandidatesPhase2") {
+      const key = q.context === "first-tick" ? "firstTick" : "slopReplay";
+      const victims = ctx.r4CandidateVictims?.[key] ?? [];
+      if (victims.length === 0) {
+        notMeasurable.push({
+          query: q.name,
+          context: q.context,
+          reason: "phase-1 returned 0 victims",
+        });
+        continue;
+      }
+    }
+    if (q.name === "readR5CandidatesPhase2") {
+      const key = q.context === "first-tick" ? "firstTick" : "slopReplay";
+      const categories = ctx.r5CandidateCategories?.[key] ?? [];
+      if (categories.length === 0) {
+        notMeasurable.push({
+          query: q.name,
+          context: q.context,
+          reason: "phase-1 returned 0 categories",
+        });
+        continue;
+      }
+    }
     measurable.push(q);
   }
   return { measurable, notMeasurable };
@@ -708,6 +836,8 @@ async function main(argv) {
   let addresses;
   let storyFinalizedThroughMs = null;
   let r3CandidateAssets = { firstTick: [], slopReplay: [] };
+  let r4CandidateVictims = { firstTick: [], slopReplay: [] };
+  let r5CandidateCategories = { firstTick: [], slopReplay: [] };
   // `memberScanStartIso` mirrors the cadence's
   // `previous_watermark − MAX_RULE_WINDOW_MS` (slop replay). Null
   // when the tenant has never finalized a watermark — in that case
@@ -767,6 +897,18 @@ async function main(argv) {
         memberScanStartIso,
         memberScanEndIso,
       });
+      // R4/R5 (issue #694) follow the same prefetch contract: phase-2
+      // binds the candidate keys phase-1 pre-aggregated (R4 victims,
+      // R5 categories), so they cannot be pure `buildParams(ctx)`
+      // entries without this probe.
+      r4CandidateVictims = await probeR4CandidateVictims(probePool, {
+        memberScanStartIso,
+        memberScanEndIso,
+      });
+      r5CandidateCategories = await probeR5CandidateCategories(probePool, {
+        memberScanStartIso,
+        memberScanEndIso,
+      });
     } finally {
       await probePool.end();
     }
@@ -780,6 +922,8 @@ async function main(argv) {
     memberScanStartIso,
     memberScanEndIso,
     r3CandidateAssets,
+    r4CandidateVictims,
+    r5CandidateCategories,
   };
 
   // Partition MEASURED_QUERIES by measurability against `ctx`. A
@@ -849,6 +993,14 @@ async function main(argv) {
         r3CandidateAssetCounts: {
           firstTick: r3CandidateAssets.firstTick.length,
           slopReplay: r3CandidateAssets.slopReplay.length,
+        },
+        r4CandidateVictimCounts: {
+          firstTick: r4CandidateVictims.firstTick.length,
+          slopReplay: r4CandidateVictims.slopReplay.length,
+        },
+        r5CandidateCategoryCounts: {
+          firstTick: r5CandidateCategories.firstTick.length,
+          slopReplay: r5CandidateCategories.slopReplay.length,
         },
         warmups: args.warmups,
         samples: args.samples,

@@ -7,16 +7,29 @@
  * these rules before writing the resulting drafts via
  * `./repository.ts`.
  *
- * Two conservative rules ship in v1:
+ * Four conservative rules ship under `story_version = 'v1'`:
  *
  *   - R1 — same `primary_asset` (orig_addr), within a 10-minute window,
  *     has events from ≥2 distinct categories in the critical-category
  *     set.
  *   - R3 — same `primary_asset` has ≥3 events whose `selector_tags`
  *     overlap the critical-selector set within a 1-hour window.
+ *   - R4 — fan-in: ≥`R4_MIN_SOURCES` distinct `orig_addr` converge on
+ *     one victim (`resp_addr`) with the same critical `category`,
+ *     within a 1-hour window.
+ *   - R5 — campaign: the same critical `category` is driven by
+ *     ≥`R5_MIN_SOURCES` distinct `orig_addr` against
+ *     ≥`R5_MIN_VICTIMS` distinct `resp_addr`, within a 1-hour window.
  *
  * R2 (kill-chain progression) is reserved for the v2 Story RFC bump;
  * the `'R2'` slot stays empty so the rule-ID enum does not shift.
+ *
+ * R4/R5 share R1's category predicate and R3's selector predicate as
+ * the conservative "same-attack" identity: an event is eligible only
+ * when its `category ∈ CRITICAL_CATEGORIES` AND its `selector_tags`
+ * overlap `CRITICAL_SELECTOR_SET`. Both additionally exclude
+ * `orig_addr IS NULL` and `resp_addr IS NULL` (R4 keys on the victim;
+ * R5's distinct-victim floor cannot attribute a null-victim event).
  *
  * Both rules predicate on `selector_tags` membership and on the row's
  * own `category` column — never on `baseline_score` (read-time only,
@@ -28,7 +41,12 @@
 
 import type { ThreatCategory } from "@/lib/detection";
 import { CRITICAL_CATEGORIES } from "@/lib/triage/baseline/categories";
-import { CRITICAL_SELECTOR_SET as CRITICAL_SELECTOR_SET_RAW } from "@/lib/triage/story/critical-sets.mjs";
+import {
+  CRITICAL_SELECTOR_SET as CRITICAL_SELECTOR_SET_RAW,
+  R4_MIN_SOURCES as R4_MIN_SOURCES_RAW,
+  R5_MIN_SOURCES as R5_MIN_SOURCES_RAW,
+  R5_MIN_VICTIMS as R5_MIN_VICTIMS_RAW,
+} from "@/lib/triage/story/critical-sets.mjs";
 
 /**
  * Story RFC version stamp. Mirrors `baseline_version` and follows the
@@ -57,12 +75,50 @@ export const R1_WINDOW_MS = 10 * 60 * 1000;
 export const R3_WINDOW_MS = 60 * 60 * 1000;
 
 /**
- * Maximum rule window. The slop-replay protocol uses this as the
- * member-scan lookback so an R3 cluster whose `time_window_end` falls
- * just past the previous watermark can still pick up members that sit
- * before the watermark but inside the rule window.
+ * Shared multi-source window for R4 (fan-in) and R5 (campaign) — 1
+ * hour. Kept equal to R3's window so `MAX_RULE_WINDOW_MS` (and the
+ * §4 slop-replay lookback) stays at 1 hour; widening it would force a
+ * Story RFC bump.
  */
-export const MAX_RULE_WINDOW_MS = Math.max(R1_WINDOW_MS, R3_WINDOW_MS);
+export const MULTI_SOURCE_WINDOW_MS = 60 * 60 * 1000;
+
+/**
+ * R4 (fan-in) threshold — minimum distinct source IPs (`orig_addr`)
+ * converging on one victim (`resp_addr`) with the same critical
+ * `category` inside the window. Calibration knob.
+ *
+ * Re-exported from `./critical-sets.mjs` so the rule layer and the
+ * measurement harness (`.mjs`, plain Node) read one source of truth.
+ */
+export const R4_MIN_SOURCES = R4_MIN_SOURCES_RAW;
+
+/**
+ * R5 (campaign) source threshold — minimum distinct source IPs
+ * (`orig_addr`) driving the same critical `category` inside the
+ * window. Calibration knob.
+ */
+export const R5_MIN_SOURCES = R5_MIN_SOURCES_RAW;
+
+/**
+ * R5 (campaign) victim threshold — minimum distinct victims
+ * (`resp_addr`) the campaign must span. The `≥ 2 victims` floor is
+ * what distinguishes a campaign from an R4 fan-in (one converging
+ * victim).
+ */
+export const R5_MIN_VICTIMS = R5_MIN_VICTIMS_RAW;
+
+/**
+ * Maximum rule window. The slop-replay protocol uses this as the
+ * member-scan lookback so an R3/R4/R5 cluster whose `time_window_end`
+ * falls just past the previous watermark can still pick up members
+ * that sit before the watermark but inside the rule window. All of
+ * R3, R4, and R5 use a 1-hour window, so this stays at 1 hour.
+ */
+export const MAX_RULE_WINDOW_MS = Math.max(
+  R1_WINDOW_MS,
+  R3_WINDOW_MS,
+  MULTI_SOURCE_WINDOW_MS,
+);
 
 /**
  * Slop-window length applied at finalization (Story RFC §3 / §4). A
@@ -92,10 +148,12 @@ export const R1_LAMBDA = 1.0;
 export const CRITICAL_SELECTOR_SET = CRITICAL_SELECTOR_SET_RAW;
 
 /**
- * Active rule IDs the v1 correlator emits. `'R2'` is intentionally
- * absent — the slot is reserved by the Story RFC v1 for the v2 bump.
+ * Active rule IDs the correlator emits. `'R2'` is intentionally
+ * absent — the slot is reserved by the Story RFC for the v2
+ * kill-chain bump. R4/R5 are the multi-source rules (#694). Kept in
+ * sync with the literal `StoryRuleId` union in `./types.ts`.
  */
-export const ACTIVE_RULE_IDS = ["R1", "R3"] as const;
+export const ACTIVE_RULE_IDS = ["R1", "R3", "R4", "R5"] as const;
 export type StoryRuleId = (typeof ACTIVE_RULE_IDS)[number];
 
 /**
@@ -108,6 +166,13 @@ export interface CandidateEvent {
   eventTime: Date;
   kind: string;
   origAddr: string | null;
+  /**
+   * The destination/victim address, normalized via `host()` like
+   * `origAddr`. Read by R4/R5 (which key on the victim); `null` for
+   * R1/R3 candidate reads that do not select it. `null` is also the
+   * value for events whose `resp_addr` is genuinely absent.
+   */
+  respAddr: string | null;
   category: ThreatCategory | string | null;
   selectorTags: readonly string[];
   rawScore: number;
@@ -141,7 +206,21 @@ export interface StorySummaryPayload {
  */
 export interface StoryDraft {
   ruleId: StoryRuleId;
-  primaryAsset: string;
+  /**
+   * Asset the Story keys on. `orig_addr` for R1/R3, `resp_addr` (the
+   * victim) for R4, and `null` for R5 (a campaign has no single
+   * converging asset). Persisted to `event_group.primary_asset`.
+   */
+  primaryAsset: string | null;
+  /**
+   * Dedup discriminator persisted to `event_group.correlation_key`.
+   * `null` for R1/R3 (which dedup on `primary_asset` via the legacy
+   * partial unique index). R4 sets `host(resp_addr) || '|' ||
+   * category`; R5 sets `category`. When non-null, the row is
+   * governed by the `event_group_corrkey_dedup_idx` index instead of
+   * the asset index (see `repository.ts` `insertAutoStory`).
+   */
+  correlationKey?: string | null;
   /**
    * Cluster span `time_window_start = min(member.event_time)`,
    * `time_window_end = max(member.event_time)`. Stored on the
@@ -348,6 +427,7 @@ export function detectR1(events: ReadonlyArray<CandidateEvent>): StoryDraft[] {
       drafts.push({
         ruleId: "R1",
         primaryAsset: asset,
+        correlationKey: null,
         timeWindowStart: start,
         timeWindowEnd: end,
         members: capped,
@@ -380,6 +460,7 @@ export function detectR3(events: ReadonlyArray<CandidateEvent>): StoryDraft[] {
       drafts.push({
         ruleId: "R3",
         primaryAsset: asset,
+        correlationKey: null,
         timeWindowStart: start,
         timeWindowEnd: end,
         members: capped,
@@ -392,8 +473,144 @@ export function detectR3(events: ReadonlyArray<CandidateEvent>): StoryDraft[] {
 }
 
 /**
- * Typed registry of v1 rules. Adding a future rule is purely a
- * registry-level change — schema stays the same.
+ * Shared "same-attack" eligibility predicate for the multi-source
+ * rules R4/R5: critical `category`, critical-selector overlap, and a
+ * non-NULL source AND victim. R4 keys on the victim and R5's
+ * distinct-victim floor cannot attribute a null-victim event, so a
+ * member with no `resp_addr` contributes to neither rule's victim
+ * accounting and is dropped from candidacy entirely.
+ */
+function isMultiSourceEligible(e: CandidateEvent): boolean {
+  return (
+    e.origAddr !== null &&
+    e.respAddr !== null &&
+    e.category !== null &&
+    CRITICAL_CATEGORIES.has(e.category as ThreatCategory) &&
+    e.selectorTags.some((t) => CRITICAL_SELECTOR_SET.has(t))
+  );
+}
+
+/**
+ * Group eligible events into buckets by a caller-supplied key,
+ * returning each bucket sorted by ascending `event_time` (ties broken
+ * by `event_key`) so `clusterByWindow` sees a deterministic order.
+ */
+function groupBy(
+  events: ReadonlyArray<CandidateEvent>,
+  keyOf: (e: CandidateEvent) => string,
+): Map<string, CandidateEvent[]> {
+  const map = new Map<string, CandidateEvent[]>();
+  for (const e of events) {
+    const key = keyOf(e);
+    const bucket = map.get(key);
+    if (bucket) bucket.push(e);
+    else map.set(key, [e]);
+  }
+  for (const bucket of map.values()) {
+    bucket.sort(
+      (a, b) =>
+        a.eventTime.getTime() - b.eventTime.getTime() ||
+        a.eventKey.localeCompare(b.eventKey),
+    );
+  }
+  return map;
+}
+
+/**
+ * R4 — Fan-in. Within a 1-hour window, ≥`R4_MIN_SOURCES` distinct
+ * `orig_addr` target the same `resp_addr` with the same critical
+ * `category`, all members satisfying the critical-selector predicate.
+ *
+ *   - Grouping key: `(resp_addr, category)`.
+ *   - `primary_asset = resp_addr` (the victim).
+ *   - `correlation_key = host(resp_addr) || '|' || category`.
+ *   - Score: distinct source-IP count in the window (pre-cap).
+ */
+export function detectR4(events: ReadonlyArray<CandidateEvent>): StoryDraft[] {
+  const drafts: StoryDraft[] = [];
+  const eligible = events.filter(isMultiSourceEligible);
+  const byKey = groupBy(
+    eligible,
+    (e) => `${e.respAddr as string}|${String(e.category)}`,
+  );
+  for (const bucket of byKey.values()) {
+    const clusters = clusterByWindow(bucket, MULTI_SOURCE_WINDOW_MS);
+    for (const cluster of clusters) {
+      const distinctSources = new Set(cluster.map((m) => m.origAddr));
+      if (distinctSources.size < R4_MIN_SOURCES) continue;
+      const respAddr = cluster[0].respAddr as string;
+      const category = String(cluster[0].category);
+      const capped = applyMemberCap(cluster);
+      const start = cluster[0].eventTime;
+      const end = cluster[cluster.length - 1].eventTime;
+      drafts.push({
+        ruleId: "R4",
+        primaryAsset: respAddr,
+        correlationKey: `${respAddr}|${category}`,
+        timeWindowStart: start,
+        timeWindowEnd: end,
+        members: capped,
+        score: distinctSources.size,
+        summary: buildSummaryPayload(capped),
+      });
+    }
+  }
+  return drafts;
+}
+
+/**
+ * R5 — Campaign. Within a 1-hour window, the same critical
+ * `category` is driven by ≥`R5_MIN_SOURCES` distinct `orig_addr`
+ * against ≥`R5_MIN_VICTIMS` distinct `resp_addr`, all members
+ * satisfying the critical-selector predicate.
+ *
+ *   - Grouping key: `category` (the shared signature).
+ *   - `primary_asset = NULL` (no single converging asset).
+ *   - `correlation_key = category`.
+ *   - Score: distinct source-IP count in the window (pre-cap).
+ */
+export function detectR5(events: ReadonlyArray<CandidateEvent>): StoryDraft[] {
+  const drafts: StoryDraft[] = [];
+  const eligible = events.filter(isMultiSourceEligible);
+  const byCategory = groupBy(eligible, (e) => String(e.category));
+  for (const bucket of byCategory.values()) {
+    const clusters = clusterByWindow(bucket, MULTI_SOURCE_WINDOW_MS);
+    for (const cluster of clusters) {
+      const distinctSources = new Set(cluster.map((m) => m.origAddr));
+      const distinctVictims = new Set(cluster.map((m) => m.respAddr));
+      if (distinctSources.size < R5_MIN_SOURCES) continue;
+      if (distinctVictims.size < R5_MIN_VICTIMS) continue;
+      const category = String(cluster[0].category);
+      const capped = applyMemberCap(cluster);
+      const start = cluster[0].eventTime;
+      const end = cluster[cluster.length - 1].eventTime;
+      drafts.push({
+        ruleId: "R5",
+        primaryAsset: null,
+        correlationKey: category,
+        timeWindowStart: start,
+        timeWindowEnd: end,
+        members: capped,
+        score: distinctSources.size,
+        summary: buildSummaryPayload(capped),
+      });
+    }
+  }
+  return drafts;
+}
+
+/**
+ * Typed registry of the shared-candidate-set rules (R1/R3). Adding a
+ * future rule that reads the same broad candidate set is a
+ * registry-level change.
+ *
+ * R4/R5 are intentionally NOT registered here: per Story RFC §10
+ * (option (a)) they require their own predicate-pushed candidate
+ * reads (`readR4Candidates` / `readR5Candidates`, which select
+ * `resp_addr` and pre-aggregate on different keys) and so do not fit
+ * the `(events) => StoryDraft[]` shared-set signature. They are wired
+ * directly in the correlator (`correlator.ts`
+ * `runStoryCorrelationForWindow`) alongside their reads.
  */
 export const RULE_REGISTRY: ReadonlyArray<{
   id: StoryRuleId;

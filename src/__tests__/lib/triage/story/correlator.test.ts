@@ -245,7 +245,10 @@ describe("runStepF — first-tick / NULL watermark", () => {
     const scanQueries = h.queries.filter((q) =>
       q.sql.includes("FROM baseline_triaged_event"),
     );
-    expect(scanQueries).toHaveLength(3); // R1 + R3 phase 1 + R3 phase 2
+    // R1 + R3 phase 1 + R3 phase 2 + R4 phase 1 + R5 phase 1 + R5
+    // phase 2. R4 phase 2 is skipped here because the fake rows carry
+    // no `resp_addr`, so R4 phase-1 returns zero candidate victims.
+    expect(scanQueries).toHaveLength(6);
     for (const q of scanQueries) {
       expect(q.sql).not.toMatch(/event_time >= /);
       expect(q.params?.[0]).toEqual(new Date(pageMax.getTime() - SLOP_MS));
@@ -361,7 +364,9 @@ describe("runStepF — slop-replay member lookback", () => {
     const scanQueries = h.queries.filter((q) =>
       q.sql.includes("FROM baseline_triaged_event"),
     );
-    expect(scanQueries).toHaveLength(3); // R1 + R3 phase 1 + R3 phase 2
+    // R1 + R3 (two-phase) + R4 phase 1 + R5 (two-phase). R4 phase 2
+    // is skipped because the fake rows carry no `resp_addr`.
+    expect(scanQueries).toHaveLength(6);
     const expectedLower = new Date(
       previousWatermark.getTime() - 60 * 60 * 1000,
     );

@@ -179,4 +179,49 @@ export const R3P2 = \`WHERE orig_addr = ANY($1::inet[]) AND selector_tags && $2:
     ]);
     expect(violations).toEqual([]);
   });
+
+  it("flags an inlined R4 phase-1 cadence shape — `GROUP BY resp_addr, category ... HAVING COUNT(DISTINCT orig_addr)` (issue #694)", () => {
+    const violations = run([
+      {
+        relPath: "src/lib/triage/story/repository.ts",
+        source: `await client.query(\`SELECT host(resp_addr), category FROM baseline_triaged_event WHERE selector_tags && $1::text[] GROUP BY resp_addr, category HAVING COUNT(DISTINCT orig_addr) >= $2\`);`,
+      },
+    ]);
+    expect(violations).toHaveLength(1);
+    expect(violations[0].pattern).toMatch(/R4 phase-1 cadence shape/);
+  });
+
+  it("flags an inlined R5 phase-1 cadence shape — `GROUP BY category ... COUNT(DISTINCT resp_addr)` (issue #694)", () => {
+    const violations = run([
+      {
+        relPath: "src/lib/triage/story/repository.ts",
+        source: `await client.query(\`SELECT category FROM baseline_triaged_event WHERE selector_tags && $1::text[] GROUP BY category HAVING COUNT(DISTINCT orig_addr) >= $2 AND COUNT(DISTINCT resp_addr) >= $3\`);`,
+      },
+    ]);
+    expect(violations).toHaveLength(1);
+    expect(violations[0].pattern).toMatch(/R5 phase-1 cadence shape/);
+  });
+
+  it("flags an inlined R4/R5 phase-2 cadence shape — `resp_addr = ANY($N::inet[])` co-occurring with `selector_tags && $` (issue #694)", () => {
+    const violations = run([
+      {
+        relPath: "src/lib/triage/story/repository.ts",
+        source: `await client.query(\`SELECT * FROM baseline_triaged_event WHERE event_time <= $1 AND resp_addr = ANY($2::inet[]) AND selector_tags && $3::text[]\`);`,
+      },
+    ]);
+    expect(violations).toHaveLength(1);
+    expect(violations[0].pattern).toMatch(/R4\/R5 phase-2 cadence shape/);
+  });
+
+  it("does not flag the sibling Story shared module when it carries the R4 / R5 patterns", () => {
+    const violations = run([
+      {
+        relPath: "src/lib/triage/story/read-path-sql.mjs",
+        source: `export const R4P1 = \`GROUP BY resp_addr, category HAVING COUNT(DISTINCT orig_addr) >= $5\`;
+export const R5P1 = \`GROUP BY category HAVING COUNT(DISTINCT orig_addr) >= $5 AND COUNT(DISTINCT resp_addr) >= $6\`;
+export const R4P2 = \`WHERE resp_addr = ANY($3::inet[]) AND selector_tags && $5::text[]\`;`,
+      },
+    ]);
+    expect(violations).toEqual([]);
+  });
 });

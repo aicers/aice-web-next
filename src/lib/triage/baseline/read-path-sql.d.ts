@@ -71,6 +71,24 @@ export interface HarnessContext {
     firstTick: ReadonlyArray<string>;
     slopReplay: ReadonlyArray<string>;
   };
+  /**
+   * Phase-1 candidate-victim lists for R4 (fan-in), fetched by the
+   * harness probe so R4 phase-2's `$N::inet[]` bind has a value at
+   * `buildParams` time. Issue #694.
+   */
+  r4CandidateVictims?: {
+    firstTick: ReadonlyArray<string>;
+    slopReplay: ReadonlyArray<string>;
+  };
+  /**
+   * Phase-1 candidate-category lists for R5 (campaign), fetched by
+   * the harness probe so R5 phase-2's `$N::text[]` bind has a value
+   * at `buildParams` time. Issue #694.
+   */
+  r5CandidateCategories?: {
+    firstTick: ReadonlyArray<string>;
+    slopReplay: ReadonlyArray<string>;
+  };
 }
 
 export interface MeasuredQuery {

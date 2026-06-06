@@ -14,11 +14,18 @@ import {
 import {
   CRITICAL_CATEGORIES,
   CRITICAL_SELECTOR_SET,
+  R4_MIN_SOURCES,
+  R5_MIN_SOURCES,
+  R5_MIN_VICTIMS,
 } from "@/lib/triage/story/critical-sets.mjs";
 import {
   buildReadR1CandidatesSql,
   buildReadR3CandidatesPhase1Sql,
   buildReadR3CandidatesPhase2Sql,
+  buildReadR4CandidatesPhase1Sql,
+  buildReadR4CandidatesPhase2Sql,
+  buildReadR5CandidatesPhase1Sql,
+  buildReadR5CandidatesPhase2Sql,
 } from "@/lib/triage/story/read-path-sql.mjs";
 import { STRICTNESS_STOPS } from "@/lib/triage/strictness/stops";
 
@@ -45,13 +52,14 @@ describe("read-path-sql shared module", () => {
   });
 
   describe("query coverage", () => {
-    it("exposes the menu queries plus the R1 / R3 cadence entries as (name, context) pairs in MEASURED_QUERIES", () => {
+    it("exposes the menu queries plus the R1 / R3 / R4 / R5 cadence entries as (name, context) pairs in MEASURED_QUERIES", () => {
       // #471 adds two queries — `selectStoryProtectedCohort` (branch
       // B force-union) and `countEligibleByStop` (per-stop preview
       // hints). #601 adds R1 + R3 phase-1 + R3 phase-2 cadence
-      // entries, each in two contexts (first-tick / slop-replay), so
-      // the flat (query, context) list has seven menu entries plus
-      // six cadence entries.
+      // entries, each in two contexts (first-tick / slop-replay).
+      // #694 adds R4 phase-1/phase-2 and R5 phase-1/phase-2, also in
+      // two contexts each, so the flat (query, context) list has
+      // seven menu entries plus fourteen cadence entries.
       const pairs = MEASURED_QUERIES.map((q) => `${q.name}:${q.context}`);
       expect(pairs).toEqual([
         "selectMenuCohort:default",
@@ -67,6 +75,14 @@ describe("read-path-sql shared module", () => {
         "readR3CandidatesPhase1:slop-replay",
         "readR3CandidatesPhase2:first-tick",
         "readR3CandidatesPhase2:slop-replay",
+        "readR4CandidatesPhase1:first-tick",
+        "readR4CandidatesPhase1:slop-replay",
+        "readR4CandidatesPhase2:first-tick",
+        "readR4CandidatesPhase2:slop-replay",
+        "readR5CandidatesPhase1:first-tick",
+        "readR5CandidatesPhase1:slop-replay",
+        "readR5CandidatesPhase2:first-tick",
+        "readR5CandidatesPhase2:slop-replay",
       ]);
     });
 
@@ -424,6 +440,173 @@ describe("read-path-sql shared module", () => {
         "first-tick",
       ).buildParams(ctx) as ReadonlyArray<unknown>;
       expect(p1Params[1]).toEqual(Array.from(CRITICAL_SELECTOR_SET));
+    });
+  });
+
+  describe("R4 / R5 multi-source cadence entries (issue #694)", () => {
+    const ctx = {
+      periodStartIso: "2026-04-12T00:00:00.000Z",
+      periodEndIso: "2026-05-12T00:00:00.000Z",
+      observedFromIso: "2026-04-12T00:00:00.000Z",
+      addresses: [],
+      memberScanStartIso: "2026-05-11T23:00:00.000Z",
+      memberScanEndIso: "2026-05-12T00:00:00.000Z",
+      r4CandidateVictims: {
+        firstTick: ["10.0.0.9"],
+        slopReplay: ["10.0.0.8", "10.0.0.7"],
+      },
+      r5CandidateCategories: {
+        firstTick: ["IMPACT"],
+        slopReplay: ["EXFILTRATION"],
+      },
+    };
+
+    const lookup = (name: string, context: "first-tick" | "slop-replay") => {
+      const q = MEASURED_QUERIES.find(
+        (e) => e.name === name && e.context === context,
+      );
+      if (q === undefined) {
+        throw new Error(`missing measured entry: ${name}:${context}`);
+      }
+      return q;
+    };
+
+    it("R4 / R5 SQL matches the cadence builders byte-for-byte", () => {
+      expect(lookup("readR4CandidatesPhase1", "first-tick").sql).toBe(
+        buildReadR4CandidatesPhase1Sql({ memberScanStartIsNull: true }),
+      );
+      expect(lookup("readR4CandidatesPhase1", "slop-replay").sql).toBe(
+        buildReadR4CandidatesPhase1Sql({ memberScanStartIsNull: false }),
+      );
+      expect(lookup("readR4CandidatesPhase2", "first-tick").sql).toBe(
+        buildReadR4CandidatesPhase2Sql({ memberScanStartIsNull: true }),
+      );
+      expect(lookup("readR4CandidatesPhase2", "slop-replay").sql).toBe(
+        buildReadR4CandidatesPhase2Sql({ memberScanStartIsNull: false }),
+      );
+      expect(lookup("readR5CandidatesPhase1", "first-tick").sql).toBe(
+        buildReadR5CandidatesPhase1Sql({ memberScanStartIsNull: true }),
+      );
+      expect(lookup("readR5CandidatesPhase1", "slop-replay").sql).toBe(
+        buildReadR5CandidatesPhase1Sql({ memberScanStartIsNull: false }),
+      );
+      expect(lookup("readR5CandidatesPhase2", "first-tick").sql).toBe(
+        buildReadR5CandidatesPhase2Sql({ memberScanStartIsNull: true }),
+      );
+      expect(lookup("readR5CandidatesPhase2", "slop-replay").sql).toBe(
+        buildReadR5CandidatesPhase2Sql({ memberScanStartIsNull: false }),
+      );
+    });
+
+    it("R4 phase-1 binds the source threshold; first-tick omits the lower bound", () => {
+      expect(
+        lookup("readR4CandidatesPhase1", "first-tick").buildParams(ctx),
+      ).toEqual([
+        ctx.memberScanEndIso,
+        Array.from(CRITICAL_CATEGORIES),
+        Array.from(CRITICAL_SELECTOR_SET),
+        R4_MIN_SOURCES,
+      ]);
+      expect(
+        lookup("readR4CandidatesPhase1", "slop-replay").buildParams(ctx),
+      ).toEqual([
+        ctx.memberScanStartIso,
+        ctx.memberScanEndIso,
+        Array.from(CRITICAL_CATEGORIES),
+        Array.from(CRITICAL_SELECTOR_SET),
+        R4_MIN_SOURCES,
+      ]);
+    });
+
+    it("R4 phase-2 binds the probed victim list", () => {
+      expect(
+        lookup("readR4CandidatesPhase2", "first-tick").buildParams(ctx),
+      ).toEqual([
+        ctx.memberScanEndIso,
+        ctx.r4CandidateVictims.firstTick,
+        Array.from(CRITICAL_CATEGORIES),
+        Array.from(CRITICAL_SELECTOR_SET),
+      ]);
+      expect(
+        lookup("readR4CandidatesPhase2", "slop-replay").buildParams(ctx),
+      ).toEqual([
+        ctx.memberScanStartIso,
+        ctx.memberScanEndIso,
+        ctx.r4CandidateVictims.slopReplay,
+        Array.from(CRITICAL_CATEGORIES),
+        Array.from(CRITICAL_SELECTOR_SET),
+      ]);
+    });
+
+    it("R5 phase-1 binds the source AND victim thresholds", () => {
+      expect(
+        lookup("readR5CandidatesPhase1", "first-tick").buildParams(ctx),
+      ).toEqual([
+        ctx.memberScanEndIso,
+        Array.from(CRITICAL_CATEGORIES),
+        Array.from(CRITICAL_SELECTOR_SET),
+        R5_MIN_SOURCES,
+        R5_MIN_VICTIMS,
+      ]);
+      expect(
+        lookup("readR5CandidatesPhase1", "slop-replay").buildParams(ctx),
+      ).toEqual([
+        ctx.memberScanStartIso,
+        ctx.memberScanEndIso,
+        Array.from(CRITICAL_CATEGORIES),
+        Array.from(CRITICAL_SELECTOR_SET),
+        R5_MIN_SOURCES,
+        R5_MIN_VICTIMS,
+      ]);
+    });
+
+    it("R5 phase-2 binds the probed campaign-category list", () => {
+      expect(
+        lookup("readR5CandidatesPhase2", "first-tick").buildParams(ctx),
+      ).toEqual([
+        ctx.memberScanEndIso,
+        ctx.r5CandidateCategories.firstTick,
+        Array.from(CRITICAL_SELECTOR_SET),
+      ]);
+      expect(
+        lookup("readR5CandidatesPhase2", "slop-replay").buildParams(ctx),
+      ).toEqual([
+        ctx.memberScanStartIso,
+        ctx.memberScanEndIso,
+        ctx.r5CandidateCategories.slopReplay,
+        Array.from(CRITICAL_SELECTOR_SET),
+      ]);
+    });
+
+    it("R4 phase-1 SQL pre-aggregates `(resp_addr, category)` with a distinct-source HAVING", () => {
+      const sql = buildReadR4CandidatesPhase1Sql({
+        memberScanStartIsNull: false,
+      });
+      expect(sql).toMatch(/GROUP BY resp_addr, category/);
+      expect(sql).toMatch(/HAVING COUNT\(DISTINCT orig_addr\) >= \$5/);
+      expect(sql).toMatch(/resp_addr IS NOT NULL/);
+    });
+
+    it("R5 phase-1 SQL enforces the ≥2-victims floor via COUNT(DISTINCT resp_addr)", () => {
+      const sql = buildReadR5CandidatesPhase1Sql({
+        memberScanStartIsNull: false,
+      });
+      expect(sql).toMatch(/GROUP BY category/);
+      expect(sql).toMatch(/COUNT\(DISTINCT orig_addr\) >= \$5/);
+      expect(sql).toMatch(/COUNT\(DISTINCT resp_addr\) >= \$6/);
+    });
+
+    it("multi-source phase-2 reads select resp_addr via host()", () => {
+      const r4 = buildReadR4CandidatesPhase2Sql({
+        memberScanStartIsNull: true,
+      });
+      const r5 = buildReadR5CandidatesPhase2Sql({
+        memberScanStartIsNull: true,
+      });
+      expect(r4).toMatch(/host\(resp_addr\)\s+AS resp_addr/);
+      expect(r4).toMatch(/resp_addr = ANY\(\$2::inet\[\]\)/);
+      expect(r5).toMatch(/host\(resp_addr\)\s+AS resp_addr/);
+      expect(r5).toMatch(/category = ANY\(\$2::text\[\]\)/);
     });
   });
 });

@@ -8,7 +8,12 @@ import {
   detectAllStories,
   detectR1,
   detectR3,
+  detectR4,
+  detectR5,
   R1_LAMBDA,
+  R4_MIN_SOURCES,
+  R5_MIN_SOURCES,
+  R5_MIN_VICTIMS,
   STORY_MEMBER_CAP,
 } from "@/lib/triage/story/rules";
 
@@ -22,6 +27,7 @@ function event(
   return {
     kind: "HttpThreat",
     origAddr: "10.0.0.5",
+    respAddr: null,
     category: null,
     selectorTags: [],
     rawScore: 0,
@@ -293,6 +299,299 @@ describe("detectR3", () => {
     expect(s.members.map((m) => m.eventKey)).toEqual(["2", "3", "4"]);
     expect(s.timeWindowStart.toISOString()).toBe("2026-05-09T00:59:00.000Z");
     expect(s.timeWindowEnd.toISOString()).toBe("2026-05-09T01:02:00.000Z");
+  });
+});
+
+// Multi-source helper: defaults differ from `event()` — a fan-in /
+// campaign candidate always has a victim, a critical category, and a
+// critical selector unless a test overrides them.
+function msEvent(
+  partial: Omit<Partial<CandidateEvent>, "eventTime"> & {
+    eventKey: string;
+    eventTime: string;
+  },
+): CandidateEvent {
+  return event({
+    respAddr: "10.0.0.100",
+    category: "IMPACT",
+    selectorTags: ["S2-severe"],
+    ...partial,
+  });
+}
+
+describe("detectR4 — fan-in", () => {
+  it("worked example: ≥3 distinct sources onto one victim sharing one critical category + selector within 1h fires", () => {
+    const stories = detectR4([
+      msEvent({
+        eventKey: "1",
+        eventTime: "2026-05-09T10:00:00Z",
+        origAddr: "10.1.0.1",
+      }),
+      msEvent({
+        eventKey: "2",
+        eventTime: "2026-05-09T10:20:00Z",
+        origAddr: "10.1.0.2",
+      }),
+      msEvent({
+        eventKey: "3",
+        eventTime: "2026-05-09T10:50:00Z",
+        origAddr: "10.1.0.3",
+      }),
+    ]);
+    expect(stories).toHaveLength(1);
+    const [s] = stories;
+    expect(s.ruleId).toBe("R4");
+    expect(s.primaryAsset).toBe("10.0.0.100");
+    expect(s.correlationKey).toBe("10.0.0.100|IMPACT");
+    expect(s.score).toBe(3); // distinct source count
+    expect(s.members).toHaveLength(3);
+    expect(s.timeWindowStart.toISOString()).toBe("2026-05-09T10:00:00.000Z");
+    expect(s.timeWindowEnd.toISOString()).toBe("2026-05-09T10:50:00.000Z");
+    expect(s.summary.distinctAssetCount).toBe(3); // source fan-out
+  });
+
+  it("does not fire below R4_MIN_SOURCES distinct sources (2 sources, even with many events)", () => {
+    expect(R4_MIN_SOURCES).toBe(3);
+    const stories = detectR4([
+      msEvent({
+        eventKey: "1",
+        eventTime: "2026-05-09T10:00:00Z",
+        origAddr: "10.1.0.1",
+      }),
+      msEvent({
+        eventKey: "2",
+        eventTime: "2026-05-09T10:10:00Z",
+        origAddr: "10.1.0.1",
+      }),
+      msEvent({
+        eventKey: "3",
+        eventTime: "2026-05-09T10:20:00Z",
+        origAddr: "10.1.0.2",
+      }),
+    ]);
+    expect(stories).toEqual([]);
+  });
+
+  it("does not merge distinct victims into one fan-in", () => {
+    const stories = detectR4([
+      msEvent({
+        eventKey: "1",
+        eventTime: "2026-05-09T10:00:00Z",
+        origAddr: "10.1.0.1",
+        respAddr: "10.0.0.100",
+      }),
+      msEvent({
+        eventKey: "2",
+        eventTime: "2026-05-09T10:05:00Z",
+        origAddr: "10.1.0.2",
+        respAddr: "10.0.0.200",
+      }),
+      msEvent({
+        eventKey: "3",
+        eventTime: "2026-05-09T10:10:00Z",
+        origAddr: "10.1.0.3",
+        respAddr: "10.0.0.100",
+      }),
+    ]);
+    // Each victim has < 3 distinct sources → no fan-in.
+    expect(stories).toEqual([]);
+  });
+
+  it("separates two categories on the same victim into distinct correlation keys", () => {
+    const mk = (key: string, src: string, cat: string, min: number) =>
+      msEvent({
+        eventKey: key,
+        eventTime: `2026-05-09T10:${String(min).padStart(2, "0")}:00Z`,
+        origAddr: src,
+        category: cat,
+      });
+    const stories = detectR4([
+      mk("a1", "10.1.0.1", "IMPACT", 0),
+      mk("a2", "10.1.0.2", "IMPACT", 5),
+      mk("a3", "10.1.0.3", "IMPACT", 10),
+      mk("b1", "10.2.0.1", "EXFILTRATION", 1),
+      mk("b2", "10.2.0.2", "EXFILTRATION", 6),
+      mk("b3", "10.2.0.3", "EXFILTRATION", 11),
+    ]);
+    expect(stories).toHaveLength(2);
+    const keys = stories.map((s) => s.correlationKey).sort();
+    expect(keys).toEqual(["10.0.0.100|EXFILTRATION", "10.0.0.100|IMPACT"]);
+  });
+
+  it("excludes events failing the selector predicate", () => {
+    const stories = detectR4([
+      msEvent({
+        eventKey: "1",
+        eventTime: "2026-05-09T10:00:00Z",
+        origAddr: "10.1.0.1",
+        selectorTags: ["S3-recurring"],
+      }),
+      msEvent({
+        eventKey: "2",
+        eventTime: "2026-05-09T10:05:00Z",
+        origAddr: "10.1.0.2",
+        selectorTags: ["S3-recurring"],
+      }),
+      msEvent({
+        eventKey: "3",
+        eventTime: "2026-05-09T10:10:00Z",
+        origAddr: "10.1.0.3",
+        selectorTags: ["S3-recurring"],
+      }),
+    ]);
+    expect(stories).toEqual([]);
+  });
+
+  it("excludes events with NULL resp_addr (victim cannot be attributed)", () => {
+    const stories = detectR4([
+      msEvent({
+        eventKey: "1",
+        eventTime: "2026-05-09T10:00:00Z",
+        origAddr: "10.1.0.1",
+        respAddr: null,
+      }),
+      msEvent({
+        eventKey: "2",
+        eventTime: "2026-05-09T10:05:00Z",
+        origAddr: "10.1.0.2",
+        respAddr: null,
+      }),
+      msEvent({
+        eventKey: "3",
+        eventTime: "2026-05-09T10:10:00Z",
+        origAddr: "10.1.0.3",
+        respAddr: null,
+      }),
+    ]);
+    expect(stories).toEqual([]);
+  });
+
+  it("does not fire when the third source falls outside the 1-hour window", () => {
+    const stories = detectR4([
+      msEvent({
+        eventKey: "1",
+        eventTime: "2026-05-09T10:00:00Z",
+        origAddr: "10.1.0.1",
+      }),
+      msEvent({
+        eventKey: "2",
+        eventTime: "2026-05-09T10:30:00Z",
+        origAddr: "10.1.0.2",
+      }),
+      msEvent({
+        eventKey: "3",
+        eventTime: "2026-05-09T11:01:00Z",
+        origAddr: "10.1.0.3",
+      }),
+    ]);
+    expect(stories).toEqual([]);
+  });
+});
+
+describe("detectR5 — campaign", () => {
+  it("worked example: ≥5 distinct sources across ≥2 victims sharing one critical category + selector within 1h fires", () => {
+    const stories = detectR5([
+      msEvent({
+        eventKey: "1",
+        eventTime: "2026-05-09T10:00:00Z",
+        origAddr: "10.1.0.1",
+        respAddr: "10.0.0.100",
+      }),
+      msEvent({
+        eventKey: "2",
+        eventTime: "2026-05-09T10:10:00Z",
+        origAddr: "10.1.0.2",
+        respAddr: "10.0.0.100",
+      }),
+      msEvent({
+        eventKey: "3",
+        eventTime: "2026-05-09T10:20:00Z",
+        origAddr: "10.1.0.3",
+        respAddr: "10.0.0.200",
+      }),
+      msEvent({
+        eventKey: "4",
+        eventTime: "2026-05-09T10:30:00Z",
+        origAddr: "10.1.0.4",
+        respAddr: "10.0.0.200",
+      }),
+      msEvent({
+        eventKey: "5",
+        eventTime: "2026-05-09T10:40:00Z",
+        origAddr: "10.1.0.5",
+        respAddr: "10.0.0.300",
+      }),
+    ]);
+    expect(stories).toHaveLength(1);
+    const [s] = stories;
+    expect(s.ruleId).toBe("R5");
+    expect(s.primaryAsset).toBeNull();
+    expect(s.correlationKey).toBe("IMPACT");
+    expect(s.score).toBe(5); // distinct source count
+    expect(s.summary.distinctAssetCount).toBe(5);
+  });
+
+  it("does not fire below R5_MIN_SOURCES distinct sources", () => {
+    expect(R5_MIN_SOURCES).toBe(5);
+    const stories = detectR5([
+      msEvent({
+        eventKey: "1",
+        eventTime: "2026-05-09T10:00:00Z",
+        origAddr: "10.1.0.1",
+        respAddr: "10.0.0.100",
+      }),
+      msEvent({
+        eventKey: "2",
+        eventTime: "2026-05-09T10:10:00Z",
+        origAddr: "10.1.0.2",
+        respAddr: "10.0.0.100",
+      }),
+      msEvent({
+        eventKey: "3",
+        eventTime: "2026-05-09T10:20:00Z",
+        origAddr: "10.1.0.3",
+        respAddr: "10.0.0.200",
+      }),
+      msEvent({
+        eventKey: "4",
+        eventTime: "2026-05-09T10:30:00Z",
+        origAddr: "10.1.0.4",
+        respAddr: "10.0.0.200",
+      }),
+    ]);
+    expect(stories).toEqual([]);
+  });
+
+  it("does not fire when ≥5 sources converge on a SINGLE victim (that is an R4 fan-in, not a campaign)", () => {
+    expect(R5_MIN_VICTIMS).toBe(2);
+    const events: CandidateEvent[] = [];
+    for (let i = 0; i < 6; i += 1) {
+      events.push(
+        msEvent({
+          eventKey: String(i),
+          eventTime: `2026-05-09T10:${String(i * 5).padStart(2, "0")}:00Z`,
+          origAddr: `10.1.0.${i + 1}`,
+          respAddr: "10.0.0.100", // single victim
+        }),
+      );
+    }
+    expect(detectR5(events)).toEqual([]);
+  });
+
+  it("excludes events with NULL resp_addr from victim accounting", () => {
+    const events: CandidateEvent[] = [];
+    // 5 sources, but all null-victim → no victims to count.
+    for (let i = 0; i < 5; i += 1) {
+      events.push(
+        msEvent({
+          eventKey: String(i),
+          eventTime: `2026-05-09T10:${String(i * 5).padStart(2, "0")}:00Z`,
+          origAddr: `10.1.0.${i + 1}`,
+          respAddr: null,
+        }),
+      );
+    }
+    expect(detectR5(events)).toEqual([]);
   });
 });
 
