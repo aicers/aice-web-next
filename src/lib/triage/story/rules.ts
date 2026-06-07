@@ -53,6 +53,7 @@ import {
   R5_MIN_SOURCES as R5_MIN_SOURCES_RAW,
   R5_MIN_VICTIMS as R5_MIN_VICTIMS_RAW,
 } from "@/lib/triage/story/critical-sets.mjs";
+import { ACTIVE_RULE_IDS, type StoryRuleId } from "@/lib/triage/story/types";
 
 /**
  * Story RFC version stamp. Mirrors `baseline_version` and follows the
@@ -208,11 +209,13 @@ export const CRITICAL_SELECTOR_SET = CRITICAL_SELECTOR_SET_RAW;
  * #702) is the order-agnostic "slow R1": pulled forward into v1 with
  * redefined semantics (no kill-chain ordering), produced only by the
  * hourly sweep. R4/R5 are the multi-source rules (#694); R6 is the
- * persistent low-and-slow rule (#701), also sweep-only. Kept in sync
- * with the literal `StoryRuleId` union in `./types.ts`.
+ * persistent low-and-slow rule (#701), also sweep-only.
+ *
+ * `ACTIVE_RULE_IDS` and `StoryRuleId` are defined canonically in
+ * `./types.ts` and re-exported here so existing importers of this
+ * module keep resolving against the single source of truth (#711).
  */
-export const ACTIVE_RULE_IDS = ["R1", "R2", "R3", "R4", "R5", "R6"] as const;
-export type StoryRuleId = (typeof ACTIVE_RULE_IDS)[number];
+export { ACTIVE_RULE_IDS, type StoryRuleId };
 
 /**
  * Slim candidate-event shape the rules operate on. Carries only the
