@@ -32,6 +32,7 @@ plugins:
                 - Node management: operations/node-management.md
                 - mTLS certificate rotation: operations/mtls-rotation.md
                 - Triage baseline cadence: operations/triage-baseline-cadence.md
+                - Triage low-and-slow sweep: operations/triage-lowslow-sweep.md
                 - Triage Story rebuild: operations/triage-story-rebuild.md
             - Settings: settings.md
             - Customer Scope: customer-scope.md
@@ -48,6 +49,7 @@ plugins:
                 - Node management: operations/node-management.md
                 - mTLS certificate rotation: operations/mtls-rotation.md
                 - Triage baseline cadence: operations/triage-baseline-cadence.md
+                - Triage low-and-slow sweep: operations/triage-lowslow-sweep.md
                 - Triage Story rebuild: operations/triage-story-rebuild.md
             - Settings: settings.md
             - Customer Scope: customer-scope.md
@@ -61,6 +63,7 @@ plugins:
             Node management: 노드 관리
             mTLS certificate rotation: mTLS 인증서 교체
             Triage baseline cadence: 선별 베이스라인 케이던스
+            Triage low-and-slow sweep: 선별 암약 스윕
             Triage Story rebuild: 선별 Story 재빌드
             Settings: 설정
             Customer Scope: 고객사 범위
