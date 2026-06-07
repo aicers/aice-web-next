@@ -84,7 +84,7 @@ jobs:
       - run: pnpm install --frozen-lockfile
       - uses: biomejs/setup-biome@v2
         with:
-          version: 2.4.12
+          version: latest
       - run: pnpm check
       - run: pnpm check:scope
       - run: pnpm check:sql-drift
