@@ -280,5 +280,3 @@ curl -sS -o /tmp/lowslow.json -w '%{http_code}\n' \
 스윕이 전진하는지 확인할 수 있습니다. `story_finalized_through`는 계속
 움직이는데 `lowslow_finalized_through`가 전진을 멈추면, 스윕이 막혔거나
 실패하고 있다는 신호입니다.
-</content>
-</invoke>

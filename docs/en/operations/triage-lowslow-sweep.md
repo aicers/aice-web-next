@@ -303,5 +303,3 @@ advancing without polling the route every tick: a
 `lowslow_finalized_through` that stops advancing while
 `story_finalized_through` keeps moving is the signal that the sweep is
 stuck or failing.
-</content>
-</invoke>
