@@ -5,6 +5,13 @@ The Triage menu's Baseline mode reads from a per-customer
 fills via a recurring HTTP call. The route runs as a system actor
 (no user session) and is gated by a shared internal secret.
 
+A second, independent surface — the
+[hourly low-and-slow Story sweep](triage-lowslow-sweep.md) — runs in
+parallel to this 15-minute cadence. It has its own cron entry, route,
+dispatcher, token, and watermark, and produces the low-and-slow Story
+rules (R6/R2) over a 24-hour window; the cadence documented here is
+unaffected by it.
+
 ## What the cadence does
 
 Each invocation runs one ingestion pass for a single customer-tenant
