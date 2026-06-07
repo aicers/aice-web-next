@@ -1129,7 +1129,7 @@ describe("buildPaginationPersistSearch — issue #429 Reviewer Round 4", () => {
       "preset",
       NOW_REFRESH,
     );
-    if (!slid || slid.mode !== "structured") {
+    if (slid?.mode !== "structured") {
       throw new Error("expected slid filter for the test setup");
     }
     // Build the URL from the stale (pre-slide) committed filter. This
@@ -1161,7 +1161,7 @@ describe("buildPaginationPersistSearch — issue #429 Reviewer Round 4", () => {
     // Decode the override branch and check it carries the slid window.
     const filterUrl = await import("@/lib/detection/filter-url");
     const decoded = filterUrl.parseFilterFromUrlParam(freshF);
-    if (!decoded || decoded.filter.mode !== "structured") {
+    if (decoded?.filter.mode !== "structured") {
       throw new Error("expected the encoded blob to round-trip");
     }
     expect(decoded.filter.input.start).toBe(slid.input.start);
@@ -1172,7 +1172,7 @@ describe("buildPaginationPersistSearch — issue #429 Reviewer Round 4", () => {
     // The stale (closure-only) branch encodes the activation bounds —
     // demonstrating the regression the override exists to prevent.
     const staleDecoded = filterUrl.parseFilterFromUrlParam(staleF);
-    if (!staleDecoded || staleDecoded.filter.mode !== "structured") {
+    if (staleDecoded?.filter.mode !== "structured") {
       throw new Error("expected the stale blob to round-trip");
     }
     expect(staleDecoded.filter.input.start).toBe(ACTIVATION_FILTER.input.start);

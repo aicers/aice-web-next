@@ -761,7 +761,7 @@ export function TriageBaselineContent({
   // those, an empty bucket can only arise from a stale hash where
   // the safer fallback is the asset card.
   const pivotFocusAsset: TriageAsset | null = useMemo(() => {
-    if (!activeStep || activeStep.kind !== "dimension") return null;
+    if (activeStep?.kind !== "dimension") return null;
     const tenantCustomerId =
       pivotOrigin.kind === "story"
         ? pivotOrigin.customerId

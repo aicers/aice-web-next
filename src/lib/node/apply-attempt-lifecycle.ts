@@ -520,7 +520,7 @@ async function tryClaim(
       const target = current.plannedDispatches.find(
         (d) => d.dispatchId === retryDispatchId,
       );
-      if (!target || target.state !== "failed_retryable") return null;
+      if (target?.state !== "failed_retryable") return null;
     }
 
     const newDispatches = advanceForClaim(
