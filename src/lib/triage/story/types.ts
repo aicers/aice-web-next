@@ -29,11 +29,12 @@ export const TRIAGE_STORY_PAGE_SIZE = 200;
  * the dispersed-activity rule added by #701 — also sweep-only and
  * likewise additive under `story_version = 'v1'`.
  *
- * NOTE: kept in sync with the `ACTIVE_RULE_IDS` tuple in
- * `./rules.ts` (the two definitions are intentionally duplicated;
- * single-sourcing is a separate follow-up).
+ * This is the **canonical** definition of the rule-ID list and the
+ * derived `StoryRuleId` union; `./rules.ts` re-exports both from here
+ * so there is a single source of truth (#711).
  */
-export type StoryRuleId = "R1" | "R2" | "R3" | "R4" | "R5" | "R6";
+export const ACTIVE_RULE_IDS = ["R1", "R2", "R3", "R4", "R5", "R6"] as const;
+export type StoryRuleId = (typeof ACTIVE_RULE_IDS)[number];
 
 /**
  * `event_group.kind` discriminator. Auto-correlated rows are produced
