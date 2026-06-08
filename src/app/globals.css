@@ -97,6 +97,17 @@
   --breakpoint-wide: 2000px;
 }
 
+/* Make native form-control internals (date/time picker indicator, spin
+   buttons, picker popup) follow the active theme. Suffix selectors keep
+   any future *-light / *-dark theme working automatically. */
+[data-theme$="-light"] {
+  color-scheme: light;
+}
+
+[data-theme$="-dark"] {
+  color-scheme: dark;
+}
+
 @custom-variant dark (&:where([data-theme$="-dark"], [data-theme$="-dark"] *));
 
 body {
