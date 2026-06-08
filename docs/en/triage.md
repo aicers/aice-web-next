@@ -2,7 +2,7 @@
 
 The Triage page narrows a high-volume detection feed down to the
 assets most likely to need a human eye next. For a chosen period,
-it reads the per-tenant `baseline_triaged_event` corpus (rows the
+it reads the per-tenant `baseline_triaged_event` candidates (rows the
 cadence job has already scored), composes a bounded menu of the
 highest-priority rows via the slot-bucket quota in
 [Baseline scoring algorithm](#baseline-scoring-algorithm), and
@@ -24,7 +24,7 @@ The page has five regions:
 
 1. **Header** — title, a one-line description of the menu, and a
    **freshness badge** showing how recently the per-tenant baseline
-   corpus was last ingested (see [Freshness header](#freshness-header)).
+   candidates were last ingested (see [Freshness header](#freshness-header)).
 2. **Period picker, mode toggle, scope toggle, and strictness
    slider** — controls for the period under analysis, the scoring
    mode (only **Baseline** is wired today), the Tier 1 / Tier 2
@@ -34,9 +34,9 @@ The page has five regions:
    page; the stop set is recorded in
    `src/lib/triage/strictness/RFC.md`.
 3. **Funnel** — four numbers for the loaded slice: how many events
-   were **Detected** (from `observed_event_meta`), how many were
-   **Triaged** by cadence + exclusions (corpus floor, independent
-   of the slider), how many are actually **Shown** after the
+   were **Detected** (from `observed_event_meta`), how many became
+   **Candidates** after cadence + exclusions (candidate floor,
+   independent of the slider), how many are actually **Shown** after the
    slider's quota and merge caps, and the pass-through ratio
    (`Shown ÷ Detected`).
 4. **Asset list and asset detail** — a two-column workspace.
@@ -61,10 +61,10 @@ The selector enforces three rules:
 
 - **Maximum lookback: 180 days.** A start timestamp older than
   180 days ago is rejected. The 180-day floor matches the
-  `baseline_triaged_event` corpus retention.
+  `baseline_triaged_event` candidate retention.
 - **Maximum duration: 30 days.** A range whose end minus start
   exceeds 30 days is rejected. The 30-day cap is a working-window
-  choice (UI cost, percentile-pass cost) rather than a corpus
+  choice (UI cost, percentile-pass cost) rather than a candidates
   property.
 - **End after start.** A range whose end is at or before its
   start is rejected.
@@ -98,13 +98,13 @@ asset list, and per-asset rows whose contribution falls entirely in
 the out-of-retention slice get a small `(over last 30d)` suffix on
 their detected count so the operator can tell apart "denominator
 unknown" from "denominator zero". The asset list's score and
-triaged count keep reading from the corpus and remain accurate
+triaged count keep reading from the candidates and remain accurate
 across the full window.
 
 ## Freshness header
 
 A small badge in the page header reports how recently the per-tenant
-baseline corpus was last ingested. The badge reads
+baseline candidates were last ingested. The badge reads
 `baseline_corpus_state.last_ingested_at` from each tenant DB the
 caller has scope to and renders one of six states based on the
 combination of `last_run_status` and `last_ingested_at`:
@@ -129,7 +129,7 @@ affected-id list with the error detail (`Affected: 1, 2 — <error>`)
 so neither piece of triage context is dropped.
 
 The header intentionally does not surface `baseline_version` or any
-other corpus metadata. Audit and debugging use the stored
+other candidate metadata. Audit and debugging use the stored
 `baseline_version` column directly.
 
 ## Force-rebuild a period (admin)
@@ -137,19 +137,19 @@ other corpus metadata. Audit and debugging use the stored
 The freshness badge sits next to a small **Rebuild this period**
 button visible only to the named **System Administrator** role.
 The button is an operational escape hatch out of the natural-
-expiry default for corpus A: it deletes every
+expiry default for candidate set A: it deletes every
 `baseline_triaged_event` / `observed_event_meta` row in the
 currently selected period and re-ingests the same period from the
 detector store under the current exclusion set.
 
 When to use it:
 
-- Post-incident corpus repair after a bad exclusion rule has
+- Post-incident candidate repair after a bad exclusion rule has
   retro-DELETEd rows that should not have been removed.
 - Urgent refresh of the baseline-version stamp on a window's worth
   of rows ahead of natural expiry.
 - Recovery from any other state where the cadence's incremental
-  fill cannot produce the desired corpus on its own.
+  fill cannot produce the desired candidates on its own.
 
 It is **not** a user-facing tuning surface — analysts who want to
 see more or fewer events use the strictness controls instead.
@@ -182,7 +182,7 @@ request for an arbitrary tenant id.
 > only be rendered against a System Administrator session paired
 > with a Phase 1.B seeded customer-tenant DB. The authoring
 > worktree's e2e harness signs in as a separate "E2E Test Admin"
-> role and does not include the seeded corpus required for a
+> role and does not include the seeded candidates required for a
 > non-zero estimate; the same staging tenant used to refresh the
 > rest of the Triage PNGs in #455 is the canonical capture
 > environment. The wireframe will be replaced with a real PNG
@@ -194,7 +194,7 @@ Clicking the button opens a confirmation modal that shows:
   operator visually confirms which tenant they are mutating.
 - **Period** — the menu's currently selected `[from, to)` window.
 - **What this does** — "Re-fetches events for this period from the
-  detector store and rebuilds the baseline corpus. Existing rows
+  detector store and rebuilds the baseline candidates. Existing rows
   in this period are deleted and replaced. The cadence watermark
   is not affected."
 - **Estimated impact** — the number of rows currently in
@@ -224,14 +224,14 @@ After confirm, the page submits `POST /api/triage/baseline/rebuild`
 and replaces the button with a spinner. While the rebuild is in
 flight, the menu row list (funnel + asset list) shows a
 non-blocking **"Rebuilding this period..."** overlay so the
-operator can see that the visible corpus may briefly drop to 0
+operator can see that the visible candidates may briefly drop to 0
 and refill — not just by the button label. The overlay does not
 block clicks; the operator can still navigate or cancel the page
 without affecting the in-flight rebuild. On completion:
 
 - **Success** — a toast like *"Rebuilt: deleted N, inserted M
   events"* fires and the page refreshes the menu so the post-
-  rebuild corpus is visible.
+  rebuild candidates are visible.
 - **RebuildBusy** (HTTP 409) — the cadence runner or another
   rebuild holds the per-customer advisory lock for this customer.
   The toast surfaces *"cadence or another rebuild is currently
@@ -239,13 +239,13 @@ without affecting the in-flight rebuild. On completion:
   re-clicks once the contender releases.
 - **RebuildTimeout** (HTTP 504) — the rebuild exceeded the 300 s
   hard cap. The in-flight transaction is rolled back and the lock
-  is released, so the corpus is in its pre-rebuild state. Split
+  is released, so the candidates are in their pre-rebuild state. Split
   the period and retry.
 - **RebuildIncomplete** (HTTP 504) — review's paginator never
   reported `hasNextPage = false` within the safety cap, or
   returned `hasNextPage = true` with a missing cursor. The
   rebuild aborts **before** the DB transaction begins, so the
-  corpus is left exactly as it was. The toast distinguishes this
+  candidates are left exactly as they were. The toast distinguishes this
   case from `RebuildTimeout` because the operator's next step is
   different: split the period and retry, or investigate the
   resolver if the page count was unexpected for the range.
@@ -275,7 +275,7 @@ follow when no audit row exists.
 
 Failed attempts (`RebuildBusy`, `RebuildTimeout`,
 `RebuildIncomplete`, validation rejections, or any error that
-rolls back the corpus transaction) leave the corpus unchanged and
+rolls back the candidate transaction) leave the candidates unchanged and
 do **not** emit an audit row. If the operator's tab is closed or
 reloaded mid-rebuild, the absence of an audit row therefore means
 either "the rebuild has not committed yet" or "the rebuild
@@ -315,7 +315,7 @@ cadence threshold. The slider is a read-time predicate against the
 kind-normalized baseline percentile (`cume_dist()` over `raw_score`
 within each `(kind, baseline_version)` partition). No re-ingest, no
 detector round-trip; moving the slider only re-runs the menu's SELECT
-against the per-tenant baseline corpus.
+against the per-tenant baseline candidates.
 
 ### Stops
 
@@ -323,20 +323,20 @@ Five discrete stops, ordered loose → strict in the toolbar:
 
 | Stop      | Cutoff (`baseline_score >=`) | What it shows                                           |
 | --------- | ---------------------------- | ------------------------------------------------------- |
-| **All**   | 0                            | Every cutoff-surviving row; the per-bucket quota is lifted (the cadence floor and the SQL candidate cap still apply). |
-| **Top 80%** | 0.20                       | Wider net — `defaultN` doubled.                         |
-| **Top 50%** (default) | 0.50               | Production default.                                     |
-| **Top 20%** | 0.80                       | Tightened — `defaultN` halved.                          |
-| **Top 5%**  | 0.95                       | Strongest signals only — `defaultN` × 0.25.             |
+| **Widest**   | 0                         | Every cutoff-surviving row; the per-bucket quota is lifted (the cadence floor and the SQL candidate cap still apply). |
+| **Wider**   | 0.20                       | Wider net — `defaultN` doubled.                         |
+| **Balanced** (default) | 0.50              | Production default.                                     |
+| **Narrower** | 0.80                      | Tightened — `defaultN` halved.                          |
+| **Narrowest**  | 0.95                    | Strongest signals only — `defaultN` × 0.25.             |
 
 The slider chip row shows a cheap **"≈ N"** preview next to each stop
 — the eligible row count for that stop before the per-bucket quota is
 applied. The Funnel's **Shown** segment is the authoritative
 post-quota count (see [Funnel](#funnel)).
 
-### "All" stop semantics
+### "Widest" stop semantics
 
-"All" means **no additional user-side cutoff**. Three caps still bound
+"Widest" means **no additional user-side cutoff**. Three caps still bound
 the rendered set:
 
 - The cadence-threshold floor on the ingest side.
@@ -345,14 +345,14 @@ the rendered set:
 - The cross-tenant `TRIAGE_HARD_EVENT_CAP` (5,000) applied at merge
   time.
 
-The per-bucket `composeMenu` quota is **not** a bound at "All" —
+The per-bucket `composeMenu` quota is **not** a bound at "Widest" —
 under option (b) the multiplier is `null` so every cutoff-surviving
-row makes it into the assembled set. The tooltip on the "All" chip
+row makes it into the assembled set. The tooltip on the "Widest" chip
 names only the two upstream bounds.
 
-### Story-protected events
+### Threat-story-protected events
 
-![Asset-detail event rows with the chain-link Story-protected marker (wireframe)](../assets/triage-strictness-marker-en.svg)
+![Asset-detail event rows with the chain-link threat-story-protected marker (wireframe)](../assets/triage-strictness-marker-en.svg)
 
 Events that belong to any Story (`event_group_member`) are protected
 from the slider's cutoff via a parallel "branch B" SELECT that
@@ -366,23 +366,23 @@ Branch B rows carry a per-row marker — a chain-link 🔗 glyph
 prepended to the leading cell of the event row. The marker renders
 under all four of these conditions, applied at the SQL level:
 
-1. The slider position is not "All".
+1. The slider position is not "Widest".
 2. The row has a non-NULL read-time `baseline_score`.
 3. `baseline_score < slider_cutoff`.
 4. The row is a Story member.
 
 The marker is rendered on per-event surfaces only — the **asset
 detail** event rows, the **pivot related-events panel**, and the
-**Story detail** member rows. Asset aggregate rows in the asset list
+**Threat story detail** member rows. Asset aggregate rows in the asset list
 do not show the marker (the marker is per-event; an aggregate row
 hides individual scores).
 
 When the marker is hovered, a tooltip and `aria-label` read
-**"Kept because of Story membership (score: 0.30)"** with the row's
+**"Kept because of threat story membership (score: 0.30)"** with the row's
 read-time score. The branch B SELECT is bounded per tenant by
 `STORY_PROTECTED_PER_TENANT_LIMIT = 2000`; the cross-tenant merge is
 capped at `STORY_PROTECTED_HARD_CAP = 2000`. When that cap fires a
-separate **"N Story members truncated"** banner surfaces alongside
+separate **"N Threat story members truncated"** banner surfaces alongside
 the existing `TRIAGE_HARD_EVENT_CAP` truncation banner.
 
 ### Persistence and shareable links
@@ -392,7 +392,7 @@ Slider position is resolved on first render in this precedence:
 (preserved for hash-link compatibility) → `localStorage` → default
 (`top50`). Moving the slider writes the query param via
 `router.replace`, mirrors the hash, and updates `localStorage`.
-Reloading or sharing a `?strictness=top5` link restores Top 5% without
+Reloading or sharing a `?strictness=top5` link restores Narrowest without
 flashing through the default.
 
 ### Keyboard navigation
@@ -516,22 +516,24 @@ per RFC §4:
   bypassing the per-bucket quota. The fallback still respects the
   slider cutoff — a strict stop promises "no row below
   `baseline_score >= cutoff`", and surfacing a sub-cutoff row at e.g.
-  Top 5% would contradict that promise — so when every row sits below
+  Narrowest would contradict that promise — so when every row sits below
   the cutoff the fallback returns empty rather than dipping under the
   user's selection.
 
 The strictness slider drives the cutoff
 ([#471](https://github.com/aicers/aice-web-next/issues/471)). Stop
 positions map to a cutoff against the read-time `cume_dist()`
-projection by identity: "Top X%" applies `baseline_score >= 1 - X/100`,
-and the "All" stop applies `0` (no additional user-side cutoff — at
-the "All" stop the cadence-threshold floor and the per-bucket SQL
+projection: a stop that keeps the top fraction of the distribution
+applies `baseline_score >= 1 - fraction` (for example, Narrowest keeps
+the strongest 5%, cutoff `0.95`), and the Widest stop applies `0` (no
+additional user-side cutoff — at the Widest stop the cadence-threshold
+floor and the per-bucket SQL
 candidate cap still bound the result, but the per-bucket `composeMenu`
 quota is lifted under RFC §6 option (b)). Each stop also carries a
 `defaultN` multiplier so a strict stop tightens the per-bucket quota
 and a loose stop widens it. Story-protected events are force-unioned
 into the assembled set via a parallel branch B SELECT (see
-[Story-protected events](#story-protected-events) for the contract).
+[Threat-story-protected events](#threat-story-protected-events) for the contract).
 The asset-detail panel also obeys the selected stop — its SELECT
 applies the cutoff inside the `filtered` CTE, before the per-address
 newest-N `ROW_NUMBER()`, so an asset surfaced at a strict stop does
@@ -542,7 +544,7 @@ hash/query-param persistence contract.
 
 ### `baseline_version` semantics
 
-Every corpus row carries a `baseline_version` string identifying
+Every candidate row carries a `baseline_version` string identifying
 the algorithm that produced it. Phase 1.A rows carry
 `phase1a-simple`; Phase 1.B rows carry `phase1b-four-selector`.
 Two implications matter for analysts:
@@ -555,7 +557,7 @@ Two implications matter for analysts:
 - **Version mix is invisible in the UI.** The header does not
   surface `baseline_version`; natural turnover resolves the
   cross-version mix within the menu's typical 30-day window
-  (corpus retention is 180 days, so a long lookback may still
+  (candidate retention is 180 days, so a long lookback may still
   span more than one version). Audit and debugging read the
   stored `baseline_version` column directly.
 
@@ -575,15 +577,15 @@ window.
 
 ## Funnel
 
-The funnel summarises the loaded slice. Sources after the corpus
+The funnel summarises the loaded slice. Sources after the candidates
 switch:
 
 | Stat | Source | Meaning |
 |---|---|---|
 | **Detected** | `observed_event_meta` | Events surviving the cadence's exclusion re-application across the period (clamped lower bound: `max(:from, now() − 30d)` — see [Detected denominator and the 30-day retention floor](#detected-denominator-and-the-30-day-retention-floor)). |
-| **Triaged** | `baseline_triaged_event` | Events the baseline rule kept across the full period (180-day retention). Slider-independent — the count does not move when the strictness slider moves. |
+| **Candidates** | `baseline_triaged_event` | Events the baseline rule kept across the full period (180-day retention). Slider-independent — the count does not move when the strictness slider moves. |
 | **Shown** | merge layer | The post-quota, post-merge-cap union of branch A and branch B rows that actually reach the screen. Moves with the strictness slider. |
-| **Pass-through** | derived | `Shown ÷ Detected`, expressed as a percentage. Redefined by the strictness slider — was `Triaged ÷ Detected` in earlier slices. |
+| **Pass-through** | derived | `Shown ÷ Detected`, expressed as a percentage. Redefined by the strictness slider — was `Candidates ÷ Detected` in earlier slices. |
 
 The funnel is recomputed on every period change, customer change,
 or kind-filter change.
@@ -614,7 +616,7 @@ contribute to any asset row.
 
 The asset list is **derived from the §4 `final_menu_rows`** — the
 same set the [Baseline scoring algorithm](#baseline-scoring-algorithm)
-composes for the pivot corpus. Each tenant's slice runs one
+composes for the pivot candidates. Each tenant's slice runs one
 `cume_dist()` pass over the post-`Blocklist*` window and applies the
 §4 slot-bucket / largest-remainder / quota composition (and the §6
 `MIN_NONZERO_FLOOR` fallback when assembly is below the floor) to
@@ -708,14 +710,14 @@ intact in the original tab. The link target is
 stable identifier; no triage filter state is encoded into it.
 
 The deep link is offered on the **asset detail** event rows only.
-The Story detail member table keeps its existing pivot affordances
+The Threat story detail member table keeps its existing pivot affordances
 and does not turn its rows into investigation links.
 
 ### Field availability in Baseline mode
 
 The Baseline-mode detail panel reads from `baseline_triaged_event`
 columns only; subtype-specific fields that are not present on the
-corpus row are omitted from the panel. Fields **not** available
+candidate row are omitted from the panel. Fields **not** available
 in Baseline mode (and the dimensions they would have powered):
 
 - `level` (ThreatLevel) — the level chip and any level filter are
@@ -732,10 +734,10 @@ in Baseline mode (and the dimensions they would have powered):
   Baseline mode.
 
 These fields all return automatically in the future "With my
-policies" mode (corpus B) which retains the full `eventList`
+policies" mode (candidate set B) which retains the full `eventList`
 payload through a snapshot JSONB. Inside the Baseline-mode pivot
 panel, the dimensions above appear as no-ops because the index
-builder skips them when reading from corpus A.
+builder skips them when reading from candidate set A.
 
 ## Hard cap and truncation
 
@@ -759,7 +761,7 @@ The menu read is bounded in two layers:
    multi-tenant scope exceeds the ceiling, the lowest-priority
    rows are dropped first rather than the oldest.
    The visible asset list is then aggregated from the **capped**
-   event set, so the asset list and the pivot corpus are derived
+   event set, so the asset list and the pivot candidates are derived
    from the same row set: an asset whose menu rows are all evicted
    by the cap does not appear on the asset list, and an asset whose
    rows are partially evicted has its score, triaged-event count,
@@ -793,33 +795,33 @@ renders the empty shell with one of these banners:
   administrator."** — the caller holds `triage:read` but no
   customers are assigned to their account.
 
-## Stories tab
+## Threat story tab
 
 Inside Baseline mode the Triage page exposes three peer views
 through a tab strip above the workspace: **Asset list** (the
-default landing tab described above), **Stories**, and **Pivot**.
-Stories surfaces clusters that the cadence-side correlator (see
+default landing tab described above), **Threat story**, and **Pivot**.
+Threat story surfaces clusters that the cadence-side correlator (see
 the Story RFC and `event_group` schema) has already grouped, plus
 clusters the analyst has saved by hand from a pivot focus.
 
-The Stories tab is hidden in "With my policies" mode. Story v1
-runs on the baseline corpus only; the policy corpus has no
+The Threat story tab is hidden in "With my policies" mode. Story v1
+runs on the baseline candidates only; the policy candidates have no
 `event_group` rows, so a tab there would always be empty.
 
-![Stories tab (wireframe)](../assets/triage-stories-en.svg)
+![Threat story tab (wireframe)](../assets/triage-stories-en.svg)
 
 > **Note:** The figure above is a wireframe stand-in. Live PNG
-> captures land once a staging tenant with a representative Story
-> fixture is available; the screenshot debt is folded into the
+> captures land once a staging tenant with a representative threat
+> story fixture is available; the screenshot debt is folded into the
 > Phase 1.B manual-screenshot rollout tracked under [issue
 > #463](https://github.com/aicers/aice-web-next/issues/463).
 
-### Stories list
+### Threat story list
 
 The list reverse-chronologically renders every `event_group` row
 whose time window **overlaps** the menu's selected period — a
-Story that started before `period.start` but extends into it
-appears here, not only Stories that started inside the period.
+threat story that started before `period.start` but extends into it
+appears here, not only threat stories that started inside the period.
 The default sort is `time_window_end DESC`; a small toggle in the
 header swaps to `score DESC`.
 
@@ -830,26 +832,26 @@ per tenant. Results are merged on
 `(time_window_end DESC, score DESC, customerId, storyId)` so the
 secondary sort key is stable across both orderings. When any
 per-tenant slice hits the per-page cap a small muted hint above
-the cards reads "Some Stories were not loaded — narrow the period
+the cards reads "Some threat stories were not loaded — narrow the period
 to see the rest."
 
-A **Show only unsent** checkbox filters out Stories whose
+A **Show only unsent** checkbox filters out threat stories whose
 `last_sent_at` column has been written. The column is populated
-by a follow-up issue (#493); until that ships every Story is
+by a follow-up issue (#493); until that ships every threat story is
 "unsent" and the filter is effectively a no-op. The toggle is
 included now so the UI surface does not need a second pass once
 #493 lands.
 
-### Story card
+### Threat story card
 
-Each Story renders as one card with:
+Each threat story renders as one card with:
 
 - **Title** — auto-generated from the stored `summary_payload`:
   `<primary asset> · <duration> · <top-3 categories>`. For an
-  analyst-curated Story that supplied a title at save time the
+  analyst-curated threat story that supplied a title at save time the
   card renders the analyst's title verbatim instead.
 - **Rule badge** — the correlation rule for auto-correlated
-  Stories, `analyst-curated` for the curated kind. Auto rules are:
+  threat stories, `analyst-curated` for the curated kind. Auto rules are:
   - `R1` — one asset, multiple critical categories in a short window.
   - `R2` — multi-stage low-and-slow: one asset that touches at least
     three distinct categories (at least one critical) in any order —
@@ -858,12 +860,12 @@ Each Story renders as one card with:
     breadth of distinct stages over dispersed time, not on any fixed
     kill-chain order, since real attackers oscillate between stages.
     Detected by a separate hourly sweep rather than the per-page
-    cadence; the same asset and window may also produce an `R6` Story.
+    cadence; the same asset and window may also produce an `R6` threat story.
   - `R3` — one asset, repeated critical-selector activity.
   - `R4` — fan-in: many source IPs converging on one victim with the
     same attack signature.
   - `R5` — campaign: the same attack signature from many source IPs
-    across multiple victims (this Story has no single primary asset).
+    across multiple victims (this threat story has no single primary asset).
   - `R6` — persistent low-and-slow: one asset with dispersed activity
     spread thinly across at least three distinct hours within a
     24-hour window (a periodic beacon or slow recon), detected by a
@@ -872,7 +874,7 @@ Each Story renders as one card with:
 - **Member count** — the stored
   `summary_payload.memberCount` (NOT the runtime-joined count);
   the value stays stable as members age out of the underlying
-  corpus.
+  candidates.
 - **Time window** — start and end timestamps.
 - **Top-3 event preview** — three rows from the
   `event_group_member` ⨝ `baseline_triaged_event` join sorted by
@@ -886,13 +888,13 @@ Each Story renders as one card with:
 
 ### Send to Insight
 
-Each Story card carries a **Send to Insight** button and an
+Each threat story card carries a **Send to Insight** button and an
 adjacent kebab menu. Clicking the primary button sends the
-focused Story through the Phase 2 contract to Clumit Insight for
+focused threat story through the Phase 2 contract to Clumit Insight for
 LLM analysis. The flow makes three calls in sequence:
 
 1. The browser asks aice-web-next to mint a Phase 2 envelope
-   for the focused Story.
+   for the focused threat story.
 2. The browser POSTs the multipart envelope (two ES256-signed
    JWSes + the JSON payload) to the configured Clumit Insight bridge
    URL.
@@ -910,7 +912,7 @@ side if the row eventually lands).
 The kebab menu next to the Send button offers **Send (force
 refresh)**. Selecting it prompts the analyst to confirm
 ("Bypass Clumit Insight's cache and run the LLM fresh on this
-Story?") before sending; on confirm the same three-call flow
+threat story?") before sending; on confirm the same three-call flow
 runs with a `force_refresh: true` flag so Clumit Insight re-runs
 the LLM rather than serving its cached narrative. Force-refresh
 applies to manual Send only; the opportunistic background push
@@ -923,18 +925,18 @@ Settings → Clumit Insight integration page first.
 
 ### Opportunistic background push
 
-While the Stories tab is open and visible, aice-web-next
-automatically pushes any Stories that have not yet been sent
+While the Threat story tab is open and visible, aice-web-next
+automatically pushes any threat stories that have not yet been sent
 since the per-customer cursor, plus any queued window-replace
 notices (refresh / backfill) and withdraw notices for stories.
 The drain ticks every five minutes per in-scope customer; it
 auto-pauses when the tab is hidden and resumes on
-`visibilitychange`. Each opportunistically pushed Story has its
+`visibilitychange`. Each opportunistically pushed threat story has its
 β indicator updated on the next menu refresh and produces a
 `triage.story.send` audit row attributed to the system actor
 (rendered as **System** in the audit-log viewer).
 
-Curated Stories (`kind = 'analyst_curated'`) are NEVER
+Curated threat stories (`kind = 'analyst_curated'`) are NEVER
 opportunistically pushed. Manual Send remains available for
 both kinds.
 
@@ -947,13 +949,13 @@ The card carries a stable HTML identity attribute
 the same per-DB `event_group.id` produce two distinguishable
 entries.
 
-### Open: Story detail panel
+### Open: Threat story detail panel
 
 Clicking **Open** drills into a detail panel whose header
-mirrors the Story identity the analyst clicked: the same auto-
+mirrors the threat story identity the analyst clicked: the same auto-
 generated (or `manualTitle`) title, the rule badge, the score,
 the stored member count from `summary_payload.memberCount`, the
-customer, and the Story time window. The body renders the full
+customer, and the threat story time window. The body renders the full
 member table. The same row source is used as the asset detail
 (the `event_group_member` join), with read-time `baseline_score`
 computed via `cume_dist()` over the menu's `(kind,
@@ -963,14 +965,14 @@ reuse the same address rendering as the asset detail.
 
 When `summary_payload.memberCount` exceeds the runtime joined
 count, the detail panel renders a one-line muted notice:
-`"<shown> of <stored> events shown — <aged> aged past corpus A
-retention."` The notice is purely informational; the stored
-member count remains the authoritative shape of the Story.
+`"<shown> of <stored> events shown — <aged> aged past the candidate
+retention window."` The notice is purely informational; the stored
+member count remains the authoritative shape of the threat story.
 
-### Save as Story
+### Save as threat story
 
 When the operator has pivoted away from the asset root, a small
-**Save as Story** button appears next to the pivot breadcrumb.
+**Save as threat story** button appears next to the pivot breadcrumb.
 Clicking it opens a modal pre-seeded with the events visible at
 the current pivot focus. The analyst can:
 
@@ -981,7 +983,7 @@ the current pivot focus. The analyst can:
   'analyst_curated'`.
 
 The button is **disabled** whenever the pivot focus spans events
-from more than one customer; a curated Story is single-tenant by
+from more than one customer; a curated threat story is single-tenant by
 contract. Narrowing the focus to one customer re-enables it.
 
 Server-side validation enforces:
@@ -993,17 +995,17 @@ Server-side validation enforces:
   member's `orig_addr`.
 - The member count is between 1 and 50.
 
-On success the new Story is recorded in `event_group`, a
+On success the new threat story is recorded in `event_group`, a
 corresponding member set in `event_group_member`, and an audit
 event `triage.story.create` (target type `triage_story`) is
 written with the composite `(customerId, storyId)` identity, the
 saved member count, and the analyst-provided title (or `null`
-when blank). The UI redirects to the Stories tab and focuses the
+when blank). The UI redirects to the Threat story tab and focuses the
 new row.
 
-### Pivot from a Story
+### Pivot from a threat story
 
-Each row in the Story detail member table carries inline **Pivot**
+Each row in the Threat story detail member table carries inline **Pivot**
 buttons in a trailing actions column. Each button advertises one
 pivot dimension that the underlying member event actually carries
 (host, port, source / destination IP, URI pattern, DNS query, or
@@ -1015,18 +1017,18 @@ Clicking a button switches into the Pivot peer view with the trail
 seeded by the chosen dimension. The view differs from the
 asset-rooted Pivot in three ways:
 
-- The breadcrumb reads **`Story #<customerId>/<storyId> > <pivot
-  dim>`**. Clicking the Story segment returns to the Story
-  detail panel.
+- The breadcrumb reads **`Threat story #<customerId>/<storyId> > <pivot
+  dim>`**. Clicking the Threat story segment returns to the Threat
+  story detail panel.
 - The Pivot panel and the dimension-focus detail card read from
-  the **Story's member set** as their corpus rather than the
+  the **Story's member set** as their candidates rather than the
   period-wide events. The left-hand asset list keeps showing the
   period-wide asset rows so the analyst keeps situational
   context.
 - The trail has **no asset crumb**. The Story origin acts as the
   root.
 
-#### Tier 2 over a Story
+#### Tier 2 over a threat story
 
 Tier 2 (server-filtered) dimensions are reachable from a
 Pivot-from-Story state and resolve against the Story's member
@@ -1073,7 +1075,7 @@ keep their entries isolated for the same reason.
 [screenshot pending follow-up]
 
 The Pivot panel's "truncated" hint reports the period-wide
-5,000-event asset corpus cap. Because the Story-origin Pivot
+5,000-event asset candidate cap. Because the Story-origin Pivot
 panel reads from the Story's complete member set, the hint is
 suppressed while the origin is a Story — it would otherwise
 falsely imply that the Story-scoped grouping was partial.
@@ -1087,7 +1089,7 @@ its (dimension, value) bucket rather than being dropped.
 
 ### URL hash routing
 
-The Stories tab participates in the same URL-hash routing as
+The Threat story tab participates in the same URL-hash routing as
 the rest of the Triage menu. The active tab is encoded under
 `triage.tab=stories` and the focused Story under
 `triage.story=<customerId>/<storyId>`. Existing
@@ -1097,27 +1099,27 @@ see [#471](https://github.com/aicers/aice-web-next/issues/471)).
 
 A `triage.story=<id>` segment that omits the `customerId/`
 prefix is treated as stale because `event_group.id` is per
-tenant: the UI falls back to the Stories list root with a
-"Stale Story link — open from the list" toast.
+tenant: the UI falls back to the Threat story list root with a
+"Stale threat story link — open from the list." toast.
 
 The Pivot-from-Story state uses a **separate**
 `triage.pivot.story=<customerId>/<storyId>` marker. This key
 lives in the `triage.pivot.*` namespace so it survives a
-Stories↔Pivot tab swap — the Stories-tab focus key
+Stories↔Pivot tab swap — the Threat story tab focus key
 (`triage.story`) clears on swap by design, but the pivot origin
 must persist. A URL carrying
 `triage.tab=pivot&triage.pivot.story=<id>&triage.pivot.step=<dim>:<value>`
 reloads into the Pivot tab with the Story origin in the
 breadcrumb and the dimension step applied; a momentary
 "loading" empty panel appears while the Story's member set
-fetches, but no asset-rooted breadcrumb or asset-corpus pivot
+fetches, but no asset-rooted breadcrumb or asset-candidates pivot
 panel is ever rendered during restore.
 
 `triage.tab` stays authoritative on restore: a URL carrying
 `triage.tab=stories&triage.pivot.story=<id>` (the shape a
-bookmark from the Stories tab takes after a Pivot drill-in,
+bookmark from the Threat story tab takes after a Pivot drill-in,
 because the pivot-origin marker survives the swap) reloads
-into the **Stories** tab. The Pivot-origin marker is seeded
+into the **Threat story** tab. The Pivot-origin marker is seeded
 in the background so a manual swap to the Pivot tab restores
 the same Story-origin breadcrumb without re-parsing the
 hash — the active-tab key always wins over the pivot-origin
@@ -1132,14 +1134,14 @@ would produce a URL with no `triage.tab` but a
 route the analyst back to the Pivot tab they had explicitly
 left. The marker only persists while the visible tab is one
 that the Pivot origin is meaningful to (Pivot itself, or
-Stories — preserving the swap path back to Pivot). The
+Threat story — preserving the swap path back to Pivot). The
 in-memory Pivot origin is unchanged, so swapping back to the
 Pivot tab during the same session re-serializes the marker.
 
 ### Permission
 
-The Stories tab requires `triage:read`, the same gate as the
-rest of the Triage menu. The Save-as-Story action requires no
+The Threat story tab requires `triage:read`, the same gate as the
+rest of the Triage menu. The Save-as-threat-story action requires no
 additional permission because the saved row is scoped to a
 single tenant that the caller can already read.
 
@@ -1159,17 +1161,17 @@ target and the score thresholds are validated server-side, so the
 badge cannot point anywhere other than the analysis page Clumit Insight
 returned.
 
-### Story badge (Stories tab)
+### Threat story badge (Threat story tab)
 
-On the **Stories** tab, a Story whose latest analysis is `CRITICAL` or
+On the **Threat story** tab, a threat story whose latest analysis is `CRITICAL` or
 `HIGH` shows the badge twice: once in the card header next to the rule
-badge, and again in the detail panel header when the Story is opened.
+badge, and again in the detail panel header when the threat story is opened.
 Both use the same badge component, so the tier color and the
 tooltip scores match across the two surfaces.
 
-![Stories card AI analysis badge](../assets/triage-ai-analysis-story-card-badge-en.svg)
+![Threat story card AI analysis badge](../assets/triage-ai-analysis-story-card-badge-en.svg)
 
-![Story detail AI analysis badge](../assets/triage-ai-analysis-story-detail-badge-en.svg)
+![Threat story detail AI analysis badge](../assets/triage-ai-analysis-story-detail-badge-en.svg)
 
 A successful **Send to Insight** may produce a fresh analysis; the
 badge re-fetches eagerly after a send so a newly available
@@ -1196,7 +1198,7 @@ The **Dashboard** surfaces two per-customer report cards under an
 ![Dashboard "Today's report" card](../assets/dashboard-today-report-card-en.svg)
 
 Both cards are per-customer and follow the same hide-on-negative rule
-as the Story badge: only a card backed by a `CRITICAL` / `HIGH`
+as the threat story badge: only a card backed by a `CRITICAL` / `HIGH`
 summary renders. A customer whose LIVE *and* DAILY summaries are both
 negative produces no output at all — no per-customer header and no
 empty section. On an admin's all-customer dashboard this keeps the
@@ -1227,7 +1229,7 @@ unconfigured.
 
 When an asset is selected, the page also renders a **Related events**
 panel below the asset list. The panel groups other events from the
-loaded corpus by pivot dimension so the operator can see what else
+loaded candidates by pivot dimension so the operator can see what else
 the focused asset has in common with the rest of the slice — without
 issuing any additional network requests.
 
@@ -1244,7 +1246,7 @@ The panel surfaces events grouped by:
 - **Application** — registrable domain (Public Suffix List), host
   header, URI pattern, user-agent, plus per-protocol identifiers
   for SSH, SMB, FTP, LDAP, and MQTT (Policy mode only — the
-  Baseline corpus row does not carry these subtype-specific
+  Baseline candidate row does not carry these subtype-specific
   fields). The URI is normalized to a pattern: query and fragment
   stripped; numeric segments templated to `{id}`, canonical UUIDs
   to `{uuid}`, long pure-hex segments to `{hex}`. So
@@ -1283,7 +1285,7 @@ The panel surfaces events grouped by:
   resolves the window relative to the focus event itself.
 
 Dimensions where the focused asset carries no value, or where the
-loaded corpus has no other matching events, are hidden — never shown
+loaded candidates have no other matching events, are hidden — never shown
 empty.
 
 ### Per-section behavior
@@ -1314,7 +1316,7 @@ Pivoting from a row appends a breadcrumb step. The breadcrumb (asset
 focus, every dimension/value pivot step, and the current scope toggle)
 is encoded in the URL hash under the `triage.pivot.*` namespace, so a
 shared link or browser reload restores the trail against the
-freshly-loaded corpus. See [URL hash persistence](#url-hash-persistence)
+freshly-loaded candidates. See [URL hash persistence](#url-hash-persistence)
 for the full hash layout and stale-fallback behavior.
 
 - The first crumb is the asset (e.g., `Asset 10.0.0.1`).
@@ -1339,7 +1341,7 @@ When the breadcrumb has at least one dimension step, applying a new
 period surfaces a confirmation modal:
 
 > **Discard pivot trail?** Changing the period will reload the
-> corpus and clear your current pivot trail. Continue?
+> candidates and clear your current pivot trail. Continue?
 
 Confirming reloads with the new period and clears the trail.
 Cancelling keeps the existing period.
@@ -1349,13 +1351,13 @@ Cancelling keeps the existing period.
 A second toggle next to the period picker controls the pivot scope:
 
 - **Triaged only** (default — Tier 1) reads only the events already
-  loaded in the corpus. Clicking a dimension never issues a fresh
+  loaded in the candidates. Clicking a dimension never issues a fresh
   fetch, so navigation is instant but the panel can only surface
   matches that pass the baseline rule.
 - **All detection events** (Tier 2) keeps the same panel layout but
   switches certain dimensions to a server-side fetch on click. This
   widens the pivot into events outside the baseline slice — useful
-  when the loaded corpus is too narrow to show enough context.
+  when the loaded candidates are too narrow to show enough context.
 
 The default is **Triaged only** for every fresh menu entry; the
 toggle is *not* persisted in account settings. A sticky default
@@ -1376,7 +1378,7 @@ dimensions:
   section in the same "Tier 2 only" group). The two
   `LearningMethod` enum values are hard-coded so the section appears
   whenever the scope is Tier 2, regardless of whether the loaded
-  corpus carries the field. Clicking a row issues a Tier 2 fetch
+  candidates carry the field. Clicking a row issues a Tier 2 fetch
   filtered by `EventListFilterInput.learningMethods`.
 
   ![Learning method static section](../assets/triage-learning-methods-en.png)
@@ -1421,7 +1423,7 @@ dimensions:
     URL queues the same Tier 2 fetch; the typed string is rendered
     verbatim as the breadcrumb label. A `keywords` fetch that
     returns zero events renders an empty pivot focus rather than
-    falling back to the asset root — the corpus carries no
+    falling back to the asset root — the candidates carry no
     `keywords` field, so the synchronous staleness check used by
     other dimensions is intentionally skipped.
 
@@ -1431,7 +1433,7 @@ dimensions:
 
 Other dimensions — JA3, JA3S, SNI, host, URI pattern, certificate
 fields, user-agent — are intersected client-side against whatever is
-already loaded (the corpus plus every prior Tier 2 result on the
+already loaded (the candidates plus every prior Tier 2 result on the
 breadcrumb trail), so they remain instant in both modes.
 
 ### Fetch progress
@@ -1500,14 +1502,14 @@ If the BFF cannot complete a Tier 2 fetch (REview timeout, transport
 error, or a forbidden response), the page surfaces a dismissible
 red notice naming the dimension and value, and the failed pivot is
 released so the operator can retry by clicking the row again. The
-loaded corpus and the Tier 1 panel are unaffected.
+loaded candidates and the Tier 1 panel are unaffected.
 
 ### Weak-signal rendering
 
 A row that came from a Tier 2 fetch and is *not* present in the
-Tier 1 corpus (compared via REview's stable per-event `Event.id`)
+Tier 1 candidates (compared via REview's stable per-event `Event.id`)
 renders with reduced opacity and a small **weak** badge. Rows that are in
-both — including non-baseline `score === 0` corpus members — render
+both — including non-baseline `score === 0` candidate members — render
 without the badge so the operator can tell at a glance whether a
 row was already in the loaded slice or freshly pulled.
 
@@ -1557,7 +1559,7 @@ root with the non-blocking notice rather than guessing which
 customer's row to focus.
 
 Loading the page with a populated hash restores the breadcrumb to
-that step against the freshly loaded corpus. If a step's value is
+that step against the freshly loaded candidates. If a step's value is
 no longer reachable in the new period (e.g. a JA3 that no longer
 matches any event), the page falls back to the asset root with a
 non-blocking notice and clears the stale steps from the breadcrumb.
@@ -1566,7 +1568,7 @@ When the restored hash is in Tier 2 mode and contains a
 client-intersection step (e.g. JA3) below a server-filtered
 ancestor (e.g. `country=KR`), the page first dispatches the queued
 Tier 2 ancestor fetches, then validates the descendant against the
-expanded corpus. The descendant is treated as stale only if the
+expanded candidates. The descendant is treated as stale only if the
 value is still missing once those fetches resolve, so a shared URL
 remains reload-stable even when the descendant value lives only in
 the ancestor's fetched result.
@@ -1595,4 +1597,4 @@ under `triage.strictness.*`) without collision.
   **Cluster ID**, and **Threat level** pivot dimensions are
   hidden — the corresponding columns are not present on
   `baseline_triaged_event`. They return in the future "With my
-  policies" mode (corpus B).
+  policies" mode (candidate set B).

@@ -192,8 +192,13 @@ const LABELS: TriageBaselineLabels = {
   tabStrip: {
     legend: "Triage views",
     assetList: "Asset list",
-    stories: "Stories",
+    stories: "Threat story",
     pivot: "Pivot",
+    descriptions: {
+      assetList: "Source assets ranked by score, highest first.",
+      stories: "Correlated events grouped into a single threat story.",
+      pivot: "Follow events that share an attribute with the selected asset.",
+    },
   },
   stories: {
     heading: "Stories",

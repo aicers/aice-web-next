@@ -2072,12 +2072,12 @@
   },
   "triage": {
     "title": "선별",
-    "intro": "선택한 기간의 이벤트에 대한 기준 점수입니다. 고객별 베이스라인 코퍼스(180일 보존)에서 읽으며, 30일의 기간 상한은 코퍼스 속성이 아닌 작업 창 선택입니다.",
+    "intro": "탐지된 위협 이벤트 중에서 먼저 분석할 만한 것을 추려 보여 주는 화면입니다. 선택한 기간을 대상으로 하며, 엄격도로 후보의 양을 늘리거나 줄일 수 있습니다.",
     "errorBanner": "이 기간의 이벤트를 불러오지 못했습니다. 다른 기간을 시도해 주세요.",
     "forbiddenBanner": "선별 결과를 볼 권한이 없습니다.",
     "forbiddenScopeBanner": "할당된 고객이 없습니다. 관리자에게 문의하세요.",
     "truncatedBannerTemplate": "일부만 표시: 기간의 {loaded}건 표시 ({cap}건에서 잘림).",
-    "storyProtectedTruncatedBannerTemplate": "스토리 멤버 {dropped}건이 잘렸습니다 — 보호된 스토리 이벤트가 화면 표시 한도를 초과했습니다.",
+    "storyProtectedTruncatedBannerTemplate": "위협 스토리 멤버 {dropped}건이 잘렸습니다 — 보호된 위협 스토리 이벤트가 화면 표시 한도를 초과했습니다.",
     "clampedNotice": "기간을 180일 룩백 / 30일 기간 상한에 맞게 조정했습니다.",
     "observedDenominatorTruncatedNotice": "관측된 분모의 보존 기간이 선택한 기간보다 짧아 탐지 카운트는 최근 30일만 포함합니다.",
     "freshness": {
@@ -2120,12 +2120,12 @@
       "policiesUnavailable": "선별 정책 출시 후 사용할 수 있습니다."
     },
     "funnel": {
-      "title": "퍼널",
+      "title": "선별 흐름",
       "detected": "탐지",
-      "triaged": "선별",
-      "triagedHint": "케이던스 및 제외 규칙을 통과한 행. 슬라이더와 무관합니다.",
+      "triaged": "선별 후보",
+      "triagedHint": "기본 규칙과 제외 설정을 통과해 분석 후보가 된 건수입니다. 엄격도와 무관하게 고정됩니다.",
       "shown": "표시",
-      "shownHint": "슬라이더의 할당량과 병합 캡을 거쳐 실제로 화면에 노출되는 행. 슬라이더에 따라 변합니다.",
+      "shownHint": "엄격도 설정에 따라 실제로 화면에 표시되는 건수입니다. 엄격도를 조절하면 함께 바뀝니다.",
       "passThrough": "통과율",
       "passThroughHint": "표시 ÷ 탐지"
     },
@@ -2141,7 +2141,7 @@
     },
     "assetDetail": {
       "title": "자산 상세",
-      "pivotFocusTitle": "피벗 포커스",
+      "pivotFocusTitle": "연관 분석 포커스",
       "customerLabel": "고객사",
       "emptySelection": "이벤트를 보려면 자산을 선택하세요.",
       "emptyEvents": "표시할 선별 이벤트가 없습니다.",
@@ -2157,7 +2157,7 @@
       "investigateAction": "전체 조사 열기",
       "investigateTooltip": "이 이벤트의 전체 조사 화면을 새 탭에서 엽니다.",
       "rowInvestigateAriaLabel": "이 이벤트의 전체 조사를 새 탭에서 엽니다",
-      "protectedByStoryMarkerTemplate": "스토리 멤버십으로 유지된 이벤트 (점수: {score})"
+      "protectedByStoryMarkerTemplate": "위협 스토리 멤버십으로 유지된 이벤트 (점수: {score})"
     },
     "pivotPanel": {
       "title": "관련 이벤트",
@@ -2167,12 +2167,12 @@
       "showMore": "더 보기",
       "showLess": "접기",
       "showingOfTemplate": "{total}건 중 {visible}건 표시",
-      "pivotActionTemplate": "{dimension} 피벗: {value}",
+      "pivotActionTemplate": "{dimension} 연관 분석: {value}",
       "focusValuesTemplate": "기준 값: {values}",
       "timeColumn": "시각",
       "kindColumn": "종류",
       "scoreColumn": "점수",
-      "pivotColumn": "피벗",
+      "pivotColumn": "연관 분석",
       "family": {
         "network": "네트워크",
         "application": "애플리케이션",
@@ -2236,10 +2236,10 @@
       }
     },
     "pivotBreadcrumb": {
-      "ariaLabel": "피벗 경로",
+      "ariaLabel": "연관 분석 경로",
       "rootCrumbPrefix": "자산",
       "dimensionCrumbTemplate": "{dimension}: {value}",
-      "storyOriginTemplate": "스토리 #{id}",
+      "storyOriginTemplate": "위협 스토리 #{id}",
       "dimensions": {
         "externalIp": "외부 IP",
         "internalIp": "내부 IP",
@@ -2279,16 +2279,16 @@
       }
     },
     "periodChangeConfirm": {
-      "title": "피벗 경로를 버리시겠습니까?",
-      "description": "기간을 변경하면 코퍼스를 다시 적재하고 현재 피벗 경로를 비웁니다. 계속하시겠습니까?",
+      "title": "연관 분석 경로를 버리시겠습니까?",
+      "description": "기간을 변경하면 선별 후보를 다시 불러오고 현재 연관 분석 경로를 비웁니다. 계속하시겠습니까?",
       "confirm": "버리고 다시 적재",
       "cancel": "현재 기간 유지"
     },
     "rebuild": {
       "button": "이 기간 다시 빌드",
       "multiScopeTooltip": "기간 단위 재빌드를 사용하려면 단일 고객 범위로 전환하세요",
-      "modalTitle": "이 기간의 기준 코퍼스 다시 빌드",
-      "modalIntro": "이 기간의 이벤트를 탐지 저장소에서 다시 가져와 기준 코퍼스를 재구성합니다. 기존 행은 삭제 후 교체됩니다. 케이던스 워터마크는 영향을 받지 않습니다.",
+      "modalTitle": "이 기간의 선별 후보 다시 만들기",
+      "modalIntro": "이 기간의 이벤트를 탐지 저장소에서 다시 가져와 선별 후보를 다시 구성합니다. 기존 행은 삭제 후 교체됩니다. 케이던스 워터마크는 영향을 받지 않습니다.",
       "customerLabel": "고객",
       "periodLabel": "기간",
       "whatThisDoesLabel": "동작",
@@ -2301,37 +2301,37 @@
       "toastSuccessTemplate": "재빌드 완료: {deleted}건 삭제, {inserted}건 삽입",
       "toastBusy": "이 고객에 대해 케이던스 또는 다른 재빌드가 쓰는 중입니다. 잠시 후 다시 시도하세요.",
       "toastTimeout": "재빌드 시간 초과 (300초 한도). 기간을 분할하여 다시 시도하세요.",
-      "toastIncomplete": "재빌드 중단: review 페이지네이터가 범위를 소진하지 못했습니다. 코퍼스는 변경되지 않았습니다. 기간을 분할하여 다시 시도하거나, 페이지 수가 예상과 다르면 리졸버를 점검하세요.",
+      "toastIncomplete": "재빌드 중단: review 페이지네이터가 범위를 소진하지 못했습니다. 선별 후보는 변경되지 않았습니다. 기간을 분할하여 다시 시도하거나, 페이지 수가 예상과 다르면 리졸버를 점검하세요.",
       "toastErrorPrefix": "재빌드 실패:",
       "rebuildingOverlay": "이 기간 다시 빌드 중..."
     },
     "scopeToggle": {
-      "legend": "피벗 범위",
+      "legend": "연관 분석 범위",
       "tier1": "선별된 이벤트만",
       "tier2": "모든 탐지 이벤트",
-      "tier1Hint": "기준 규칙을 통과한 이벤트(적재된 코퍼스)만 대상으로 피벗합니다.",
+      "tier1Hint": "기본 규칙을 통과한 선별 후보만 대상으로 연관 분석합니다.",
       "tier2Hint": "서버 필터 차원을 클릭하면 새 조회가 발생합니다. 큰 결과는 사전 확인을 요청합니다."
     },
     "strictnessSlider": {
       "legend": "엄격도",
-      "hint": "종류 정규화된 베이스라인 백분위에 대한 읽기 시점 컷오프. 느슨하면 더 넓은 결과, 엄격하면 가장 강한 신호만 표시합니다.",
-      "allStopHint": "사용자 컷오프 없음. 케이던스 임계값 바닥선과 버킷별 SQL 후보 상한이 여전히 결과를 제한하므로 \"전체\"가 코퍼스 전부를 뜻하지는 않습니다.",
+      "hint": "후보가 너무 적다 싶으면 넓게, 너무 많다 싶으면 좁게 조절하세요. 정확한 기준이 아니라 대략적인 양 조절입니다.",
+      "allStopHint": "'가장 넓게'라도 모든 이벤트가 나오는 것은 아닙니다. 기본 규칙과 표시 상한이 여전히 적용됩니다.",
       "eligibleHintTemplate": "≈ {count}",
       "stops": {
-        "all": "전체",
-        "top80": "상위 80%",
-        "top50": "상위 50%",
-        "top20": "상위 20%",
-        "top5": "상위 5%"
+        "all": "가장 넓게",
+        "top80": "넓게",
+        "top50": "보통",
+        "top20": "좁게",
+        "top5": "가장 좁게"
       }
     },
     "tier2": {
       "weakBadge": "약신호",
-      "weakBadgeHint": "Tier 2 조회로 발견되었으며 적재된 코퍼스에는 없습니다.",
+      "weakBadgeHint": "Tier 2 조회로 발견되었으며 적재된 선별 후보에는 없습니다.",
       "fetchProgress": "관련 이벤트를 가져오는 중…",
       "fetchProgressTemplate": "{dimension}: {value} 가져오는 중…",
       "fetchError": "관련 이벤트를 가져오지 못했습니다.",
-      "evictionTemplate": "캐시 가득 참 — {dimension}: {value} 항목이 제거되었습니다. 다시 피벗하면 재조회합니다.",
+      "evictionTemplate": "캐시 가득 참 — {dimension}: {value} 항목이 제거되었습니다. 다시 연관 분석하면 재조회합니다.",
       "evictionDismiss": "닫기",
       "errorTemplate": "{dimension}: {value} 조회 실패 — {message}",
       "errorFallbackMessage": "REview에서 메시지를 반환하지 않았습니다.",
@@ -2345,24 +2345,29 @@
         "cancel": "취소"
       }
     },
-    "staleHashFallback": "URL의 피벗 경로가 로드된 기간과 일치하지 않아 자산 루트를 표시합니다.",
+    "staleHashFallback": "URL의 연관 분석 경로가 로드된 기간과 일치하지 않아 자산 루트를 표시합니다.",
     "sensorScopeForbiddenFallback": "대상 센서가 현재 고객 범위에서 더 이상 접근할 수 없어 자산 루트를 표시합니다.",
     "tabStrip": {
       "legend": "선별 보기",
       "assetList": "자산 목록",
-      "stories": "스토리",
-      "pivot": "피벗"
+      "stories": "위협 스토리",
+      "pivot": "연관 분석",
+      "descriptions": {
+        "assetList": "점수가 높은 자산(출발지)을 순서대로 보여 줍니다.",
+        "stories": "연관된 이벤트를 하나의 위협 스토리로 묶어 보여 줍니다.",
+        "pivot": "선택한 자산과 속성을 공유하는 관련 이벤트를 따라가며 분석합니다."
+      }
     },
     "stories": {
-      "heading": "스토리",
-      "empty": "이 기간에 표시할 스토리가 없습니다.",
-      "truncatedTemplate": "일부 스토리는 표시되지 않았습니다 — 기간을 좁혀 다시 조회하세요.",
-      "emptyUnsentOnly": "이 기간에 미전송 스토리가 없습니다.",
+      "heading": "위협 스토리",
+      "empty": "이 기간에 표시할 위협 스토리가 없습니다.",
+      "truncatedTemplate": "일부 위협 스토리는 표시되지 않았습니다 — 기간을 좁혀 다시 조회하세요.",
+      "emptyUnsentOnly": "이 기간에 미전송 위협 스토리가 없습니다.",
       "showOnlyUnsentLabel": "미전송만 보기",
       "sortLabel": "정렬",
       "sortByTimeWindowEnd": "최근순",
       "sortByScore": "점수순",
-      "staleHashFallback": "유효하지 않은 스토리 링크 — 목록에서 다시 열어주세요.",
+      "staleHashFallback": "유효하지 않은 위협 스토리 링크 — 목록에서 다시 열어주세요.",
       "card": {
         "ruleBadgeAuto": "auto",
         "ruleBadgeAnalyst": "분석가 저장",
@@ -2370,13 +2375,13 @@
         "memberCountTemplate": "{count} 이벤트",
         "open": "열기",
         "sendToAimerWeb": "Insight로 전송",
-        "sendToAimerWebTooltip": "Story를 Insight로 보내 LLM 분석을 요청합니다",
+        "sendToAimerWebTooltip": "위협 스토리를 Insight로 보내 LLM 분석을 요청합니다",
         "sendToAimerWebDisabledTooltip": "Clumit Insight 연동이 설정되어 있지 않습니다. 관리자에게 설정 → Clumit Insight 연동 화면에서 aice_id, Clumit Insight 브리지 URL, 활성 서명 키를 등록해 달라고 요청하세요.",
         "sentIndicatorTemplate": "Insight 전송됨 · {relative}",
         "sentMultiTemplate": "{count}회",
         "sendMoreMenuLabel": "추가 전송 옵션",
         "sendForceRefresh": "전송 (강제 새로고침)",
-        "forceRefreshConfirmMessage": "Clumit Insight의 캐시를 우회하고 이 Story로 LLM을 새로 실행하시겠습니까?",
+        "forceRefreshConfirmMessage": "Clumit Insight의 캐시를 우회하고 이 위협 스토리로 LLM을 새로 실행하시겠습니까?",
         "forceRefreshConfirmButton": "전송",
         "forceRefreshCancelButton": "취소",
         "sendInFlight": "전송 중…",
@@ -2407,13 +2412,13 @@
         }
       },
       "detail": {
-        "heading": "스토리 상세",
-        "emptySelection": "이벤트를 보려면 스토리를 선택하세요.",
-        "emptyMembers": "스토리에 표시할 이벤트가 없습니다.",
+        "heading": "위협 스토리 상세",
+        "emptySelection": "이벤트를 보려면 위협 스토리를 선택하세요.",
+        "emptyMembers": "위협 스토리에 표시할 이벤트가 없습니다.",
         "customerLabel": "고객",
         "scoreLabel": "점수",
         "ruleLabel": "규칙",
-        "danglingNoticeTemplate": "{stored}개 중 {shown}개 표시 — {aged}개는 코퍼스 A 보관 기간을 초과했습니다.",
+        "danglingNoticeTemplate": "{stored}개 중 {shown}개 표시 — {aged}개는 선별 후보 보관 기간을 초과했습니다.",
         "timeColumn": "시간",
         "kindColumn": "종류",
         "categoryColumn": "카테고리",
@@ -2422,27 +2427,27 @@
         "scoreColumn": "점수",
         "loading": "구성원 불러오는 중…",
         "close": "닫기",
-        "pivotActionsColumn": "피벗",
-        "pivotActionTemplate": "{dimension}: {value}(으)로 피벗"
+        "pivotActionsColumn": "연관 분석",
+        "pivotActionTemplate": "{dimension}: {value}(으)로 연관 분석"
       }
     },
     "saveAsStory": {
-      "button": "스토리로 저장",
-      "disabledMultiCustomer": "분석가 저장 스토리는 단일 고객 이벤트로만 구성할 수 있습니다 — 한 고객으로 피벗을 좁혀주세요.",
-      "modalTitle": "현재 피벗을 스토리로 저장",
+      "button": "위협 스토리로 저장",
+      "disabledMultiCustomer": "분석가 저장 위협 스토리는 단일 고객 이벤트로만 구성할 수 있습니다 — 한 고객으로 연관 분석 범위를 좁혀주세요.",
+      "modalTitle": "현재 연관 분석을 위협 스토리로 저장",
       "titleLabel": "제목 (선택)",
       "titlePlaceholder": "예: 192.168.1.20에서 횡적 이동",
-      "membersHeading": "이 스토리에 포함될 이벤트",
+      "membersHeading": "이 위협 스토리에 포함될 이벤트",
       "confirm": "저장",
       "cancel": "취소",
-      "successToast": "스토리가 저장되었습니다.",
-      "errorOverCap": "이벤트가 너무 많습니다 — 스토리는 최대 50개까지 포함할 수 있습니다.",
-      "errorEmpty": "스토리로 저장할 이벤트를 하나 이상 선택하세요.",
+      "successToast": "위협 스토리가 저장되었습니다.",
+      "errorOverCap": "이벤트가 너무 많습니다 — 위협 스토리는 최대 50개까지 포함할 수 있습니다.",
+      "errorEmpty": "위협 스토리로 저장할 이벤트를 하나 이상 선택하세요.",
       "errorMemberNotFound": "선택한 일부 이벤트가 더 이상 존재하지 않습니다 — 새로고침 후 다시 시도하세요.",
       "errorAssetMismatch": "선택한 이벤트에 공통 발신자 주소가 없습니다.",
       "errorCustomerOutOfScope": "이 고객에 대한 접근 권한이 없습니다.",
       "errorMultiCustomer": "선택한 이벤트가 여러 고객에 걸쳐 있습니다 — 한 고객으로 좁혀주세요.",
-      "errorGeneric": "스토리를 저장할 수 없습니다. 다시 시도하세요."
+      "errorGeneric": "위협 스토리를 저장할 수 없습니다. 다시 시도하세요."
     }
   },
   "changePassword": {
@@ -2494,9 +2499,9 @@
   },
   "triageExclusions": {
     "globalTitle": "전역 선별 예외",
-    "globalSubtitle": "모든 활성 고객에 적용됩니다. 향후 카덴스 틱에서 즉시 반영되며, 전역 추가 시 고객별 팬아웃이 완료되면 과거 코퍼스 행도 소급하여 삭제됩니다.",
+    "globalSubtitle": "모든 활성 고객에 적용됩니다. 향후 카덴스 틱에서 즉시 반영되며, 전역 추가 시 고객별 팬아웃이 완료되면 과거 선별 후보 행도 소급하여 삭제됩니다.",
     "customerTitle": "선별 예외",
-    "customerSubtitle": "고객별 예외 규칙입니다. 새 규칙은 즉시 적용되며 카덴스 어드바이저리 락 보호 아래 일치하는 코퍼스 행을 제거합니다.",
+    "customerSubtitle": "고객별 예외 규칙입니다. 새 규칙은 즉시 적용되며 카덴스 어드바이저리 락 보호 아래 일치하는 선별 후보 행을 제거합니다.",
     "customer": "고객",
     "selectCustomer": "고객을 선택하세요",
     "noCustomerScope": "사용 가능한 고객이 없습니다.",
@@ -2523,11 +2528,11 @@
     "domainPreviewSuffix": "접미사 {suffix}로 환원됨 (서브도메인만 — 베어 호스트는 유지).",
     "domainPreviewExact": "정확한 호스트명으로 환원됨: {host}",
     "domainPreviewExactOrSuffix": "정확/접미사 {suffix}로 환원됨 — 베어 호스트와 모든 서브도메인이 제거됩니다.",
-    "domainPreviewFullRegex": "전체 정규식 — 향후 파이프라인 패스에만 적용됩니다. 과거 코퍼스 행은 영향을 받지 않습니다.",
-    "deleteConfirm": "이 예외를 삭제하시겠습니까? 향후 패스에만 영향을 미치며 과거 코퍼스 행은 변경되지 않습니다.",
+    "domainPreviewFullRegex": "전체 정규식 — 향후 파이프라인 패스에만 적용됩니다. 과거 선별 후보 행은 영향을 받지 않습니다.",
+    "deleteConfirm": "이 예외를 삭제하시겠습니까? 향후 패스에만 영향을 미치며 과거 선별 후보 행은 변경되지 않습니다.",
     "deniedGlobal": "전역 예외를 관리할 권한이 없습니다.",
     "deniedCustomer": "고객 예외를 관리할 권한이 없습니다.",
     "retriggerCleanup": "정리 재실행",
-    "retriggerCleanupConfirm": "이 예외에 대한 소급 정리를 다시 실행할까요? 이 규칙과 일치하는 과거 코퍼스 행이 백그라운드에서 제거됩니다."
+    "retriggerCleanupConfirm": "이 예외에 대한 소급 정리를 다시 실행할까요? 이 규칙과 일치하는 과거 선별 후보 행이 백그라운드에서 제거됩니다."
   }
 }

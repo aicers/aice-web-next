@@ -2072,12 +2072,12 @@
   },
   "triage": {
     "title": "Triage",
-    "intro": "Baseline scoring over events in the selected period. Reads from the per-tenant baseline corpus (180-day retention). The 30-day duration cap on the picker is a working-window choice, not a corpus property.",
+    "intro": "Surfaces the threat-detected events worth analyzing first, narrowed from everything detected in the selected period. Use the strictness control to widen or tighten how many candidates you see.",
     "errorBanner": "Could not load events for this period. Try a different range.",
     "forbiddenBanner": "You are not authorized to view triage results.",
     "forbiddenScopeBanner": "You have no customers in scope. Contact an administrator.",
     "truncatedBannerTemplate": "Partial: showing {loaded} events of period (truncated at {cap}).",
-    "storyProtectedTruncatedBannerTemplate": "{dropped} Story members truncated — too many Story-protected events for the period to fit on screen.",
+    "storyProtectedTruncatedBannerTemplate": "{dropped} Threat story members truncated — too many threat-story-protected events for the period to fit on screen.",
     "clampedNotice": "Period adjusted to fit the 180-day lookback / 30-day duration cap.",
     "observedDenominatorTruncatedNotice": "Detected counts cover only the last 30 days — the observed denominator's retention is shorter than the selected window.",
     "freshness": {
@@ -2122,10 +2122,10 @@
     "funnel": {
       "title": "Funnel",
       "detected": "Detected",
-      "triaged": "Triaged",
-      "triagedHint": "Cadence + exclusion floor; independent of the slider.",
+      "triaged": "Candidates",
+      "triagedHint": "Events that passed the base rules and exclusions to become candidates. Fixed regardless of the strictness setting.",
       "shown": "Shown",
-      "shownHint": "Rows reaching the screen after the slider's quota and merge caps. Moves with the slider.",
+      "shownHint": "Events actually shown on screen after the strictness setting is applied. Changes as you adjust strictness.",
       "passThrough": "Pass-through",
       "passThroughHint": "Shown ÷ Detected"
     },
@@ -2157,7 +2157,7 @@
       "investigateAction": "Open full investigation",
       "investigateTooltip": "Open the full investigation view for this event in a new tab.",
       "rowInvestigateAriaLabel": "Open full investigation for this event in a new tab",
-      "protectedByStoryMarkerTemplate": "Kept because of Story membership (score: {score})"
+      "protectedByStoryMarkerTemplate": "Kept because of threat story membership (score: {score})"
     },
     "pivotPanel": {
       "title": "Related events",
@@ -2239,7 +2239,7 @@
       "ariaLabel": "Pivot trail",
       "rootCrumbPrefix": "Asset",
       "dimensionCrumbTemplate": "{dimension}: {value}",
-      "storyOriginTemplate": "Story #{id}",
+      "storyOriginTemplate": "Threat story #{id}",
       "dimensions": {
         "externalIp": "External IP",
         "internalIp": "Internal IP",
@@ -2280,15 +2280,15 @@
     },
     "periodChangeConfirm": {
       "title": "Discard pivot trail?",
-      "description": "Changing the period will reload the corpus and clear your current pivot trail. Continue?",
+      "description": "Changing the period will reload the triage candidates and clear your current pivot trail. Continue?",
       "confirm": "Discard and reload",
       "cancel": "Keep current period"
     },
     "rebuild": {
       "button": "Rebuild this period",
       "multiScopeTooltip": "Switch to a single-customer scope to enable per-period rebuild",
-      "modalTitle": "Rebuild baseline corpus for this period",
-      "modalIntro": "Re-fetches events for this period from the detector store and rebuilds the baseline corpus. Existing rows in this period are deleted and replaced. The cadence watermark is not affected.",
+      "modalTitle": "Rebuild triage candidates for this period",
+      "modalIntro": "Re-fetches events for this period from the detector store and rebuilds the triage candidates. Existing rows in this period are deleted and replaced. The cadence watermark is not affected.",
       "customerLabel": "Customer",
       "periodLabel": "Period",
       "whatThisDoesLabel": "What this does",
@@ -2301,7 +2301,7 @@
       "toastSuccessTemplate": "Rebuilt: deleted {deleted}, inserted {inserted} events",
       "toastBusy": "Cadence or another rebuild is currently writing for this customer; retry shortly.",
       "toastTimeout": "Rebuild timed out (300s cap). Split the period and retry.",
-      "toastIncomplete": "Rebuild aborted: review's paginator did not exhaust the range. The corpus was left untouched. Split the period and retry, or investigate the resolver if the page count was unexpected.",
+      "toastIncomplete": "Rebuild aborted: review's paginator did not exhaust the range. The triage candidates were left untouched. Split the period and retry, or investigate the resolver if the page count was unexpected.",
       "toastErrorPrefix": "Rebuild failed:",
       "rebuildingOverlay": "Rebuilding this period..."
     },
@@ -2309,25 +2309,25 @@
       "legend": "Pivot scope",
       "tier1": "Triaged only",
       "tier2": "All detection events",
-      "tier1Hint": "Pivot only over events that already passed the baseline rule (the loaded corpus).",
+      "tier1Hint": "Pivot only over the loaded candidates that passed the base rule.",
       "tier2Hint": "Server-filtered dimensions trigger a fresh fetch on click. Larger projections will ask for confirmation."
     },
     "strictnessSlider": {
       "legend": "Strictness",
-      "hint": "Read-time cutoff over the kind-normalized baseline percentile. Loose shows a wider net; strict only the strongest signals.",
-      "allStopHint": "No user-side cutoff. The cadence-threshold floor and the per-bucket SQL candidate cap still bound the result; \"All\" is not a literal corpus dump.",
+      "hint": "If too few candidates show, widen the net; if too many, narrow it. This is a rough volume dial, not an exact threshold.",
+      "allStopHint": "Even at the widest setting, not every event appears — base rules and a display cap still apply.",
       "eligibleHintTemplate": "≈ {count}",
       "stops": {
-        "all": "All",
-        "top80": "Top 80%",
-        "top50": "Top 50%",
-        "top20": "Top 20%",
-        "top5": "Top 5%"
+        "all": "Widest",
+        "top80": "Wider",
+        "top50": "Balanced",
+        "top20": "Narrower",
+        "top5": "Narrowest"
       }
     },
     "tier2": {
       "weakBadge": "weak",
-      "weakBadgeHint": "Found by Tier 2 fetch and not present in the loaded corpus.",
+      "weakBadgeHint": "Found by Tier 2 fetch and not present in the loaded candidates.",
       "fetchProgress": "Fetching related events…",
       "fetchProgressTemplate": "Fetching {dimension}: {value}…",
       "fetchError": "Could not fetch related events.",
@@ -2350,19 +2350,24 @@
     "tabStrip": {
       "legend": "Triage views",
       "assetList": "Asset list",
-      "stories": "Stories",
-      "pivot": "Pivot"
+      "stories": "Threat story",
+      "pivot": "Pivot",
+      "descriptions": {
+        "assetList": "Source assets ranked by score, highest first.",
+        "stories": "Correlated events grouped into a single threat story.",
+        "pivot": "Follow events that share an attribute with the selected asset."
+      }
     },
     "stories": {
-      "heading": "Stories",
-      "empty": "No Stories in this period.",
-      "truncatedTemplate": "Some Stories were not loaded — narrow the period to see the rest.",
-      "emptyUnsentOnly": "No unsent Stories in this period.",
+      "heading": "Threat story",
+      "empty": "No threat stories in this period.",
+      "truncatedTemplate": "Some threat stories were not loaded — narrow the period to see the rest.",
+      "emptyUnsentOnly": "No unsent threat stories in this period.",
       "showOnlyUnsentLabel": "Show only unsent",
       "sortLabel": "Sort",
       "sortByTimeWindowEnd": "Most recent",
       "sortByScore": "Highest score",
-      "staleHashFallback": "Stale Story link — open from the list.",
+      "staleHashFallback": "Stale threat story link — open from the list.",
       "card": {
         "ruleBadgeAuto": "auto",
         "ruleBadgeAnalyst": "analyst-curated",
@@ -2370,13 +2375,13 @@
         "memberCountTemplate": "{count} events",
         "open": "Open",
         "sendToAimerWeb": "Send to Insight",
-        "sendToAimerWebTooltip": "Send Story to Insight for LLM analysis",
+        "sendToAimerWebTooltip": "Send threat story to Insight for LLM analysis",
         "sendToAimerWebDisabledTooltip": "Clumit Insight integration is not configured. Ask an administrator to set the aice_id, Clumit Insight bridge URL, and active signing key in Settings → Clumit Insight integration.",
         "sentIndicatorTemplate": "Sent to Insight · {relative}",
         "sentMultiTemplate": "{count}×",
         "sendMoreMenuLabel": "More send options",
         "sendForceRefresh": "Send (force refresh)",
-        "forceRefreshConfirmMessage": "Bypass Clumit Insight's cache and run the LLM fresh on this Story?",
+        "forceRefreshConfirmMessage": "Bypass Clumit Insight's cache and run the LLM fresh on this threat story?",
         "forceRefreshConfirmButton": "Send",
         "forceRefreshCancelButton": "Cancel",
         "sendInFlight": "Sending…",
@@ -2407,13 +2412,13 @@
         }
       },
       "detail": {
-        "heading": "Story detail",
-        "emptySelection": "Select a Story to see its events.",
-        "emptyMembers": "No members in this Story.",
+        "heading": "Threat story detail",
+        "emptySelection": "Select a threat story to see its events.",
+        "emptyMembers": "No members in this threat story.",
         "customerLabel": "Customer",
         "scoreLabel": "Score",
         "ruleLabel": "Rule",
-        "danglingNoticeTemplate": "{shown} of {stored} events shown — {aged} aged past corpus A retention.",
+        "danglingNoticeTemplate": "{shown} of {stored} events shown — {aged} aged past the candidate retention window.",
         "timeColumn": "Time",
         "kindColumn": "Kind",
         "categoryColumn": "Category",
@@ -2427,22 +2432,22 @@
       }
     },
     "saveAsStory": {
-      "button": "Save as Story",
-      "disabledMultiCustomer": "A curated Story must come from a single customer's events — narrow the pivot focus to one customer first.",
-      "modalTitle": "Save current pivot as a Story",
+      "button": "Save as threat story",
+      "disabledMultiCustomer": "A curated threat story must come from a single customer's events — narrow the pivot focus to one customer first.",
+      "modalTitle": "Save current pivot as a threat story",
       "titleLabel": "Title (optional)",
       "titlePlaceholder": "e.g. Lateral movement on 192.168.1.20",
-      "membersHeading": "Members included in this Story",
+      "membersHeading": "Members included in this threat story",
       "confirm": "Save",
       "cancel": "Cancel",
-      "successToast": "Story saved.",
-      "errorOverCap": "Too many events — a Story can contain at most 50 members.",
-      "errorEmpty": "Select at least one event to save as a Story.",
+      "successToast": "Threat story saved.",
+      "errorOverCap": "Too many events — a threat story can contain at most 50 members.",
+      "errorEmpty": "Select at least one event to save as a threat story.",
       "errorMemberNotFound": "Some selected events are no longer available — refresh and try again.",
       "errorAssetMismatch": "Selected events have no shared originator address.",
       "errorCustomerOutOfScope": "You do not have access to this customer.",
       "errorMultiCustomer": "Selected events span multiple customers — narrow to one first.",
-      "errorGeneric": "Could not save the Story. Try again."
+      "errorGeneric": "Could not save the threat story. Try again."
     }
   },
   "changePassword": {
@@ -2494,9 +2499,9 @@
   },
   "triageExclusions": {
     "globalTitle": "Global triage exclusions",
-    "globalSubtitle": "Apply to every active customer. Future cadence ticks honor these exclusions; past corpus rows are deleted retroactively when the global ADD's per-customer fanout completes.",
+    "globalSubtitle": "Apply to every active customer. Future cadence ticks honor these exclusions; past candidate rows are deleted retroactively when the global ADD's per-customer fanout completes.",
     "customerTitle": "Triage exclusions",
-    "customerSubtitle": "Per-customer exclusion rules. New rules take effect immediately and remove matching corpus rows under the cadence advisory lock.",
+    "customerSubtitle": "Per-customer exclusion rules. New rules take effect immediately and remove matching candidate rows under the cadence advisory lock.",
     "customer": "Customer",
     "selectCustomer": "Select a customer",
     "noCustomerScope": "No customers are available in your scope.",
@@ -2523,11 +2528,11 @@
     "domainPreviewSuffix": "Reduces to suffix {suffix} (subdomains only — bare host left untouched).",
     "domainPreviewExact": "Reduces to exact hostname: {host}",
     "domainPreviewExactOrSuffix": "Reduces to exact-or-suffix {suffix} — bare host and any subdomain are removed.",
-    "domainPreviewFullRegex": "Full-regex-only — applies to future pipeline passes only. Past corpus rows are unchanged.",
-    "deleteConfirm": "Delete this exclusion? Future pipeline passes only — past corpus rows are unchanged.",
+    "domainPreviewFullRegex": "Full-regex-only — applies to future pipeline passes only. Past candidate rows are unchanged.",
+    "deleteConfirm": "Delete this exclusion? Future pipeline passes only — past candidate rows are unchanged.",
     "deniedGlobal": "You do not have permission to manage global exclusions.",
     "deniedCustomer": "You do not have permission to manage customer exclusions.",
     "retriggerCleanup": "Re-trigger cleanup",
-    "retriggerCleanupConfirm": "Re-run retroactive cleanup for this exclusion? Past corpus rows that match this rule will be removed in the background."
+    "retriggerCleanupConfirm": "Re-run retroactive cleanup for this exclusion? Past candidate rows that match this rule will be removed in the background."
   }
 }
