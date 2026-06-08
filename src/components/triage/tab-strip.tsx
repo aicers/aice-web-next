@@ -21,6 +21,11 @@ export interface TriageTabStripLabels {
   assetList: string;
   stories: string;
   pivot: string;
+  descriptions: {
+    assetList: string;
+    stories: string;
+    pivot: string;
+  };
 }
 
 interface TriageTabStripProps {
@@ -50,6 +55,20 @@ function labelFor(tab: TriageTabId, labels: TriageTabStripLabels): string {
   }
 }
 
+function descriptionFor(
+  tab: TriageTabId,
+  labels: TriageTabStripLabels,
+): string {
+  switch (tab) {
+    case "asset-list":
+      return labels.descriptions.assetList;
+    case "stories":
+      return labels.descriptions.stories;
+    case "pivot":
+      return labels.descriptions.pivot;
+  }
+}
+
 export function TriageTabStrip({
   tab,
   mode,
@@ -58,33 +77,38 @@ export function TriageTabStrip({
 }: TriageTabStripProps) {
   const tabs = tabsForMode(mode);
   return (
-    <div
-      role="tablist"
-      aria-label={labels.legend}
-      className="flex items-center gap-1 border-b border-border"
-    >
-      {tabs.map((id) => {
-        const active = id === tab;
-        return (
-          <button
-            key={id}
-            type="button"
-            role="tab"
-            aria-selected={active}
-            data-testid={`triage-tab-${id}`}
-            data-state={active ? "active" : "inactive"}
-            onClick={() => onChange(id)}
-            className={[
-              "border-b-2 px-3 py-2 text-sm transition-colors",
-              active
-                ? "border-foreground text-foreground"
-                : "border-transparent text-muted-foreground hover:text-foreground",
-            ].join(" ")}
-          >
-            {labelFor(id, labels)}
-          </button>
-        );
-      })}
+    <div className="flex flex-col gap-1">
+      <div
+        role="tablist"
+        aria-label={labels.legend}
+        className="flex items-center gap-1 border-b border-border"
+      >
+        {tabs.map((id) => {
+          const active = id === tab;
+          return (
+            <button
+              key={id}
+              type="button"
+              role="tab"
+              aria-selected={active}
+              data-testid={`triage-tab-${id}`}
+              data-state={active ? "active" : "inactive"}
+              onClick={() => onChange(id)}
+              className={[
+                "border-b-2 px-3 py-2 text-sm transition-colors",
+                active
+                  ? "border-foreground text-foreground"
+                  : "border-transparent text-muted-foreground hover:text-foreground",
+              ].join(" ")}
+            >
+              {labelFor(id, labels)}
+            </button>
+          );
+        })}
+      </div>
+      <p className="text-xs text-muted-foreground">
+        {descriptionFor(tab, labels)}
+      </p>
     </div>
   );
 }

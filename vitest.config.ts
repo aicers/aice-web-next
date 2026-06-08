@@ -121,6 +121,11 @@ export default defineConfig({
             // `AlertDialog` whose Cancel preserves the trail and
             // whose Confirm clears it.
             "src/__tests__/components/triage/triage-shell.test.tsx",
+            // Issue #719: the tab strip now renders a one-line
+            // description beneath the active tab. Real-DOM coverage
+            // asserts the caption tracks the active tab and the
+            // tab-switch click wiring fires.
+            "src/__tests__/components/triage/tab-strip.test.tsx",
             // Issue #458 (Reviewer Round 2 #2): multi-customer pivot-
             // focus header reads the selected asset's customerName,
             // not `result.assets[0]`'s. Renders TriageBaselineContent
@@ -235,6 +240,7 @@ export default defineConfig({
             "src/__tests__/components/events/overview-tab-forwarding.test.tsx",
             "src/__tests__/components/events/related-tab.test.tsx",
             "src/__tests__/components/triage/triage-shell.test.tsx",
+            "src/__tests__/components/triage/tab-strip.test.tsx",
             "src/__tests__/components/triage/baseline-content.test.tsx",
             "src/__tests__/components/triage/related-events-panel.test.tsx",
             "src/__tests__/components/triage/story/stories-view.test.tsx",

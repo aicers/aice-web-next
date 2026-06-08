@@ -344,6 +344,11 @@ export default async function TriagePage({ searchParams }: TriagePageProps) {
         assetList: t("tabStrip.assetList"),
         stories: t("tabStrip.stories"),
         pivot: t("tabStrip.pivot"),
+        descriptions: {
+          assetList: t("tabStrip.descriptions.assetList"),
+          stories: t("tabStrip.descriptions.stories"),
+          pivot: t("tabStrip.descriptions.pivot"),
+        },
       },
       stories: {
         heading: t("stories.heading"),
