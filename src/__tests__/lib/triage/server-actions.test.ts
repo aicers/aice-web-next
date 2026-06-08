@@ -385,10 +385,17 @@ function makeSession(overrides: Partial<AuthSession> = {}): AuthSession {
   } as AuthSession;
 }
 
-const PERIOD = {
-  startIso: "2026-05-08T12:00:00.000Z",
-  endIso: "2026-05-09T12:00:00.000Z",
-};
+// Anchor the shared window to "now" so it always sits inside the 30-day
+// observed retention floor. A fixed calendar window silently ages past
+// that floor, flipping `observedDenominatorTruncated` to true and failing
+// the in-retention assertions once enough wall-clock time elapses.
+const PERIOD = (() => {
+  const now = Date.now();
+  return {
+    startIso: new Date(now - 24 * 60 * 60 * 1000).toISOString(),
+    endIso: new Date(now).toISOString(),
+  };
+})();
 
 describe("loadTriagePeriod (SQL data source)", () => {
   beforeEach(() => {
