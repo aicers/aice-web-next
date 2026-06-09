@@ -11,7 +11,8 @@ describe("view-mode", () => {
   it("recognizes the supported modes", () => {
     expect(isViewMode("events")).toBe(true);
     expect(isViewMode("statistics")).toBe(true);
-    expect(isViewMode("timeseries")).toBe(false);
+    expect(isViewMode("timeseries")).toBe(true);
+    expect(isViewMode("histogram")).toBe(false);
   });
 
   it("defaults to the events table", () => {
@@ -19,11 +20,15 @@ describe("view-mode", () => {
     expect(coerceViewMode(undefined)).toBe("events");
     expect(coerceViewMode("nope")).toBe("events");
     expect(coerceViewMode("statistics")).toBe("statistics");
+    expect(coerceViewMode("timeseries")).toBe("timeseries");
   });
 
   it("parses the view param, ignoring a repeated (array) value", () => {
     expect(parseViewModeFromSearchParams({ view: "statistics" })).toBe(
       "statistics",
+    );
+    expect(parseViewModeFromSearchParams({ view: "timeseries" })).toBe(
+      "timeseries",
     );
     expect(parseViewModeFromSearchParams({})).toBe("events");
     expect(

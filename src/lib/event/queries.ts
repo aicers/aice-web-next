@@ -194,3 +194,6 @@ export const RAW_EVENT_QUERIES: Record<RecordTypeId, DocumentNode> = {
 export const CONN_RAW_EVENTS_QUERY = CONN_QUERY;
 export const EVENT_SENSORS_QUERY = loadDocument("sensors.graphql");
 export const STATISTICS_QUERY = loadDocument("statistics.graphql");
+export const PERIODIC_TIME_SERIES_QUERY = loadDocument(
+  "periodic-time-series.graphql",
+);

@@ -970,3 +970,72 @@ export interface EventSensorsResult {
 export interface StatisticsResult {
   statistics: StatisticsRawEvent[];
 }
+
+// ── Periodic time series (E5 Part 2) ───────────────────────────────
+
+/**
+ * `TimeSeriesFilter` input for `periodicTimeSeries`. `id` is required
+ * (the sampling policy to chart); `time` is an optional window. Unlike
+ * the Statistics filter there is no sensor/protocol list — a time series
+ * is keyed solely by its policy id.
+ */
+export interface TimeSeriesFilterInput extends Record<string, unknown> {
+  id: string;
+  time?: TimeRangeInput | null;
+}
+
+/**
+ * `periodicTimeSeries` query variables. `filter` is required; the Relay
+ * pagination args are optional and emitted as explicit `null` when
+ * unset (matching the raw-event search dispatch).
+ */
+export interface PeriodicTimeSeriesVariables extends Record<string, unknown> {
+  filter: TimeSeriesFilterInput;
+  first?: number | null;
+  after?: string | null;
+  last?: number | null;
+  before?: string | null;
+}
+
+/**
+ * `TimeSeries` node — one chunk of a policy's series. `start` is a
+ * `DateTime!` origin; `data` is a plain `[Float!]!` numeric series (no
+ * 64-bit string scalars, so the values are safe JS numbers). `id` echoes
+ * the requested sampling policy id.
+ */
+export interface TimeSeriesNode {
+  start: string;
+  id: string;
+  data: number[];
+}
+
+/** `TimeSeriesConnection` — the nodes selection plus Relay page info. */
+export interface TimeSeriesConnection {
+  pageInfo: PageInfo;
+  nodes: TimeSeriesNode[];
+}
+
+export interface PeriodicTimeSeriesResult {
+  periodicTimeSeries: TimeSeriesConnection;
+}
+
+// ── Sampling policies (REview — `id` selector source) ──────────────
+
+/**
+ * `SamplingPolicy` — the subset selected for the Periodic Time Series
+ * `id` selector. `id` is `ID!` (the selector value, serialized as a
+ * string); `name` is the option label.
+ */
+export interface SamplingPolicy {
+  id: string;
+  name: string;
+}
+
+export interface SamplingPolicyConnection {
+  pageInfo: PageInfo;
+  nodes: SamplingPolicy[];
+}
+
+export interface SamplingPolicyListResult {
+  samplingPolicyList: SamplingPolicyConnection;
+}

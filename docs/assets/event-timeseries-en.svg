@@ -1,0 +1,60 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 760 460" font-family="-apple-system, Segoe UI, Roboto, Helvetica, Arial, sans-serif" role="img" aria-labelledby="title desc">
+  <title id="title">Event page — Time Series view (wireframe)</title>
+  <desc id="desc">Wireframe of the /event page Periodic Time Series view. A view-mode toggle at the top offers Events, Statistics, and Time Series, with Time Series active. A Filters card holds a sampling-policy dropdown (the id selector, populated from REview's samplingPolicyList), a quick-range dropdown, and start/end time inputs, with Apply and Reset buttons. Below it a line chart draws the selected policy's numeric data series; a caption shows the series origin time, the X-axis is the cumulative sample index, and the Y-axis is the value.</desc>
+  <style>
+    .bg { fill: #fafafa; }
+    .panel { fill: #ffffff; stroke: #e5e7eb; stroke-width: 1; }
+    .field { fill: #ffffff; stroke: #d4d4d8; stroke-width: 1; }
+    .h1 { font-size: 18px; fill: #18181b; font-weight: 700; }
+    .sub { font-size: 11px; fill: #71717a; }
+    .label { font-size: 10px; fill: #52525b; font-weight: 600; }
+    .val { font-size: 11px; fill: #18181b; }
+    .muted { font-size: 10px; fill: #a1a1aa; }
+    .btn { fill: #18181b; }
+    .btn-text { fill: #ffffff; font-size: 11px; font-weight: 600; }
+    .btn-outline { fill: #ffffff; stroke: #d4d4d8; stroke-width: 1; }
+    .btn-outline-text { fill: #18181b; font-size: 11px; font-weight: 600; }
+    .tab-on { fill: #18181b; }
+    .tab-on-text { fill: #ffffff; font-size: 11px; font-weight: 600; }
+    .tab-off { fill: #f4f4f5; stroke: #e5e7eb; stroke-width: 1; }
+    .tab-off-text { fill: #52525b; font-size: 11px; font-weight: 600; }
+    .axis { stroke: #d4d4d8; stroke-width: 1; }
+    .s1 { stroke: #2563eb; stroke-width: 2; fill: none; }
+  </style>
+  <rect class="bg" x="0" y="0" width="760" height="460" />
+
+  <text class="h1" x="24" y="34">Event</text>
+  <text class="sub" x="24" y="52">Browse source events collected by Giganto.</text>
+
+  <!-- View-mode toggle -->
+  <rect class="tab-off" x="24" y="66" width="80" height="26" rx="6" />
+  <text class="tab-off-text" x="64" y="83" text-anchor="middle">Events</text>
+  <rect class="tab-off" x="106" y="66" width="92" height="26" rx="6" />
+  <text class="tab-off-text" x="152" y="83" text-anchor="middle">Statistics</text>
+  <rect class="tab-on" x="200" y="66" width="100" height="26" rx="6" />
+  <text class="tab-on-text" x="250" y="83" text-anchor="middle">Time Series</text>
+
+  <!-- Filters card -->
+  <rect class="panel" x="24" y="104" width="712" height="104" rx="8" />
+  <text class="label" x="40" y="126">SAMPLING POLICY</text>
+  <rect class="field" x="40" y="134" width="220" height="20" rx="4" />
+  <text class="val" x="48" y="148">Hourly conn rollup ▾</text>
+  <text class="label" x="320" y="126">TIME RANGE</text>
+  <rect class="field" x="320" y="134" width="180" height="20" rx="4" />
+  <text class="muted" x="328" y="148">Start — End</text>
+  <rect class="btn" x="600" y="168" width="60" height="24" rx="6" />
+  <text class="btn-text" x="630" y="184" text-anchor="middle">Apply</text>
+  <rect class="btn-outline" x="668" y="168" width="60" height="24" rx="6" />
+  <text class="btn-outline-text" x="698" y="184" text-anchor="middle">Reset</text>
+
+  <!-- Chart -->
+  <text class="muted" x="24" y="236">Series origin: 2026-06-09 00:00</text>
+  <rect class="panel" x="24" y="248" width="712" height="188" rx="8" />
+  <line class="axis" x1="60" y1="272" x2="60" y2="412" />
+  <line class="axis" x1="60" y1="412" x2="708" y2="412" />
+  <polyline class="s1" points="60,392 160,348 260,372 360,300 460,332 560,288 660,312" />
+  <text class="muted" x="60" y="428">0</text>
+  <text class="muted" x="700" y="428" text-anchor="end">n</text>
+  <text class="muted" x="34" y="276">value</text>
+</svg>

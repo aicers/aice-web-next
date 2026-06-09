@@ -7,12 +7,12 @@
  * is shareable and survives a reload, exactly like the filter.
  *
  * aice-web's modes were `Events | Time Series`; `statistics` is a new
- * view introduced here. Periodic Time Series (E5 Part 2) extends this
- * list once its query is wired through the data layer — until then the
- * toggle surfaces only `events` and `statistics`.
+ * view introduced in E5 Part 1. E5 Part 2 adds `timeseries` — the
+ * Periodic Time Series chart of a sampling policy's numeric series — so
+ * the toggle now surfaces a flat `Events | Statistics | Time Series`.
  */
 
-export const VIEW_MODES = ["events", "statistics"] as const;
+export const VIEW_MODES = ["events", "statistics", "timeseries"] as const;
 
 export type ViewMode = (typeof VIEW_MODES)[number];
 

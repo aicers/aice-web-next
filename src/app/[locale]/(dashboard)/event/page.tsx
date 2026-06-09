@@ -9,17 +9,24 @@ import {
   type StatisticsResultState,
   StatisticsView,
 } from "@/components/event/statistics-view";
+import {
+  type TimeSeriesResultState,
+  TimeSeriesView,
+} from "@/components/event/time-series-view";
 import type { AuthSession } from "@/lib/auth/jwt";
 import { getCurrentSession, requirePermission } from "@/lib/auth/session";
 import {
   parseFilterFromSearchParams,
   parsePaginationSearchParams,
   parseStatisticsFilterFromSearchParams,
+  parseTimeSeriesFilterFromSearchParams,
   parseViewModeFromSearchParams,
 } from "@/lib/event";
 import {
+  fetchPeriodicTimeSeries,
   fetchStatistics,
   listEventSensors,
+  listSamplingPolicies,
   searchRawEvents,
 } from "@/lib/event/server-actions";
 
@@ -77,6 +84,12 @@ export default async function EventPage({ searchParams }: EventPageProps) {
         <StatisticsViewSection
           rawParams={rawParams}
           sensors={sensors}
+          locale={locale}
+          session={session}
+        />
+      ) : view === "timeseries" ? (
+        <TimeSeriesViewSection
+          rawParams={rawParams}
           locale={locale}
           session={session}
         />
@@ -158,6 +171,46 @@ async function StatisticsViewSection({
     <StatisticsView
       committedFilter={filter}
       sensors={sensors}
+      result={result}
+      locale={locale}
+    />
+  );
+}
+
+async function TimeSeriesViewSection({
+  rawParams,
+  locale,
+  session,
+}: {
+  rawParams: RawParams;
+  locale: string;
+  session: AuthSession;
+}) {
+  const filter = parseTimeSeriesFilterFromSearchParams(rawParams);
+
+  // The sampling-policy list (the `id` selector source) is fetched
+  // independently of the series so the filter form still renders, with a
+  // notice, when REview is briefly unreachable.
+  let policies: Awaited<ReturnType<typeof listSamplingPolicies>> | null;
+  try {
+    policies = await listSamplingPolicies(session);
+  } catch {
+    policies = null;
+  }
+
+  let result: TimeSeriesResultState;
+  try {
+    const nodes = await fetchPeriodicTimeSeries(session, filter);
+    result =
+      nodes === null ? { status: "prequery" } : { status: "ready", nodes };
+  } catch {
+    result = { status: "error" };
+  }
+
+  return (
+    <TimeSeriesView
+      committedFilter={filter}
+      policies={policies}
       result={result}
       locale={locale}
     />

@@ -1,0 +1,36 @@
+# Validates against schemas/giganto.graphql.
+#
+# Periodic time series for a single sampling policy `id` (E5 Part 2).
+# `filter` is required and carries the non-null `id` plus an optional
+# `time` window; the connection returns `TimeSeries` nodes, each a chunk
+# of the series with its `start` origin (`DateTime!`) and a plain numeric
+# `data` array (`[Float!]!`) — no string-number scalars, unlike the
+# Statistics query. Relay pagination args are wired so a large series can
+# be paged, though the view fetches a single generous page today.
+query PeriodicTimeSeries(
+  $filter: TimeSeriesFilter!
+  $first: Int
+  $after: String
+  $last: Int
+  $before: String
+) {
+  periodicTimeSeries(
+    filter: $filter
+    first: $first
+    after: $after
+    last: $last
+    before: $before
+  ) {
+    pageInfo {
+      hasPreviousPage
+      hasNextPage
+      startCursor
+      endCursor
+    }
+    nodes {
+      start
+      id
+      data
+    }
+  }
+}

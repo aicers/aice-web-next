@@ -1,0 +1,14 @@
+{
+  "samplingPolicyList": {
+    "pageInfo": {
+      "hasPreviousPage": false,
+      "hasNextPage": false,
+      "startCursor": "Y3Vyc29yLTA=",
+      "endCursor": "Y3Vyc29yLTE="
+    },
+    "nodes": [
+      { "id": "policy-1", "name": "Hourly conn rollup" },
+      { "id": "policy-2", "name": "Daily DNS rollup" }
+    ]
+  }
+}

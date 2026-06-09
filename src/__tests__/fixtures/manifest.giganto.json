@@ -92,6 +92,15 @@
     "fixture": "external/giganto/sensors.json"
   },
   {
+    "operation": "periodicTimeSeries",
+    "query": "external/giganto/periodicTimeSeries.graphql",
+    "fixture": "external/giganto/periodic-time-series.json",
+    "variables": {
+      "filter": { "id": "policy-1" },
+      "first": 100
+    }
+  },
+  {
     "operation": "updateConfig",
     "query": "external/giganto/updateConfig.graphql",
     "fixture": "external/giganto/updateConfig.success.json",

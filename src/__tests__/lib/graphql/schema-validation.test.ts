@@ -210,6 +210,7 @@ const STATIC_QUERY_LOADERS = new Set<string>([
   "src/lib/node/queries.ts",
   "src/lib/triage/queries.ts",
   "src/lib/event/queries.ts",
+  "src/lib/event/review-queries.ts",
 ]);
 
 interface StaticDoc {
