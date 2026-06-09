@@ -70,6 +70,14 @@
     }
   },
   {
+    "operation": "statistics",
+    "query": "external/giganto/statistics.graphql",
+    "fixture": "external/giganto/statistics.json",
+    "variables": {
+      "sensors": ["sensor-a"]
+    }
+  },
+  {
     "operation": "sensors",
     "query": "external/giganto/sensors.graphql",
     "fixture": "external/giganto/sensors.json"

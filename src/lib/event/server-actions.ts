@@ -16,13 +16,21 @@ import {
   type PageSize,
   pageArgsForAnchor,
 } from "./pagination";
-import { EVENT_SENSORS_QUERY, RAW_EVENT_QUERIES } from "./queries";
+import {
+  EVENT_SENSORS_QUERY,
+  RAW_EVENT_QUERIES,
+  STATISTICS_QUERY,
+} from "./queries";
+import { type StatisticsFilter, toStatisticsVariables } from "./statistics";
 import type {
   ConnRawEventConnection,
   EventSensorsResult,
   NetworkFilterInput,
   RawEvent,
   RawEventConnection,
+  StatisticsRawEvent,
+  StatisticsResult,
+  StatisticsVariables,
 } from "./types";
 
 const EVENT_READ = "event:read";
@@ -165,6 +173,40 @@ export async function searchConnRawEvents(
     signal,
   );
   return connection as ConnRawEventConnection | null;
+}
+
+/**
+ * Fetch aggregation statistics for the Statistics view. Returns `null`
+ * when no sensor is selected — Giganto's `statistics` requires a
+ * non-empty `sensors` list, so the caller renders the pre-query prompt
+ * instead of dispatching an invalid query.
+ */
+export async function fetchStatistics(
+  session: AuthSession,
+  filter: StatisticsFilter,
+  signal?: AbortSignal,
+): Promise<StatisticsRawEvent[] | null> {
+  const variables = toStatisticsVariables(filter);
+  if (variables === null) return null;
+
+  const ctx = await buildDispatchContext(session);
+  const data = await withExternalErrorMapping(
+    "DATA_STORE",
+    gigantoClient<StatisticsResult, StatisticsVariables>(
+      STATISTICS_QUERY,
+      {
+        sensors: variables.sensors,
+        time: variables.time ?? null,
+        protocols: variables.protocols ?? null,
+      },
+      {
+        role: ctx.role,
+        customerIds: jwtCustomerIdsForEvent(ctx.role, ctx.customerIds),
+      },
+      signal,
+    ),
+  );
+  return data.statistics;
 }
 
 /**

@@ -1,0 +1,28 @@
+# Validates against schemas/giganto.graphql.
+#
+# Per-sensor, per-protocol aggregation metrics for the Statistics view.
+# `sensors` is required (`[String!]!`); `time` and `protocols` are
+# optional — an omitted/empty `protocols` returns every protocol the
+# statistics API tracks. `StatisticsInfo.timestamp` is a string scalar
+# (`StringNumberI64`) holding the bucket key in epoch nanoseconds, and
+# `bps` / `pps` / `eps` / `count` / `size` are nullable.
+query Statistics(
+  $sensors: [String!]!
+  $time: TimeRange
+  $protocols: [String!]
+) {
+  statistics(sensors: $sensors, time: $time, protocols: $protocols) {
+    sensor
+    stats {
+      timestamp
+      detail {
+        protocol
+        bps
+        pps
+        eps
+        count
+        size
+      }
+    }
+  }
+}

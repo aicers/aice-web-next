@@ -139,3 +139,4 @@ export const RAW_EVENT_QUERIES: Record<RecordTypeId, DocumentNode> = {
 /** Back-compat alias for E0 call sites. */
 export const CONN_RAW_EVENTS_QUERY = CONN_QUERY;
 export const EVENT_SENSORS_QUERY = loadDocument("sensors.graphql");
+export const STATISTICS_QUERY = loadDocument("statistics.graphql");
