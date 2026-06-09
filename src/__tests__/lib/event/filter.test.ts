@@ -112,6 +112,54 @@ describe("toNetworkFilter", () => {
     // Non-port bounds still apply for Icmp.
     expect(result?.origAddr).toEqual({ start: "10.0.0.1", end: null });
   });
+
+  it("emits sensor/time/agentId and drops IP/port for a sysmon type", () => {
+    const filter: EventFilter = {
+      ...EMPTY_EVENT_FILTER,
+      recordType: "processCreate",
+      sensor: "s1",
+      start: "2026-06-09T00:00:00Z",
+      end: "2026-06-09T01:00:00Z",
+      agentId: "agent-1",
+      // Stale network values from a prior network record type must not
+      // leak into the sysmon filter.
+      origAddrStart: "10.0.0.1",
+      origPortStart: 100,
+      respPortEnd: 200,
+    };
+    const result = toNetworkFilter(filter);
+    expect(result).toEqual({
+      sensor: "s1",
+      time: { start: "2026-06-09T00:00:00Z", end: "2026-06-09T01:00:00Z" },
+      agentId: "agent-1",
+    });
+    expect(result?.origAddr).toBeUndefined();
+    expect(result?.respAddr).toBeUndefined();
+    expect(result?.origPort).toBeUndefined();
+    expect(result?.respPort).toBeUndefined();
+  });
+
+  it("omits agentId when unset for a sysmon type", () => {
+    const filter: EventFilter = {
+      ...EMPTY_EVENT_FILTER,
+      recordType: "dnsQuery",
+      sensor: "s1",
+    };
+    expect(toNetworkFilter(filter)).toEqual({ sensor: "s1" });
+  });
+
+  it("drops a stale agentId for a network/Conn record type", () => {
+    const filter: EventFilter = {
+      ...EMPTY_EVENT_FILTER,
+      recordType: "conn",
+      sensor: "s1",
+      agentId: "agent-1",
+      origAddrStart: "10.0.0.1",
+    };
+    const result = toNetworkFilter(filter);
+    expect(result?.agentId).toBeUndefined();
+    expect(result?.origAddr).toEqual({ start: "10.0.0.1", end: null });
+  });
 });
 
 describe("parseFilterFromSearchParams", () => {

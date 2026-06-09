@@ -78,6 +78,17 @@ test.beforeAll(async ({ workerUsername, workerPrefix }) => {
       fixture: "external/giganto/statistics.json",
     },
   });
+
+  // Representative sysmon type: a ProcessCreate page keyed on the default
+  // page size, so selecting the type and applying resolves the fixture.
+  await session.registerStub({
+    operation: "processCreateEvents",
+    matchVariables: { first: 50 },
+    response: {
+      kind: "fixture",
+      fixture: "external/giganto/processCreateEvents.page1.json",
+    },
+  });
 });
 
 test.beforeEach(async ({ workerUsername }) => {
@@ -209,6 +220,84 @@ test("event page switches to Statistics and renders the aggregation chart", asyn
   // avoid a strict-mode multiple-match.
   await expect(page.getByLabel("Metric")).toBeVisible({ timeout: 10_000 });
   await expect(page.getByRole("application")).toBeVisible();
+});
+
+// ── Sysmon type: agentId filter + descriptor-driven columns ──────
+
+test("event page searches a sysmon type with the agentId filter", async ({
+  page,
+  workerUsername,
+  workerPassword,
+}) => {
+  await signInAndWait(page, workerUsername, workerPassword);
+  await page.goto("/event");
+
+  await expect(page.getByLabel("Record type")).toBeVisible({ timeout: 10_000 });
+
+  // Switch to a sysmon record type: the IP/port range inputs give way to
+  // a free-text agent-id input.
+  await page.locator("#event-record-type").click();
+  await page
+    .getByRole("option", { name: "Process Create (ProcessCreate)" })
+    .click();
+  await expect(page.locator("#event-agent-id")).toBeVisible();
+  await expect(page.locator("#event-orig-port-start")).toBeHidden();
+  await expect(page.locator("#event-orig-addr-start")).toBeHidden();
+
+  // Pick a sensor and type an agent id, then run the search.
+  await page.locator("#event-sensor").click();
+  await page.getByRole("option", { name: "sensor-a" }).click();
+  await page.locator("#event-agent-id").fill("agent-id-1");
+  await page.getByRole("button", { name: "Apply" }).click();
+
+  // Sysmon results lead with agent/image/user columns (not source/
+  // destination) plus type-specific summary columns.
+  await expect(
+    page.getByRole("columnheader", { name: "Agent name" }),
+  ).toBeVisible({ timeout: 10_000 });
+  await expect(
+    page.getByRole("columnheader", { name: "Command line" }),
+  ).toBeVisible();
+  await expect(page.getByText("cmd.exe /c whoami")).toBeVisible();
+
+  // Row detail opens, titled by the sysmon record type.
+  await page.getByRole("row", { name: "View details" }).first().click();
+  await expect(
+    page.getByRole("heading", { name: "Process Create (ProcessCreate)" }),
+  ).toBeVisible();
+});
+
+// ── Filter switch: stale-field prevention across families ────────
+
+test("event filter swaps agentId and IP/port inputs by family", async ({
+  page,
+  workerUsername,
+  workerPassword,
+}) => {
+  await signInAndWait(page, workerUsername, workerPassword);
+  await page.goto("/event");
+
+  await expect(page.getByLabel("Record type")).toBeVisible({ timeout: 10_000 });
+
+  // Network type (the Conn default): IP/port inputs present, no agent id.
+  await expect(page.locator("#event-orig-port-start")).toBeVisible();
+  await expect(page.locator("#event-agent-id")).toBeHidden();
+
+  // Switching to a sysmon type hides the IP/port inputs and shows the
+  // agent-id input.
+  await page.locator("#event-record-type").click();
+  await page
+    .getByRole("option", { name: "Process Create (ProcessCreate)" })
+    .click();
+  await expect(page.locator("#event-agent-id")).toBeVisible();
+  await expect(page.locator("#event-orig-port-start")).toBeHidden();
+
+  // Switching back to a network type restores the IP/port inputs and
+  // hides the agent-id input again.
+  await page.locator("#event-record-type").click();
+  await page.getByRole("option", { name: "Connection (Conn)" }).click();
+  await expect(page.locator("#event-orig-port-start")).toBeVisible();
+  await expect(page.locator("#event-agent-id")).toBeHidden();
 });
 
 // ── Korean locale ────────────────────────────────────────────────

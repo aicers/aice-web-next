@@ -1,0 +1,44 @@
+# Validates against schemas/giganto.graphql.
+#
+# RegistryValueSetEvent Sysmon / endpoint event query. Relay cursor pagination over
+# Giganto's RegistryValueSetEventConnection (pageInfo + edges, no totalCount),
+# mirroring conn-raw-events.graphql. Sysmon types filter by `agentId`
+# (carried on NetworkFilter); field names/types are verified against the
+# 0.27.0 SDL by the schema-validation gate.
+query RegistryValueSetEvents(
+  $filter: NetworkFilter!
+  $first: Int
+  $after: String
+  $last: Int
+  $before: String
+) {
+  registryValueSetEvents(
+    filter: $filter
+    first: $first
+    after: $after
+    last: $last
+    before: $before
+  ) {
+    pageInfo {
+      hasPreviousPage
+      hasNextPage
+      startCursor
+      endCursor
+    }
+    edges {
+      node {
+        time
+        agentName
+        agentId
+        eventType
+        processGuid
+        processId
+        image
+        targetObject
+        details
+        user
+      }
+      cursor
+    }
+  }
+}

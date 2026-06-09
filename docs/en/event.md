@@ -1,11 +1,12 @@
 # Event
 
 The Event page is accessed from the sidebar. It browses **source
-events** collected by Giganto — the raw network records the backend
-ingests, before any detection logic runs. It covers all 20 Giganto
-network record types — connection (**Conn**) plus the 19 protocol
-record types listed under [Record types](#record-types) — each with
-type-appropriate columns and a full row detail.
+events** collected by Giganto — the raw records the backend ingests,
+before any detection logic runs. It covers all 34 Giganto record types:
+the 20 network types — connection (**Conn**) plus the 19 protocol
+types — and the 14 Sysmon / Windows endpoint types, all listed under
+[Record types](#record-types). Each type has type-appropriate columns
+and a full row detail.
 
 Viewing the page requires the `event:read` permission. The built-in
 roles Security Monitor, Tenant Administrator, and System Administrator
@@ -43,14 +44,17 @@ fetched until you choose a sensor and select **Apply** — a sensor is
 required because Giganto scopes every network query to exactly one
 sensor.
 
-- **Record type** — the kind of source event to browse. All 20 Giganto
-  network record types are selectable (see
-  [Record types](#record-types)). The new type takes effect when you
-  select **Apply**, which re-runs the search and swaps the results
-  columns and detail layout for that type.
+- **Record type** — the kind of source event to browse. All 34 Giganto
+  record types are selectable (see [Record types](#record-types)). The
+  new type takes effect when you select **Apply**, which re-runs the
+  search and swaps the results columns and detail layout for that type.
+  The record type also decides which filter inputs apply: network types
+  show the IP/port ranges below, while Sysmon types show a single
+  **Agent ID** field instead (see below).
 - **Sensor** — the single sensor to query. The list is populated from
   the sensors Giganto has ingested data for. If the list cannot be
-  loaded, the selector is disabled and a notice is shown.
+  loaded, the selector is disabled and a notice is shown. The sensor is
+  required for every record type, network and Sysmon alike.
 - **Quick range** — a shortcut that fills the start/end time range with
   a relative window (1 hour, 12 hours, 1 day, … up to 3 years).
 - **Time range** — explicit **Start** (inclusive) and **End**
@@ -64,6 +68,13 @@ sensor.
   rather than rounded to a different port). For the **ICMP** record type
   the port inputs are disabled and not applied — ICMP records have no
   ports.
+- **Agent ID** — shown **only for Sysmon types**, in place of the IP and
+  port ranges. Sysmon events are scoped by the reporting agent rather
+  than by network address, so this is a free-text match on the agent id
+  (Giganto exposes no agent list to populate a dropdown). When you switch
+  between a network type and a Sysmon type, the inputs that do not apply
+  to the new type are hidden **and** dropped from the query, so a value
+  typed for one family never leaks into the other.
 
 There is no separate protocol filter: Giganto's network filter has no
 protocol field, so the IP protocol cannot be used as a query input. It
@@ -101,6 +112,13 @@ precision.
 For the **ICMP** type, which has no ports, the Source and Destination
 columns show bare addresses.
 
+Sysmon types have no network endpoints, so their table leads with a
+different common set — **Time**, **Agent name**, **Image**, and
+**User** — followed by their own type-specific summary columns (for
+example Process Create shows the command line, parent image, integrity
+level, and hashes). The row detail still lists every field of the
+selected type.
+
 ### Row detail
 
 Selecting a row opens a side panel with the **full** record — every
@@ -112,8 +130,8 @@ are rendered as labelled sub-blocks.
 
 ## Record types
 
-All 20 Giganto network record types are selectable in the **Record
-type** filter:
+All 34 Giganto record types are selectable in the **Record type**
+filter. The 20 network types come first:
 
 | Group | Types |
 | --- | --- |
@@ -129,7 +147,7 @@ type** filter:
 | Address assignment | Bootp, Dhcp |
 | Diagnostics | Icmp |
 
-A few types differ from the rest:
+A few network types differ from the rest:
 
 - **MalformedDns** is not shaped like Dns: instead of query/answer/rcode
   it carries DNS-header counts and the raw malformed query/response byte
@@ -139,6 +157,31 @@ A few types differ from the rest:
 - **DceRpc**, **Ftp**, and **Dhcp** carry nested sub-records, rendered in
   the row detail.
 - **Icmp** has no ports; its port filter inputs are disabled.
+
+### Sysmon / endpoint record types
+
+The 14 Sysmon / Windows endpoint types follow the network types in the
+selector. They are filtered by [**Agent ID**](#filters), not IP/port,
+and share a common header — time, agent name, agent id, process GUID,
+process id, image, and user — plus their own type-specific fields:
+
+| Group | Types |
+| --- | --- |
+| Process | Process Create, Process Terminate, Process Tamper |
+| Image | Image Load |
+| File | File Create, File Create Time, File Create Stream Hash, File Delete, File Delete Detected |
+| Registry | Registry Value Set, Registry Key Rename |
+| Network | Network Connect |
+| Pipe | Pipe Event |
+| DNS | DNS Query |
+
+A few Sysmon types are worth noting:
+
+- **Network Connect** carries its own source/destination host, IP, and
+  port fields (distinct from the network family's connection records).
+- **File Create Stream Hash** uses a singular `hash` list field, while
+  the other file/process types use `hashes`.
+- **DNS Query** carries a `queryResults` list and a `queryStatus` code.
 
 ## Pagination
 

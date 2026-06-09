@@ -17,19 +17,33 @@ import type {
   ConnRawEvent,
   DceRpcRawEvent,
   DhcpRawEvent,
+  DnsQueryEvent,
   DnsRawEvent,
+  FileCreateEvent,
+  FileCreateStreamHashEvent,
+  FileCreateTimeEvent,
+  FileDeleteDetectedEvent,
+  FileDeleteEvent,
   FtpRawEvent,
   HttpRawEvent,
   IcmpRawEvent,
+  ImageLoadEvent,
   KerberosRawEvent,
   LdapRawEvent,
   MalformedDnsRawEvent,
   MqttRawEvent,
+  NetworkConnectEvent,
   NfsRawEvent,
   NtlmRawEvent,
+  PipeEventEvent,
+  ProcessCreateEvent,
+  ProcessTamperEvent,
+  ProcessTerminateEvent,
   RadiusRawEvent,
   RawEvent,
   RdpRawEvent,
+  RegistryKeyRenameEvent,
+  RegistryValueSetEvent,
   SmbRawEvent,
   SmtpRawEvent,
   SshRawEvent,
@@ -550,6 +564,219 @@ const icmpSample: IcmpRawEvent = {
   payload: [1, 2, 3],
 };
 
+// ── Sysmon / endpoint samples ──────────────────────────────────────
+//
+// `processId` and the other `StringNumberU32` scalars stay strings; the
+// list fields keep their exact SDL name (`hashes`, but `hash` singular on
+// FileCreateStreamHash, and `queryResults` on DnsQuery).
+
+const processCreateSample: ProcessCreateEvent = {
+  time: "2026-06-09T00:00:00Z",
+  agentName: "agent-1",
+  agentId: "agent-id-1",
+  processGuid: "{guid-1}",
+  processId: "4321",
+  image: "C:\\Windows\\System32\\cmd.exe",
+  fileVersion: "10.0.19041.1",
+  description: "Windows Command Processor",
+  product: "Microsoft Windows",
+  company: "Microsoft Corporation",
+  originalFileName: "Cmd.Exe",
+  commandLine: "cmd.exe /c whoami",
+  currentDirectory: "C:\\Users\\analyst\\",
+  user: "CORP\\analyst",
+  logonGuid: "{logon-guid-1}",
+  logonId: "999",
+  terminalSessionId: "1",
+  integrityLevel: "High",
+  hashes: ["SHA256=abc", "MD5=def"],
+  parentProcessGuid: "{guid-0}",
+  parentProcessId: "1000",
+  parentImage: "C:\\Windows\\explorer.exe",
+  parentCommandLine: "explorer.exe",
+  parentUser: "CORP\\analyst",
+};
+
+const fileCreateTimeSample: FileCreateTimeEvent = {
+  time: "2026-06-09T00:00:00Z",
+  agentName: "agent-1",
+  agentId: "agent-id-1",
+  processGuid: "{guid-1}",
+  processId: "4321",
+  image: "C:\\Windows\\System32\\cmd.exe",
+  targetFilename: "C:\\temp\\report.docx",
+  creationUtcTime: "2026-06-09T00:00:00Z",
+  previousCreationUtcTime: "2026-06-08T00:00:00Z",
+  user: "CORP\\analyst",
+};
+
+const processTerminateSample: ProcessTerminateEvent = {
+  time: "2026-06-09T00:00:00Z",
+  agentName: "agent-1",
+  agentId: "agent-id-1",
+  processGuid: "{guid-1}",
+  processId: "4321",
+  image: "C:\\Windows\\System32\\cmd.exe",
+  user: "CORP\\analyst",
+};
+
+const imageLoadSample: ImageLoadEvent = {
+  time: "2026-06-09T00:00:00Z",
+  agentName: "agent-1",
+  agentId: "agent-id-1",
+  processGuid: "{guid-1}",
+  processId: "4321",
+  image: "C:\\Windows\\System32\\cmd.exe",
+  imageLoaded: "C:\\Windows\\System32\\kernel32.dll",
+  fileVersion: "10.0.19041.1",
+  description: "Windows NT BASE API Client DLL",
+  product: "Microsoft Windows",
+  company: "Microsoft Corporation",
+  originalFileName: "kernel32",
+  hashes: ["SHA256=abc"],
+  signed: true,
+  signature: "Microsoft Windows",
+  signatureStatus: "Valid",
+  user: "CORP\\analyst",
+};
+
+const fileCreateSample: FileCreateEvent = {
+  time: "2026-06-09T00:00:00Z",
+  agentName: "agent-1",
+  agentId: "agent-id-1",
+  processGuid: "{guid-1}",
+  processId: "4321",
+  image: "C:\\Windows\\System32\\cmd.exe",
+  targetFilename: "C:\\temp\\new.txt",
+  creationUtcTime: "2026-06-09T00:00:00Z",
+  user: "CORP\\analyst",
+};
+
+const networkConnectSample: NetworkConnectEvent = {
+  time: "2026-06-09T00:00:00Z",
+  agentName: "agent-1",
+  agentId: "agent-id-1",
+  processGuid: "{guid-1}",
+  processId: "4321",
+  image: "C:\\Windows\\System32\\svchost.exe",
+  user: "CORP\\analyst",
+  protocol: "tcp",
+  initiated: true,
+  sourceIsIpv6: false,
+  sourceIp: "192.0.2.10",
+  sourceHostname: "host-a",
+  sourcePort: 51000,
+  sourcePortName: "",
+  destinationIsIpv6: false,
+  destinationIp: "192.0.2.20",
+  destinationHostname: "host-b",
+  destinationPort: 443,
+  destinationPortName: "https",
+};
+
+const registryValueSetSample: RegistryValueSetEvent = {
+  time: "2026-06-09T00:00:00Z",
+  agentName: "agent-1",
+  agentId: "agent-id-1",
+  eventType: "SetValue",
+  processGuid: "{guid-1}",
+  processId: "4321",
+  image: "C:\\Windows\\System32\\reg.exe",
+  targetObject: "HKLM\\Software\\Foo\\Bar",
+  details: "DWORD (0x00000001)",
+  user: "CORP\\analyst",
+};
+
+const registryKeyRenameSample: RegistryKeyRenameEvent = {
+  time: "2026-06-09T00:00:00Z",
+  agentName: "agent-1",
+  agentId: "agent-id-1",
+  eventType: "RenameKey",
+  processGuid: "{guid-1}",
+  processId: "4321",
+  image: "C:\\Windows\\System32\\reg.exe",
+  targetObject: "HKLM\\Software\\Foo",
+  newName: "HKLM\\Software\\Baz",
+  user: "CORP\\analyst",
+};
+
+const fileCreateStreamHashSample: FileCreateStreamHashEvent = {
+  time: "2026-06-09T00:00:00Z",
+  agentName: "agent-1",
+  agentId: "agent-id-1",
+  processGuid: "{guid-1}",
+  processId: "4321",
+  image: "C:\\Windows\\System32\\cmd.exe",
+  targetFilename: "C:\\temp\\download.zip",
+  creationUtcTime: "2026-06-09T00:00:00Z",
+  hash: ["SHA256=abc", "MD5=def"],
+  contents: "[ZoneTransfer]",
+  user: "CORP\\analyst",
+};
+
+const pipeEventSample: PipeEventEvent = {
+  time: "2026-06-09T00:00:00Z",
+  agentName: "agent-1",
+  agentId: "agent-id-1",
+  eventType: "CreatePipe",
+  processGuid: "{guid-1}",
+  processId: "4321",
+  pipeName: "\\\\.\\pipe\\foo",
+  image: "C:\\Windows\\System32\\svchost.exe",
+  user: "CORP\\analyst",
+};
+
+const dnsQuerySample: DnsQueryEvent = {
+  time: "2026-06-09T00:00:00Z",
+  agentName: "agent-1",
+  agentId: "agent-id-1",
+  processGuid: "{guid-1}",
+  processId: "4321",
+  queryName: "example.com",
+  queryStatus: "0",
+  queryResults: ["93.184.216.34"],
+  image: "C:\\Windows\\System32\\nslookup.exe",
+  user: "CORP\\analyst",
+};
+
+const fileDeleteSample: FileDeleteEvent = {
+  time: "2026-06-09T00:00:00Z",
+  agentName: "agent-1",
+  agentId: "agent-id-1",
+  processGuid: "{guid-1}",
+  processId: "4321",
+  user: "CORP\\analyst",
+  image: "C:\\Windows\\System32\\cmd.exe",
+  targetFilename: "C:\\temp\\old.txt",
+  hashes: ["SHA256=abc"],
+  isExecutable: false,
+  archived: true,
+};
+
+const processTamperSample: ProcessTamperEvent = {
+  time: "2026-06-09T00:00:00Z",
+  agentName: "agent-1",
+  agentId: "agent-id-1",
+  processGuid: "{guid-1}",
+  processId: "4321",
+  image: "C:\\Windows\\System32\\cmd.exe",
+  tamperType: "Image is replaced",
+  user: "CORP\\analyst",
+};
+
+const fileDeleteDetectedSample: FileDeleteDetectedEvent = {
+  time: "2026-06-09T00:00:00Z",
+  agentName: "agent-1",
+  agentId: "agent-id-1",
+  processGuid: "{guid-1}",
+  processId: "4321",
+  user: "CORP\\analyst",
+  image: "C:\\Windows\\System32\\cmd.exe",
+  targetFilename: "C:\\temp\\old.exe",
+  hashes: ["SHA256=abc"],
+  isExecutable: true,
+};
+
 export const RAW_EVENT_SAMPLES = {
   conn: connSample,
   dns: dnsSample,
@@ -571,4 +798,18 @@ export const RAW_EVENT_SAMPLES = {
   dhcp: dhcpSample,
   radius: radiusSample,
   icmp: icmpSample,
+  processCreate: processCreateSample,
+  fileCreateTime: fileCreateTimeSample,
+  processTerminate: processTerminateSample,
+  imageLoad: imageLoadSample,
+  fileCreate: fileCreateSample,
+  networkConnect: networkConnectSample,
+  registryValueSet: registryValueSetSample,
+  registryKeyRename: registryKeyRenameSample,
+  fileCreateStreamHash: fileCreateStreamHashSample,
+  pipeEvent: pipeEventSample,
+  dnsQuery: dnsQuerySample,
+  fileDelete: fileDeleteSample,
+  processTamper: processTamperSample,
+  fileDeleteDetected: fileDeleteDetectedSample,
 } satisfies Record<RecordTypeId, RawEvent>;

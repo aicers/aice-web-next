@@ -1,0 +1,58 @@
+# Validates against schemas/giganto.graphql.
+#
+# ProcessCreateEvent Sysmon / endpoint event query. Relay cursor pagination over
+# Giganto's ProcessCreateEventConnection (pageInfo + edges, no totalCount),
+# mirroring conn-raw-events.graphql. Sysmon types filter by `agentId`
+# (carried on NetworkFilter); field names/types are verified against the
+# 0.27.0 SDL by the schema-validation gate.
+query ProcessCreateEvents(
+  $filter: NetworkFilter!
+  $first: Int
+  $after: String
+  $last: Int
+  $before: String
+) {
+  processCreateEvents(
+    filter: $filter
+    first: $first
+    after: $after
+    last: $last
+    before: $before
+  ) {
+    pageInfo {
+      hasPreviousPage
+      hasNextPage
+      startCursor
+      endCursor
+    }
+    edges {
+      node {
+        time
+        agentName
+        agentId
+        processGuid
+        processId
+        image
+        fileVersion
+        description
+        product
+        company
+        originalFileName
+        commandLine
+        currentDirectory
+        user
+        logonGuid
+        logonId
+        terminalSessionId
+        integrityLevel
+        hashes
+        parentProcessGuid
+        parentProcessId
+        parentImage
+        parentCommandLine
+        parentUser
+      }
+      cursor
+    }
+  }
+}

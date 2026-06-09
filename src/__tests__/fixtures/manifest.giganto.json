@@ -70,6 +70,15 @@
     }
   },
   {
+    "operation": "processCreateEvents",
+    "query": "external/giganto/processCreateEvents.graphql",
+    "fixture": "external/giganto/processCreateEvents.page1.json",
+    "variables": {
+      "filter": { "sensor": "sensor-a" },
+      "first": 50
+    }
+  },
+  {
     "operation": "statistics",
     "query": "external/giganto/statistics.graphql",
     "fixture": "external/giganto/statistics.json",

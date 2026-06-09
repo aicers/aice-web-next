@@ -53,6 +53,7 @@ const baseFilter: EventFilter = {
   origPortEnd: null,
   respPortStart: null,
   respPortEnd: null,
+  agentId: null,
 };
 
 beforeEach(() => {
