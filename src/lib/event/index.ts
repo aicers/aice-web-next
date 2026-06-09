@@ -50,8 +50,12 @@ export {
   coerceRecordType,
   DEFAULT_RECORD_TYPE,
   isRecordTypeId,
+  NETWORK_RECORD_TYPE_IDS,
   RECORD_TYPE_IDS,
+  type RecordFamily,
   type RecordTypeId,
+  recordFamily,
+  SYSMON_RECORD_TYPE_IDS,
 } from "./record-types";
 export {
   coerceStatisticsMetric,

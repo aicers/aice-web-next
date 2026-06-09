@@ -14,7 +14,12 @@ import {
   SelectValue,
 } from "@/components/ui/select";
 import { computePeriodRange, PERIOD_KEYS } from "@/lib/detection/period";
-import { type EventFilter, isPortString, RECORD_TYPE_IDS } from "@/lib/event";
+import {
+  type EventFilter,
+  isPortString,
+  RECORD_TYPE_IDS,
+  recordFamily,
+} from "@/lib/event";
 
 const QUICK_RANGE_NONE = "none";
 
@@ -107,11 +112,47 @@ export function EventFilterForm({
     set({ [key]: value } as Partial<EventFilter>);
   };
 
+  // Switching record type drops the draft fields the *other* family
+  // owns, so a value typed into a now-hidden input never resurfaces
+  // after switching back. This pairs with the family-aware URL
+  // serialization in `filterToSearchEntries`: the form clears the live
+  // draft, the serializer guards what reaches the URL. The local raw
+  // port text is reset alongside the committed draft so a stale entry
+  // does not reappear in the port inputs.
+  const onRecordTypeChange = (value: string): void => {
+    const recordType = value as EventFilter["recordType"];
+    if (recordFamily(recordType) === "sysmon") {
+      set({
+        recordType,
+        origAddrStart: null,
+        origAddrEnd: null,
+        respAddrStart: null,
+        respAddrEnd: null,
+        origPortStart: null,
+        origPortEnd: null,
+        respPortStart: null,
+        respPortEnd: null,
+      });
+      setRawPorts({
+        origPortStart: "",
+        origPortEnd: "",
+        respPortStart: "",
+        respPortEnd: "",
+      });
+      return;
+    }
+    set({ recordType, agentId: null });
+  };
+
+  // Sysmon types filter by a free-text `agentId` instead of IP/port, so
+  // the IP/port grid is hidden for them and an `agentId` input is shown.
+  const isSysmon = recordFamily(draft.recordType) === "sysmon";
+
   // Icmp records have no ports, so port bounds are not applied for them
-  // (mirrored server-side in `toNetworkFilter`). Disable the port inputs
-  // and ignore their validity so a leftover entry never blocks Apply
-  // after switching to Icmp.
-  const portsDisabled = draft.recordType === "icmp";
+  // (mirrored server-side in `toNetworkFilter`). Sysmon types hide the
+  // port inputs entirely. In both cases the inputs are treated as
+  // disabled so a leftover entry never blocks Apply after switching.
+  const portsDisabled = isSysmon || draft.recordType === "icmp";
 
   // A port input is invalid when non-empty but not an accepted port
   // string. The server drops such values when parsing the URL, so the
@@ -146,12 +187,7 @@ export function EventFilterForm({
         */}
         <div className="space-y-1.5">
           <Label htmlFor="event-record-type">{t("recordType")}</Label>
-          <Select
-            value={draft.recordType}
-            onValueChange={(value) =>
-              set({ recordType: value as EventFilter["recordType"] })
-            }
-          >
+          <Select value={draft.recordType} onValueChange={onRecordTypeChange}>
             <SelectTrigger id="event-record-type">
               <SelectValue />
             </SelectTrigger>
@@ -227,62 +263,77 @@ export function EventFilterForm({
         </div>
       </div>
 
-      <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
-        <RangeField
-          label={tf("origAddr")}
-          startLabel={tf("rangeStart")}
-          endLabel={tf("rangeEnd")}
-          idPrefix="event-orig-addr"
-          startValue={draft.origAddrStart ?? ""}
-          endValue={draft.origAddrEnd ?? ""}
-          onStart={(v) => set({ origAddrStart: v || null })}
-          onEnd={(v) => set({ origAddrEnd: v || null })}
-        />
-        <RangeField
-          label={tf("respAddr")}
-          startLabel={tf("rangeStart")}
-          endLabel={tf("rangeEnd")}
-          idPrefix="event-resp-addr"
-          startValue={draft.respAddrStart ?? ""}
-          endValue={draft.respAddrEnd ?? ""}
-          onStart={(v) => set({ respAddrStart: v || null })}
-          onEnd={(v) => set({ respAddrEnd: v || null })}
-        />
-        <RangeField
-          label={tf("origPort")}
-          startLabel={tf("rangeStart")}
-          endLabel={tf("rangeEnd")}
-          idPrefix="event-orig-port"
-          type="number"
-          disabled={portsDisabled}
-          startValue={rawPorts.origPortStart}
-          endValue={rawPorts.origPortEnd}
-          startInvalid={
-            !portsDisabled && portRawInvalid(rawPorts.origPortStart)
-          }
-          endInvalid={!portsDisabled && portRawInvalid(rawPorts.origPortEnd)}
-          onStart={(v) => setPort("origPortStart", v)}
-          onEnd={(v) => setPort("origPortEnd", v)}
-        />
-        <RangeField
-          label={tf("respPort")}
-          startLabel={tf("rangeStart")}
-          endLabel={tf("rangeEnd")}
-          idPrefix="event-resp-port"
-          type="number"
-          disabled={portsDisabled}
-          startValue={rawPorts.respPortStart}
-          endValue={rawPorts.respPortEnd}
-          startInvalid={
-            !portsDisabled && portRawInvalid(rawPorts.respPortStart)
-          }
-          endInvalid={!portsDisabled && portRawInvalid(rawPorts.respPortEnd)}
-          onStart={(v) => setPort("respPortStart", v)}
-          onEnd={(v) => setPort("respPortEnd", v)}
-        />
-      </div>
+      {isSysmon ? (
+        <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
+          <div className="space-y-1.5">
+            <Label htmlFor="event-agent-id">{tf("agentId")}</Label>
+            <Input
+              id="event-agent-id"
+              type="text"
+              placeholder={tf("agentIdPlaceholder")}
+              value={draft.agentId ?? ""}
+              onChange={(e) => set({ agentId: e.target.value || null })}
+            />
+          </div>
+        </div>
+      ) : (
+        <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
+          <RangeField
+            label={tf("origAddr")}
+            startLabel={tf("rangeStart")}
+            endLabel={tf("rangeEnd")}
+            idPrefix="event-orig-addr"
+            startValue={draft.origAddrStart ?? ""}
+            endValue={draft.origAddrEnd ?? ""}
+            onStart={(v) => set({ origAddrStart: v || null })}
+            onEnd={(v) => set({ origAddrEnd: v || null })}
+          />
+          <RangeField
+            label={tf("respAddr")}
+            startLabel={tf("rangeStart")}
+            endLabel={tf("rangeEnd")}
+            idPrefix="event-resp-addr"
+            startValue={draft.respAddrStart ?? ""}
+            endValue={draft.respAddrEnd ?? ""}
+            onStart={(v) => set({ respAddrStart: v || null })}
+            onEnd={(v) => set({ respAddrEnd: v || null })}
+          />
+          <RangeField
+            label={tf("origPort")}
+            startLabel={tf("rangeStart")}
+            endLabel={tf("rangeEnd")}
+            idPrefix="event-orig-port"
+            type="number"
+            disabled={portsDisabled}
+            startValue={rawPorts.origPortStart}
+            endValue={rawPorts.origPortEnd}
+            startInvalid={
+              !portsDisabled && portRawInvalid(rawPorts.origPortStart)
+            }
+            endInvalid={!portsDisabled && portRawInvalid(rawPorts.origPortEnd)}
+            onStart={(v) => setPort("origPortStart", v)}
+            onEnd={(v) => setPort("origPortEnd", v)}
+          />
+          <RangeField
+            label={tf("respPort")}
+            startLabel={tf("rangeStart")}
+            endLabel={tf("rangeEnd")}
+            idPrefix="event-resp-port"
+            type="number"
+            disabled={portsDisabled}
+            startValue={rawPorts.respPortStart}
+            endValue={rawPorts.respPortEnd}
+            startInvalid={
+              !portsDisabled && portRawInvalid(rawPorts.respPortStart)
+            }
+            endInvalid={!portsDisabled && portRawInvalid(rawPorts.respPortEnd)}
+            onStart={(v) => setPort("respPortStart", v)}
+            onEnd={(v) => setPort("respPortEnd", v)}
+          />
+        </div>
+      )}
 
-      {portsDisabled ? (
+      {!isSysmon && draft.recordType === "icmp" ? (
         <p className="text-muted-foreground text-sm">
           {tf("portsNotApplicable")}
         </p>

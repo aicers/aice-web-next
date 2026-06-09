@@ -12,6 +12,7 @@ import {
   coerceRecordType,
   DEFAULT_RECORD_TYPE,
   type RecordTypeId,
+  recordFamily,
 } from "./record-types";
 import type { NetworkFilterInput } from "./types";
 
@@ -35,6 +36,12 @@ export interface EventFilter {
   origPortEnd: number | null;
   respPortStart: number | null;
   respPortEnd: number | null;
+  /**
+   * Free-text agent id, used only by the sysmon family. The SDL exposes
+   * no agent-list query (only `sensors`), so this is free text rather
+   * than a populated dropdown.
+   */
+  agentId: string | null;
 }
 
 export const EMPTY_EVENT_FILTER: EventFilter = {
@@ -50,6 +57,7 @@ export const EMPTY_EVENT_FILTER: EventFilter = {
   origPortEnd: null,
   respPortStart: null,
   respPortEnd: null,
+  agentId: null,
 };
 
 /** Inclusive 16-bit port bounds Giganto accepts in a `PortRange`. */
@@ -94,6 +102,7 @@ export const FILTER_PARAM_KEYS = {
   origPortEnd: "origPortEnd",
   respPortStart: "respPortStart",
   respPortEnd: "respPortEnd",
+  agentId: "agentId",
 } as const;
 
 /**
@@ -114,21 +123,28 @@ export function toNetworkFilter(
 
   const input: NetworkFilterInput = { sensor: filter.sensor };
 
+  // `time` and `sensor` are shared by both families.
   if (filter.start || filter.end) {
     input.time = { start: filter.start, end: filter.end };
   }
+
+  // A per-family allow-list, not per-field deletes: the mapping emits
+  // only the fields that family carries, so the result never leaks stale
+  // values when the operator switches record type after typing into the
+  // now-hidden inputs. The sysmon family carries `agentId` (no IP/port);
+  // the network family carries IP/port (no `agentId`), and Icmp drops the
+  // port ranges since it has no ports.
+  if (recordFamily(filter.recordType) === "sysmon") {
+    if (filter.agentId) input.agentId = filter.agentId;
+    return input;
+  }
+
   if (filter.origAddrStart || filter.origAddrEnd) {
     input.origAddr = { start: filter.origAddrStart, end: filter.origAddrEnd };
   }
   if (filter.respAddrStart || filter.respAddrEnd) {
     input.respAddr = { start: filter.respAddrStart, end: filter.respAddrEnd };
   }
-  // Icmp records carry no ports, so port bounds are meaningless for them
-  // and Giganto's port filter would never match. Drop them for Icmp so
-  // the rest of the filter still applies. The form disables the port
-  // inputs for Icmp too, but stripping here keeps a stale URL param (or
-  // a record-type switch after typing ports) from silently emptying the
-  // result set.
   if (filter.recordType !== "icmp") {
     if (filter.origPortStart !== null || filter.origPortEnd !== null) {
       input.origPort = { start: filter.origPortStart, end: filter.origPortEnd };
@@ -183,6 +199,7 @@ export function parseFilterFromSearchParams(
     origPortEnd: readPort(source, FILTER_PARAM_KEYS.origPortEnd),
     respPortStart: readPort(source, FILTER_PARAM_KEYS.respPortStart),
     respPortEnd: readPort(source, FILTER_PARAM_KEYS.respPortEnd),
+    agentId: readString(source, FILTER_PARAM_KEYS.agentId),
   };
 }
 
@@ -190,6 +207,16 @@ export function parseFilterFromSearchParams(
  * Encode a filter into URL-safe entries. Only set fields are written
  * so a fresh `/event` URL stays tidy; the record type is omitted when
  * it is the default.
+ *
+ * The serialization is family-aware, mirroring {@link toNetworkFilter}'s
+ * allow-list: only the fields the selected family carries are written.
+ * Without this, a hidden-family value typed before switching record type
+ * (a stale port after moving to a sysmon type, or a stale `agentId`
+ * after moving back to a network type) would persist in the URL and
+ * silently reactivate on reload or when switching back — even though
+ * `toNetworkFilter` already drops it from the query. Guarding both the
+ * URL and the query keeps the committed state consistent in both
+ * directions.
  */
 export function filterToSearchEntries(
   filter: EventFilter,
@@ -201,16 +228,25 @@ export function filterToSearchEntries(
   const push = (key: string, value: string | number | null): void => {
     if (value !== null && value !== "") entries.push([key, String(value)]);
   };
+  // Shared by both families.
   push(FILTER_PARAM_KEYS.sensor, filter.sensor);
   push(FILTER_PARAM_KEYS.start, filter.start);
   push(FILTER_PARAM_KEYS.end, filter.end);
+
+  if (recordFamily(filter.recordType) === "sysmon") {
+    push(FILTER_PARAM_KEYS.agentId, filter.agentId);
+    return entries;
+  }
+
   push(FILTER_PARAM_KEYS.origAddrStart, filter.origAddrStart);
   push(FILTER_PARAM_KEYS.origAddrEnd, filter.origAddrEnd);
   push(FILTER_PARAM_KEYS.respAddrStart, filter.respAddrStart);
   push(FILTER_PARAM_KEYS.respAddrEnd, filter.respAddrEnd);
-  push(FILTER_PARAM_KEYS.origPortStart, filter.origPortStart);
-  push(FILTER_PARAM_KEYS.origPortEnd, filter.origPortEnd);
-  push(FILTER_PARAM_KEYS.respPortStart, filter.respPortStart);
-  push(FILTER_PARAM_KEYS.respPortEnd, filter.respPortEnd);
+  if (filter.recordType !== "icmp") {
+    push(FILTER_PARAM_KEYS.origPortStart, filter.origPortStart);
+    push(FILTER_PARAM_KEYS.origPortEnd, filter.origPortEnd);
+    push(FILTER_PARAM_KEYS.respPortStart, filter.respPortStart);
+    push(FILTER_PARAM_KEYS.respPortEnd, filter.respPortEnd);
+  }
   return entries;
 }

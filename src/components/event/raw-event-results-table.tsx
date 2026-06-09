@@ -19,6 +19,7 @@ import {
   type RawEventEdge,
   type RawEventFieldValue,
   type RecordDescriptor,
+  recordFamily,
   STRING_NUMBER_KINDS,
   summaryText,
 } from "@/lib/event";
@@ -41,12 +42,14 @@ function isNumericColumn(field: AnyFieldDescriptor): boolean {
 
 /**
  * Descriptor-driven results table shared by every record type. The
- * leading columns (time, source, destination, protocol) are common to
- * all 20 types; the trailing columns come from the descriptor's curated
- * `summaryKeys`. Source/destination render as `address:port` endpoints,
- * or a bare address for Icmp (`hasPorts: false`). Wide and list/sub-record
- * fields collapse to a compact cell here — the full value lives in the
- * row detail. Row keys use the Relay cursor, which is stable per record.
+ * leading columns are family-specific: the **network** family leads with
+ * time, source, destination, and protocol (source/destination render as
+ * `address:port` endpoints, or a bare address for Icmp); the **sysmon**
+ * family leads with time, agent, image, and user instead — it carries no
+ * IP/port/proto. The trailing columns come from the descriptor's curated
+ * `summaryKeys`. Wide and list/sub-record fields collapse to a compact
+ * cell here — the full value lives in the row detail. Row keys use the
+ * Relay cursor, which is stable per record.
  */
 export function RawEventResultsTable({
   descriptor,
@@ -62,6 +65,7 @@ export function RawEventResultsTable({
   const t = useTranslations("event.table");
   const tf = useTranslations("event.fields");
 
+  const isSysmon = recordFamily(descriptor.id) === "sysmon";
   const byKey = new Map(descriptor.fields.map((f) => [f.key, f]));
   const protoField = byKey.get("proto");
   const summaryFields = descriptor.summaryKeys
@@ -73,9 +77,19 @@ export function RawEventResultsTable({
       <TableHeader>
         <TableRow>
           <TableHead>{t("time")}</TableHead>
-          <TableHead>{t("source")}</TableHead>
-          <TableHead>{t("destination")}</TableHead>
-          {protoField ? <TableHead>{tf("proto")}</TableHead> : null}
+          {isSysmon ? (
+            <>
+              <TableHead>{tf("agentName")}</TableHead>
+              <TableHead>{tf("image")}</TableHead>
+              <TableHead>{tf("user")}</TableHead>
+            </>
+          ) : (
+            <>
+              <TableHead>{t("source")}</TableHead>
+              <TableHead>{t("destination")}</TableHead>
+              {protoField ? <TableHead>{tf("proto")}</TableHead> : null}
+            </>
+          )}
           {summaryFields.map((f) => (
             <TableHead
               key={f.key}
@@ -114,13 +128,31 @@ export function RawEventResultsTable({
               <TableCell className="whitespace-nowrap font-mono text-xs">
                 {String(fieldValue(e, "time") ?? EMPTY_VALUE)}
               </TableCell>
-              <TableCell className="font-mono text-xs">{source}</TableCell>
-              <TableCell className="font-mono text-xs">{destination}</TableCell>
-              {protoField ? (
-                <TableCell>
-                  {protoLabel(Number(fieldValue(e, "proto")))}
-                </TableCell>
-              ) : null}
+              {isSysmon ? (
+                <>
+                  <TableCell className="max-w-[20rem] truncate font-mono text-xs">
+                    {String(fieldValue(e, "agentName") ?? EMPTY_VALUE)}
+                  </TableCell>
+                  <TableCell className="max-w-[20rem] truncate font-mono text-xs">
+                    {String(fieldValue(e, "image") ?? EMPTY_VALUE)}
+                  </TableCell>
+                  <TableCell className="max-w-[20rem] truncate font-mono text-xs">
+                    {String(fieldValue(e, "user") ?? EMPTY_VALUE)}
+                  </TableCell>
+                </>
+              ) : (
+                <>
+                  <TableCell className="font-mono text-xs">{source}</TableCell>
+                  <TableCell className="font-mono text-xs">
+                    {destination}
+                  </TableCell>
+                  {protoField ? (
+                    <TableCell>
+                      {protoLabel(Number(fieldValue(e, "proto")))}
+                    </TableCell>
+                  ) : null}
+                </>
+              )}
               {summaryFields.map((f) => (
                 <TableCell
                   key={f.key}

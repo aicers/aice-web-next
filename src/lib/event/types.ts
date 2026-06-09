@@ -618,7 +618,240 @@ export interface IcmpRawEvent {
   payload: number[];
 }
 
-/** Union of every network raw-event node the Event menu can browse. */
+// ── Sysmon / endpoint record types ─────────────────────────────────
+//
+// The 14 Giganto Sysmon / Windows endpoint event types. They share a
+// common header — `time`, `agentName`, `agentId`, `processGuid`,
+// `processId`, `image`, `user` — and carry no ports. `processId` and the
+// other `StringNumberU32` scalars (`logonId`, `terminalSessionId`,
+// `parentProcessId`, `queryStatus`) are serialized as strings and must
+// never be cast to a JS number. List fields keep their exact SDL name
+// (`hashes`, but `hash` singular on FileCreateStreamHashEvent, and
+// `queryResults` on DnsEventEvent).
+
+/** `ProcessCreateEvent` — `processCreateEvents` query. */
+export interface ProcessCreateEvent {
+  time: string;
+  agentName: string;
+  agentId: string;
+  processGuid: string;
+  processId: string;
+  image: string;
+  fileVersion: string;
+  description: string;
+  product: string;
+  company: string;
+  originalFileName: string;
+  commandLine: string;
+  currentDirectory: string;
+  user: string;
+  logonGuid: string;
+  logonId: string;
+  terminalSessionId: string;
+  integrityLevel: string;
+  hashes: string[];
+  parentProcessGuid: string;
+  parentProcessId: string;
+  parentImage: string;
+  parentCommandLine: string;
+  parentUser: string;
+}
+
+/** `FileCreationTimeChangedEvent` — `fileCreateTimeEvents` query. */
+export interface FileCreateTimeEvent {
+  time: string;
+  agentName: string;
+  agentId: string;
+  processGuid: string;
+  processId: string;
+  image: string;
+  targetFilename: string;
+  creationUtcTime: string;
+  previousCreationUtcTime: string;
+  user: string;
+}
+
+/** `ProcessTerminatedEvent` — `processTerminateEvents` query. */
+export interface ProcessTerminateEvent {
+  time: string;
+  agentName: string;
+  agentId: string;
+  processGuid: string;
+  processId: string;
+  image: string;
+  user: string;
+}
+
+/** `ImageLoadedEvent` — `imageLoadEvents` query. */
+export interface ImageLoadEvent {
+  time: string;
+  agentName: string;
+  agentId: string;
+  processGuid: string;
+  processId: string;
+  image: string;
+  imageLoaded: string;
+  fileVersion: string;
+  description: string;
+  product: string;
+  company: string;
+  originalFileName: string;
+  hashes: string[];
+  signed: boolean;
+  signature: string;
+  signatureStatus: string;
+  user: string;
+}
+
+/** `FileCreateEvent` — `fileCreateEvents` query. */
+export interface FileCreateEvent {
+  time: string;
+  agentName: string;
+  agentId: string;
+  processGuid: string;
+  processId: string;
+  image: string;
+  targetFilename: string;
+  creationUtcTime: string;
+  user: string;
+}
+
+/** `NetworkConnectionEvent` — `networkConnectEvents` query. */
+export interface NetworkConnectEvent {
+  time: string;
+  agentName: string;
+  agentId: string;
+  processGuid: string;
+  processId: string;
+  image: string;
+  user: string;
+  protocol: string;
+  initiated: boolean;
+  sourceIsIpv6: boolean;
+  sourceIp: string;
+  sourceHostname: string;
+  sourcePort: number;
+  sourcePortName: string;
+  destinationIsIpv6: boolean;
+  destinationIp: string;
+  destinationHostname: string;
+  destinationPort: number;
+  destinationPortName: string;
+}
+
+/** `RegistryValueSetEvent` — `registryValueSetEvents` query. */
+export interface RegistryValueSetEvent {
+  time: string;
+  agentName: string;
+  agentId: string;
+  eventType: string;
+  processGuid: string;
+  processId: string;
+  image: string;
+  targetObject: string;
+  details: string;
+  user: string;
+}
+
+/** `RegistryKeyValueRenameEvent` — `registryKeyRenameEvents` query. */
+export interface RegistryKeyRenameEvent {
+  time: string;
+  agentName: string;
+  agentId: string;
+  eventType: string;
+  processGuid: string;
+  processId: string;
+  image: string;
+  targetObject: string;
+  newName: string;
+  user: string;
+}
+
+/** `FileCreateStreamHashEvent` — `fileCreateStreamHashEvents` query. */
+export interface FileCreateStreamHashEvent {
+  time: string;
+  agentName: string;
+  agentId: string;
+  processGuid: string;
+  processId: string;
+  image: string;
+  targetFilename: string;
+  creationUtcTime: string;
+  // Note: singular `hash` (not `hashes`) per the SDL.
+  hash: string[];
+  contents: string;
+  user: string;
+}
+
+/** `PipeEventEvent` — `pipeEventEvents` query. */
+export interface PipeEventEvent {
+  time: string;
+  agentName: string;
+  agentId: string;
+  eventType: string;
+  processGuid: string;
+  processId: string;
+  pipeName: string;
+  image: string;
+  user: string;
+}
+
+/** `DnsEventEvent` — `dnsQueryEvents` query. */
+export interface DnsQueryEvent {
+  time: string;
+  agentName: string;
+  agentId: string;
+  processGuid: string;
+  processId: string;
+  queryName: string;
+  queryStatus: string;
+  queryResults: string[];
+  image: string;
+  user: string;
+}
+
+/** `FileDeleteEvent` — `fileDeleteEvents` query. */
+export interface FileDeleteEvent {
+  time: string;
+  agentName: string;
+  agentId: string;
+  processGuid: string;
+  processId: string;
+  user: string;
+  image: string;
+  targetFilename: string;
+  hashes: string[];
+  isExecutable: boolean;
+  archived: boolean;
+}
+
+/** `ProcessTamperingEvent` — `processTamperEvents` query. */
+export interface ProcessTamperEvent {
+  time: string;
+  agentName: string;
+  agentId: string;
+  processGuid: string;
+  processId: string;
+  image: string;
+  tamperType: string;
+  user: string;
+}
+
+/** `FileDeleteDetectedEvent` — `fileDeleteDetectedEvents` query. */
+export interface FileDeleteDetectedEvent {
+  time: string;
+  agentName: string;
+  agentId: string;
+  processGuid: string;
+  processId: string;
+  user: string;
+  image: string;
+  targetFilename: string;
+  hashes: string[];
+  isExecutable: boolean;
+}
+
+/** Union of every raw-event node the Event menu can browse. */
 export type RawEvent =
   | ConnRawEvent
   | DnsRawEvent
@@ -639,7 +872,21 @@ export type RawEvent =
   | BootpRawEvent
   | DhcpRawEvent
   | RadiusRawEvent
-  | IcmpRawEvent;
+  | IcmpRawEvent
+  | ProcessCreateEvent
+  | FileCreateTimeEvent
+  | ProcessTerminateEvent
+  | ImageLoadEvent
+  | FileCreateEvent
+  | NetworkConnectEvent
+  | RegistryValueSetEvent
+  | RegistryKeyRenameEvent
+  | FileCreateStreamHashEvent
+  | PipeEventEvent
+  | DnsQueryEvent
+  | FileDeleteEvent
+  | ProcessTamperEvent
+  | FileDeleteDetectedEvent;
 
 /**
  * Every scalar shape a record field can hold once Giganto serializes

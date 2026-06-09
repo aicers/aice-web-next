@@ -1,12 +1,13 @@
 /**
  * Descriptor-driven mapping for every Event-menu record type.
  *
- * The 20 Giganto network raw-event types share a common header but
- * diverge widely in their type-specific fields. Rather than hand-write a
- * bespoke table + detail component per type, each type is described once
- * here as an ordered list of `{ key, scalar }` field descriptors plus a
- * curated `summaryKeys` subset for the results table. One generic table
- * and one generic detail sheet render any type off its descriptor.
+ * The 34 Giganto record types — 20 network plus 14 sysmon / endpoint —
+ * each share a family common header but diverge widely in their
+ * type-specific fields. Rather than hand-write a bespoke table + detail
+ * component per type, each type is described once here as an ordered
+ * list of `{ key, scalar }` field descriptors plus a curated
+ * `summaryKeys` subset for the results table. One generic table and one
+ * generic detail sheet render any type off its descriptor.
  *
  * The `scalar` kind is the single source of truth for how a field is
  * rendered **and** how it is typed. The {@link FieldDescriptor} mapped
@@ -27,19 +28,33 @@ import type {
   DceRpcRawEvent,
   DhcpOptionRawEvent,
   DhcpRawEvent,
+  DnsQueryEvent,
   DnsRawEvent,
+  FileCreateEvent,
+  FileCreateStreamHashEvent,
+  FileCreateTimeEvent,
+  FileDeleteDetectedEvent,
+  FileDeleteEvent,
   FtpCommandRawEvent,
   FtpRawEvent,
   HttpRawEvent,
   IcmpRawEvent,
+  ImageLoadEvent,
   KerberosRawEvent,
   LdapRawEvent,
   MalformedDnsRawEvent,
   MqttRawEvent,
+  NetworkConnectEvent,
   NfsRawEvent,
   NtlmRawEvent,
+  PipeEventEvent,
+  ProcessCreateEvent,
+  ProcessTamperEvent,
+  ProcessTerminateEvent,
   RadiusRawEvent,
   RdpRawEvent,
+  RegistryKeyRenameEvent,
+  RegistryValueSetEvent,
   SmbRawEvent,
   SmtpRawEvent,
   SshRawEvent,
@@ -123,7 +138,7 @@ export type SubFieldDescriptor<T> = FieldDescriptor<T>;
 
 /**
  * Runtime-facing (generics-erased) field descriptor. Every
- * `FieldDescriptor<T>` widens to this, so the registry can hold all 20
+ * `FieldDescriptor<T>` widens to this, so the registry can hold all 34
  * types in one map while authoring stays type-checked.
  */
 export interface AnyFieldDescriptor {
@@ -142,11 +157,16 @@ export interface AnyFieldDescriptor {
  */
 export interface RecordDescriptor {
   id: RecordTypeId;
-  /** The `<type>RawEvents` field name in the query response envelope. */
+  /**
+   * The query field name in the response envelope. Explicit (not
+   * derived) because the suffix differs per family: network types use
+   * `<id>RawEvents`, sysmon types `<id>Events`.
+   */
   responseKey: string;
   /**
-   * Whether the type carries `origPort` / `respPort`. Icmp does not, so
-   * the filter strips port inputs and the table renders bare addresses.
+   * Whether the type carries `origPort` / `respPort`. Icmp and every
+   * sysmon type do not, so the filter strips port inputs and the table
+   * renders the family's non-port leading columns.
    */
   hasPorts: boolean;
   fields: AnyFieldDescriptor[];
@@ -637,6 +657,224 @@ const icmpFields: FieldDescriptor<IcmpRawEvent>[] = [
   { key: "payload", scalar: "intList" },
 ];
 
+// ── Sysmon / endpoint field descriptors ────────────────────────────
+//
+// Every sysmon type leads with the common header
+// (`time, agentName, agentId, processGuid, processId, image, user`) —
+// though the exact order varies per SDL type — and carries no ports.
+// `processId`/`logonId`/`terminalSessionId`/`parentProcessId`/
+// `queryStatus` are `StringNumberU32` (kept as `string`); `creationUtcTime`
+// and the other `DateTime` fields are `datetime`; `hashes`/`hash`/
+// `queryResults` are `stringList`; booleans are `bool`.
+
+const processCreateFields: FieldDescriptor<ProcessCreateEvent>[] = [
+  { key: "time", scalar: "datetime" },
+  { key: "agentName", scalar: "string" },
+  { key: "agentId", scalar: "string" },
+  { key: "processGuid", scalar: "string" },
+  { key: "processId", scalar: "u32" },
+  { key: "image", scalar: "string" },
+  { key: "fileVersion", scalar: "string" },
+  { key: "description", scalar: "string" },
+  { key: "product", scalar: "string" },
+  { key: "company", scalar: "string" },
+  { key: "originalFileName", scalar: "string" },
+  { key: "commandLine", scalar: "string" },
+  { key: "currentDirectory", scalar: "string" },
+  { key: "user", scalar: "string" },
+  { key: "logonGuid", scalar: "string" },
+  { key: "logonId", scalar: "u32" },
+  { key: "terminalSessionId", scalar: "u32" },
+  { key: "integrityLevel", scalar: "string" },
+  { key: "hashes", scalar: "stringList" },
+  { key: "parentProcessGuid", scalar: "string" },
+  { key: "parentProcessId", scalar: "u32" },
+  { key: "parentImage", scalar: "string" },
+  { key: "parentCommandLine", scalar: "string" },
+  { key: "parentUser", scalar: "string" },
+];
+
+const fileCreateTimeFields: FieldDescriptor<FileCreateTimeEvent>[] = [
+  { key: "time", scalar: "datetime" },
+  { key: "agentName", scalar: "string" },
+  { key: "agentId", scalar: "string" },
+  { key: "processGuid", scalar: "string" },
+  { key: "processId", scalar: "u32" },
+  { key: "image", scalar: "string" },
+  { key: "targetFilename", scalar: "string" },
+  { key: "creationUtcTime", scalar: "datetime" },
+  { key: "previousCreationUtcTime", scalar: "datetime" },
+  { key: "user", scalar: "string" },
+];
+
+const processTerminateFields: FieldDescriptor<ProcessTerminateEvent>[] = [
+  { key: "time", scalar: "datetime" },
+  { key: "agentName", scalar: "string" },
+  { key: "agentId", scalar: "string" },
+  { key: "processGuid", scalar: "string" },
+  { key: "processId", scalar: "u32" },
+  { key: "image", scalar: "string" },
+  { key: "user", scalar: "string" },
+];
+
+const imageLoadFields: FieldDescriptor<ImageLoadEvent>[] = [
+  { key: "time", scalar: "datetime" },
+  { key: "agentName", scalar: "string" },
+  { key: "agentId", scalar: "string" },
+  { key: "processGuid", scalar: "string" },
+  { key: "processId", scalar: "u32" },
+  { key: "image", scalar: "string" },
+  { key: "imageLoaded", scalar: "string" },
+  { key: "fileVersion", scalar: "string" },
+  { key: "description", scalar: "string" },
+  { key: "product", scalar: "string" },
+  { key: "company", scalar: "string" },
+  { key: "originalFileName", scalar: "string" },
+  { key: "hashes", scalar: "stringList" },
+  { key: "signed", scalar: "bool" },
+  { key: "signature", scalar: "string" },
+  { key: "signatureStatus", scalar: "string" },
+  { key: "user", scalar: "string" },
+];
+
+const fileCreateFields: FieldDescriptor<FileCreateEvent>[] = [
+  { key: "time", scalar: "datetime" },
+  { key: "agentName", scalar: "string" },
+  { key: "agentId", scalar: "string" },
+  { key: "processGuid", scalar: "string" },
+  { key: "processId", scalar: "u32" },
+  { key: "image", scalar: "string" },
+  { key: "targetFilename", scalar: "string" },
+  { key: "creationUtcTime", scalar: "datetime" },
+  { key: "user", scalar: "string" },
+];
+
+const networkConnectFields: FieldDescriptor<NetworkConnectEvent>[] = [
+  { key: "time", scalar: "datetime" },
+  { key: "agentName", scalar: "string" },
+  { key: "agentId", scalar: "string" },
+  { key: "processGuid", scalar: "string" },
+  { key: "processId", scalar: "u32" },
+  { key: "image", scalar: "string" },
+  { key: "user", scalar: "string" },
+  { key: "protocol", scalar: "string" },
+  { key: "initiated", scalar: "bool" },
+  { key: "sourceIsIpv6", scalar: "bool" },
+  { key: "sourceIp", scalar: "string" },
+  { key: "sourceHostname", scalar: "string" },
+  { key: "sourcePort", scalar: "int" },
+  { key: "sourcePortName", scalar: "string" },
+  { key: "destinationIsIpv6", scalar: "bool" },
+  { key: "destinationIp", scalar: "string" },
+  { key: "destinationHostname", scalar: "string" },
+  { key: "destinationPort", scalar: "int" },
+  { key: "destinationPortName", scalar: "string" },
+];
+
+const registryValueSetFields: FieldDescriptor<RegistryValueSetEvent>[] = [
+  { key: "time", scalar: "datetime" },
+  { key: "agentName", scalar: "string" },
+  { key: "agentId", scalar: "string" },
+  { key: "eventType", scalar: "string" },
+  { key: "processGuid", scalar: "string" },
+  { key: "processId", scalar: "u32" },
+  { key: "image", scalar: "string" },
+  { key: "targetObject", scalar: "string" },
+  { key: "details", scalar: "string" },
+  { key: "user", scalar: "string" },
+];
+
+const registryKeyRenameFields: FieldDescriptor<RegistryKeyRenameEvent>[] = [
+  { key: "time", scalar: "datetime" },
+  { key: "agentName", scalar: "string" },
+  { key: "agentId", scalar: "string" },
+  { key: "eventType", scalar: "string" },
+  { key: "processGuid", scalar: "string" },
+  { key: "processId", scalar: "u32" },
+  { key: "image", scalar: "string" },
+  { key: "targetObject", scalar: "string" },
+  { key: "newName", scalar: "string" },
+  { key: "user", scalar: "string" },
+];
+
+const fileCreateStreamHashFields: FieldDescriptor<FileCreateStreamHashEvent>[] =
+  [
+    { key: "time", scalar: "datetime" },
+    { key: "agentName", scalar: "string" },
+    { key: "agentId", scalar: "string" },
+    { key: "processGuid", scalar: "string" },
+    { key: "processId", scalar: "u32" },
+    { key: "image", scalar: "string" },
+    { key: "targetFilename", scalar: "string" },
+    { key: "creationUtcTime", scalar: "datetime" },
+    { key: "hash", scalar: "stringList" },
+    { key: "contents", scalar: "string" },
+    { key: "user", scalar: "string" },
+  ];
+
+const pipeEventFields: FieldDescriptor<PipeEventEvent>[] = [
+  { key: "time", scalar: "datetime" },
+  { key: "agentName", scalar: "string" },
+  { key: "agentId", scalar: "string" },
+  { key: "eventType", scalar: "string" },
+  { key: "processGuid", scalar: "string" },
+  { key: "processId", scalar: "u32" },
+  { key: "pipeName", scalar: "string" },
+  { key: "image", scalar: "string" },
+  { key: "user", scalar: "string" },
+];
+
+const dnsQueryFields: FieldDescriptor<DnsQueryEvent>[] = [
+  { key: "time", scalar: "datetime" },
+  { key: "agentName", scalar: "string" },
+  { key: "agentId", scalar: "string" },
+  { key: "processGuid", scalar: "string" },
+  { key: "processId", scalar: "u32" },
+  { key: "queryName", scalar: "string" },
+  { key: "queryStatus", scalar: "u32" },
+  { key: "queryResults", scalar: "stringList" },
+  { key: "image", scalar: "string" },
+  { key: "user", scalar: "string" },
+];
+
+const fileDeleteFields: FieldDescriptor<FileDeleteEvent>[] = [
+  { key: "time", scalar: "datetime" },
+  { key: "agentName", scalar: "string" },
+  { key: "agentId", scalar: "string" },
+  { key: "processGuid", scalar: "string" },
+  { key: "processId", scalar: "u32" },
+  { key: "user", scalar: "string" },
+  { key: "image", scalar: "string" },
+  { key: "targetFilename", scalar: "string" },
+  { key: "hashes", scalar: "stringList" },
+  { key: "isExecutable", scalar: "bool" },
+  { key: "archived", scalar: "bool" },
+];
+
+const processTamperFields: FieldDescriptor<ProcessTamperEvent>[] = [
+  { key: "time", scalar: "datetime" },
+  { key: "agentName", scalar: "string" },
+  { key: "agentId", scalar: "string" },
+  { key: "processGuid", scalar: "string" },
+  { key: "processId", scalar: "u32" },
+  { key: "image", scalar: "string" },
+  { key: "tamperType", scalar: "string" },
+  { key: "user", scalar: "string" },
+];
+
+const fileDeleteDetectedFields: FieldDescriptor<FileDeleteDetectedEvent>[] = [
+  { key: "time", scalar: "datetime" },
+  { key: "agentName", scalar: "string" },
+  { key: "agentId", scalar: "string" },
+  { key: "processGuid", scalar: "string" },
+  { key: "processId", scalar: "u32" },
+  { key: "user", scalar: "string" },
+  { key: "image", scalar: "string" },
+  { key: "targetFilename", scalar: "string" },
+  { key: "hashes", scalar: "stringList" },
+  { key: "isExecutable", scalar: "bool" },
+];
+
 const dceRpcContextFields: SubFieldDescriptor<DceRpcContextRawEvent>[] = [
   { key: "id", scalar: "int" },
   { key: "abstractSyntax", scalar: "string" },
@@ -813,6 +1051,108 @@ export const RECORD_DESCRIPTORS: Record<RecordTypeId, RecordDescriptor> = {
     hasPorts: false,
     fields: icmpFields,
     summaryKeys: ["icmpType", "icmpCode", "id", "seqNum"],
+  },
+  processCreate: {
+    id: "processCreate",
+    responseKey: "processCreateEvents",
+    hasPorts: false,
+    fields: processCreateFields,
+    summaryKeys: ["commandLine", "parentImage", "integrityLevel", "hashes"],
+  },
+  fileCreateTime: {
+    id: "fileCreateTime",
+    responseKey: "fileCreateTimeEvents",
+    hasPorts: false,
+    fields: fileCreateTimeFields,
+    summaryKeys: [
+      "targetFilename",
+      "creationUtcTime",
+      "previousCreationUtcTime",
+    ],
+  },
+  processTerminate: {
+    id: "processTerminate",
+    responseKey: "processTerminateEvents",
+    hasPorts: false,
+    fields: processTerminateFields,
+    summaryKeys: ["processGuid", "processId"],
+  },
+  imageLoad: {
+    id: "imageLoad",
+    responseKey: "imageLoadEvents",
+    hasPorts: false,
+    fields: imageLoadFields,
+    summaryKeys: ["imageLoaded", "signed", "signature", "signatureStatus"],
+  },
+  fileCreate: {
+    id: "fileCreate",
+    responseKey: "fileCreateEvents",
+    hasPorts: false,
+    fields: fileCreateFields,
+    summaryKeys: ["targetFilename", "creationUtcTime"],
+  },
+  networkConnect: {
+    id: "networkConnect",
+    responseKey: "networkConnectEvents",
+    hasPorts: false,
+    fields: networkConnectFields,
+    summaryKeys: ["protocol", "sourceIp", "destinationIp", "destinationPort"],
+  },
+  registryValueSet: {
+    id: "registryValueSet",
+    responseKey: "registryValueSetEvents",
+    hasPorts: false,
+    fields: registryValueSetFields,
+    summaryKeys: ["eventType", "targetObject", "details"],
+  },
+  registryKeyRename: {
+    id: "registryKeyRename",
+    responseKey: "registryKeyRenameEvents",
+    hasPorts: false,
+    fields: registryKeyRenameFields,
+    summaryKeys: ["eventType", "targetObject", "newName"],
+  },
+  fileCreateStreamHash: {
+    id: "fileCreateStreamHash",
+    responseKey: "fileCreateStreamHashEvents",
+    hasPorts: false,
+    fields: fileCreateStreamHashFields,
+    summaryKeys: ["targetFilename", "hash", "contents"],
+  },
+  pipeEvent: {
+    id: "pipeEvent",
+    responseKey: "pipeEventEvents",
+    hasPorts: false,
+    fields: pipeEventFields,
+    summaryKeys: ["eventType", "pipeName"],
+  },
+  dnsQuery: {
+    id: "dnsQuery",
+    responseKey: "dnsQueryEvents",
+    hasPorts: false,
+    fields: dnsQueryFields,
+    summaryKeys: ["queryName", "queryStatus", "queryResults"],
+  },
+  fileDelete: {
+    id: "fileDelete",
+    responseKey: "fileDeleteEvents",
+    hasPorts: false,
+    fields: fileDeleteFields,
+    summaryKeys: ["targetFilename", "hashes", "isExecutable", "archived"],
+  },
+  processTamper: {
+    id: "processTamper",
+    responseKey: "processTamperEvents",
+    hasPorts: false,
+    fields: processTamperFields,
+    summaryKeys: ["tamperType"],
+  },
+  fileDeleteDetected: {
+    id: "fileDeleteDetected",
+    responseKey: "fileDeleteDetectedEvents",
+    hasPorts: false,
+    fields: fileDeleteDetectedFields,
+    summaryKeys: ["targetFilename", "hashes", "isExecutable"],
   },
 };
 

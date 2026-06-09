@@ -107,6 +107,46 @@ export const DHCP_QUERY = loadDocument("dhcp-raw-events.graphql");
 export const RADIUS_QUERY = loadDocument("radius-raw-events.graphql");
 export const ICMP_QUERY = loadDocument("icmp-raw-events.graphql");
 
+// ── Giganto Sysmon / endpoint operations ───────────────────────────
+//
+// One document per `<type>Events` query (the sysmon queries end in
+// `Events`, not `RawEvents`). The descriptor's explicit `responseKey`
+// carries the exact query name; the loader pairs each constant with its
+// record type below.
+
+export const PROCESS_CREATE_QUERY = loadDocument(
+  "process-create-events.graphql",
+);
+export const FILE_CREATE_TIME_QUERY = loadDocument(
+  "file-create-time-events.graphql",
+);
+export const PROCESS_TERMINATE_QUERY = loadDocument(
+  "process-terminate-events.graphql",
+);
+export const IMAGE_LOAD_QUERY = loadDocument("image-load-events.graphql");
+export const FILE_CREATE_QUERY = loadDocument("file-create-events.graphql");
+export const NETWORK_CONNECT_QUERY = loadDocument(
+  "network-connect-events.graphql",
+);
+export const REGISTRY_VALUE_SET_QUERY = loadDocument(
+  "registry-value-set-events.graphql",
+);
+export const REGISTRY_KEY_RENAME_QUERY = loadDocument(
+  "registry-key-rename-events.graphql",
+);
+export const FILE_CREATE_STREAM_HASH_QUERY = loadDocument(
+  "file-create-stream-hash-events.graphql",
+);
+export const PIPE_EVENT_QUERY = loadDocument("pipe-event-events.graphql");
+export const DNS_QUERY_QUERY = loadDocument("dns-query-events.graphql");
+export const FILE_DELETE_QUERY = loadDocument("file-delete-events.graphql");
+export const PROCESS_TAMPER_QUERY = loadDocument(
+  "process-tamper-events.graphql",
+);
+export const FILE_DELETE_DETECTED_QUERY = loadDocument(
+  "file-delete-detected-events.graphql",
+);
+
 /**
  * Record type → its `<type>RawEvents` document. This lives in the
  * server-only loader (not the client-safe descriptor registry) so the
@@ -134,6 +174,20 @@ export const RAW_EVENT_QUERIES: Record<RecordTypeId, DocumentNode> = {
   dhcp: DHCP_QUERY,
   radius: RADIUS_QUERY,
   icmp: ICMP_QUERY,
+  processCreate: PROCESS_CREATE_QUERY,
+  fileCreateTime: FILE_CREATE_TIME_QUERY,
+  processTerminate: PROCESS_TERMINATE_QUERY,
+  imageLoad: IMAGE_LOAD_QUERY,
+  fileCreate: FILE_CREATE_QUERY,
+  networkConnect: NETWORK_CONNECT_QUERY,
+  registryValueSet: REGISTRY_VALUE_SET_QUERY,
+  registryKeyRename: REGISTRY_KEY_RENAME_QUERY,
+  fileCreateStreamHash: FILE_CREATE_STREAM_HASH_QUERY,
+  pipeEvent: PIPE_EVENT_QUERY,
+  dnsQuery: DNS_QUERY_QUERY,
+  fileDelete: FILE_DELETE_QUERY,
+  processTamper: PROCESS_TAMPER_QUERY,
+  fileDeleteDetected: FILE_DELETE_DETECTED_QUERY,
 };
 
 /** Back-compat alias for E0 call sites. */

@@ -17,6 +17,7 @@ import {
   type RawEvent,
   type RawEventFieldValue,
   type RecordDescriptor,
+  recordFamily,
   SUB_RECORD_FIELDS,
   scalarText,
 } from "@/lib/event";
@@ -105,6 +106,13 @@ function endpointSummary(
   node: Record<string, RawEventFieldValue>,
   descriptor: RecordDescriptor,
 ): string {
+  // Sysmon records have no network endpoints; identify them by agent and
+  // image instead.
+  if (recordFamily(descriptor.id) === "sysmon") {
+    const agentName = String(node.agentName ?? "");
+    const image = String(node.image ?? "");
+    return image ? `${agentName} · ${image}` : agentName;
+  }
   const origAddr = String(node.origAddr ?? "");
   const respAddr = String(node.respAddr ?? "");
   if (!descriptor.hasPorts) return `${origAddr} → ${respAddr}`;

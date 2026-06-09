@@ -1,0 +1,44 @@
+# Validates against schemas/giganto.graphql.
+#
+# DnsEventEvent Sysmon / endpoint event query. Relay cursor pagination over
+# Giganto's DnsEventEventConnection (pageInfo + edges, no totalCount),
+# mirroring conn-raw-events.graphql. Sysmon types filter by `agentId`
+# (carried on NetworkFilter); field names/types are verified against the
+# 0.27.0 SDL by the schema-validation gate.
+query DnsQueryEvents(
+  $filter: NetworkFilter!
+  $first: Int
+  $after: String
+  $last: Int
+  $before: String
+) {
+  dnsQueryEvents(
+    filter: $filter
+    first: $first
+    after: $after
+    last: $last
+    before: $before
+  ) {
+    pageInfo {
+      hasPreviousPage
+      hasNextPage
+      startCursor
+      endCursor
+    }
+    edges {
+      node {
+        time
+        agentName
+        agentId
+        processGuid
+        processId
+        queryName
+        queryStatus
+        queryResults
+        image
+        user
+      }
+      cursor
+    }
+  }
+}
