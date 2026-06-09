@@ -112,3 +112,249 @@ export interface ConnRawEventsResult {
 export interface EventSensorsResult {
   sensors: string[];
 }
+
+// ── Sysmon / Windows endpoint records (E2) ─────────────────────────
+
+export interface ProcessCreateEvent {
+  time: string;
+  agentName: string;
+  agentId: string;
+  processGuid: string;
+  processId: string;
+  image: string;
+  fileVersion: string;
+  description: string;
+  product: string;
+  company: string;
+  originalFileName: string;
+  commandLine: string;
+  currentDirectory: string;
+  user: string;
+  logonGuid: string;
+  logonId: string;
+  terminalSessionId: string;
+  integrityLevel: string;
+  hashes: string[];
+  parentProcessGuid: string;
+  parentProcessId: string;
+  parentImage: string;
+  parentCommandLine: string;
+  parentUser: string;
+}
+
+export interface FileCreationTimeChangedEvent {
+  time: string;
+  agentName: string;
+  agentId: string;
+  processGuid: string;
+  processId: string;
+  image: string;
+  targetFilename: string;
+  creationUtcTime: string;
+  previousCreationUtcTime: string;
+  user: string;
+}
+
+export interface ProcessTerminatedEvent {
+  time: string;
+  agentName: string;
+  agentId: string;
+  processGuid: string;
+  processId: string;
+  image: string;
+  user: string;
+}
+
+export interface ImageLoadedEvent {
+  time: string;
+  agentName: string;
+  agentId: string;
+  processGuid: string;
+  processId: string;
+  image: string;
+  imageLoaded: string;
+  fileVersion: string;
+  description: string;
+  product: string;
+  company: string;
+  originalFileName: string;
+  hashes: string[];
+  signed: boolean;
+  signature: string;
+  signatureStatus: string;
+  user: string;
+}
+
+export interface FileCreateEvent {
+  time: string;
+  agentName: string;
+  agentId: string;
+  processGuid: string;
+  processId: string;
+  image: string;
+  targetFilename: string;
+  creationUtcTime: string;
+  user: string;
+}
+
+export interface NetworkConnectionEvent {
+  time: string;
+  agentName: string;
+  agentId: string;
+  processGuid: string;
+  processId: string;
+  image: string;
+  user: string;
+  protocol: string;
+  initiated: boolean;
+  sourceIsIpv6: boolean;
+  sourceIp: string;
+  sourceHostname: string;
+  sourcePort: number;
+  sourcePortName: string;
+  destinationIsIpv6: boolean;
+  destinationIp: string;
+  destinationHostname: string;
+  destinationPort: number;
+  destinationPortName: string;
+}
+
+export interface RegistryValueSetEvent {
+  time: string;
+  agentName: string;
+  agentId: string;
+  eventType: string;
+  processGuid: string;
+  processId: string;
+  image: string;
+  targetObject: string;
+  details: string;
+  user: string;
+}
+
+export interface RegistryKeyValueRenameEvent {
+  time: string;
+  agentName: string;
+  agentId: string;
+  eventType: string;
+  processGuid: string;
+  processId: string;
+  image: string;
+  targetObject: string;
+  newName: string;
+  user: string;
+}
+
+export interface FileCreateStreamHashEvent {
+  time: string;
+  agentName: string;
+  agentId: string;
+  processGuid: string;
+  processId: string;
+  image: string;
+  targetFilename: string;
+  creationUtcTime: string;
+  hash: string[];
+  contents: string;
+  user: string;
+}
+
+export interface PipeEventEvent {
+  time: string;
+  agentName: string;
+  agentId: string;
+  eventType: string;
+  processGuid: string;
+  processId: string;
+  pipeName: string;
+  image: string;
+  user: string;
+}
+
+export interface DnsEventEvent {
+  time: string;
+  agentName: string;
+  agentId: string;
+  processGuid: string;
+  processId: string;
+  queryName: string;
+  queryStatus: string;
+  queryResults: string[];
+  image: string;
+  user: string;
+}
+
+export interface FileDeleteEvent {
+  time: string;
+  agentName: string;
+  agentId: string;
+  processGuid: string;
+  processId: string;
+  user: string;
+  image: string;
+  targetFilename: string;
+  hashes: string[];
+  isExecutable: boolean;
+  archived: boolean;
+}
+
+export interface ProcessTamperingEvent {
+  time: string;
+  agentName: string;
+  agentId: string;
+  processGuid: string;
+  processId: string;
+  image: string;
+  tamperType: string;
+  user: string;
+}
+
+export interface FileDeleteDetectedEvent {
+  time: string;
+  agentName: string;
+  agentId: string;
+  processGuid: string;
+  processId: string;
+  user: string;
+  image: string;
+  targetFilename: string;
+  hashes: string[];
+  isExecutable: boolean;
+}
+
+/** Union of every Sysmon record (one per E2 operation). */
+export type SysmonRawEvent =
+  | ProcessCreateEvent
+  | FileCreationTimeChangedEvent
+  | ProcessTerminatedEvent
+  | ImageLoadedEvent
+  | FileCreateEvent
+  | NetworkConnectionEvent
+  | RegistryValueSetEvent
+  | RegistryKeyValueRenameEvent
+  | FileCreateStreamHashEvent
+  | PipeEventEvent
+  | DnsEventEvent
+  | FileDeleteEvent
+  | ProcessTamperingEvent
+  | FileDeleteDetectedEvent;
+
+/**
+ * A generic Sysmon node as the data layer carries it: the 14 operations
+ * share one Relay connection shape, and the generic renderer reads
+ * fields by name off this map (keys validated against the record def).
+ */
+export type SysmonRawEventNode = Record<
+  string,
+  string | string[] | boolean | number
+>;
+
+export interface SysmonRawEventEdge {
+  node: SysmonRawEventNode;
+  cursor: string;
+}
+
+export interface SysmonRawEventConnection {
+  pageInfo: PageInfo;
+  edges: SysmonRawEventEdge[];
+}

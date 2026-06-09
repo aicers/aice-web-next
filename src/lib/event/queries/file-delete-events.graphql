@@ -1,0 +1,44 @@
+# Validates against schemas/giganto.graphql.
+#
+# FileDeleteEvent (File delete) — Relay cursor pagination over Giganto's
+# FileDeleteEventConnection. One of the 14 Sysmon / Windows endpoint
+# operations (E2); the node selection is the full FileDeleteEvent field set,
+# kept in lockstep with SYSMON_RECORD_DEFS in records.ts.
+query FileDeleteEvents(
+  $filter: NetworkFilter!
+  $first: Int
+  $after: String
+  $last: Int
+  $before: String
+) {
+  fileDeleteEvents(
+    filter: $filter
+    first: $first
+    after: $after
+    last: $last
+    before: $before
+  ) {
+    pageInfo {
+      hasPreviousPage
+      hasNextPage
+      startCursor
+      endCursor
+    }
+    edges {
+      node {
+        time
+        agentName
+        agentId
+        processGuid
+        processId
+        user
+        image
+        targetFilename
+        hashes
+        isExecutable
+        archived
+      }
+      cursor
+    }
+  }
+}

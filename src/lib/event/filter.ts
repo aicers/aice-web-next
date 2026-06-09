@@ -13,6 +13,7 @@ import {
   DEFAULT_RECORD_TYPE,
   type RecordTypeId,
 } from "./record-types";
+import { recordFamily } from "./records";
 import type { NetworkFilterInput } from "./types";
 
 /**
@@ -35,6 +36,12 @@ export interface EventFilter {
   origPortEnd: number | null;
   respPortStart: number | null;
   respPortEnd: number | null;
+  /**
+   * Free-text agent id. Meaningful only for the `sysmon` record family
+   * (Windows endpoint events filter by agent); the SDL exposes no
+   * agent-list query, so this is a plain text input, not a dropdown.
+   */
+  agentId: string | null;
 }
 
 export const EMPTY_EVENT_FILTER: EventFilter = {
@@ -50,6 +57,7 @@ export const EMPTY_EVENT_FILTER: EventFilter = {
   origPortEnd: null,
   respPortStart: null,
   respPortEnd: null,
+  agentId: null,
 };
 
 /** Inclusive 16-bit port bounds Giganto accepts in a `PortRange`. */
@@ -94,6 +102,25 @@ export const FILTER_PARAM_KEYS = {
   origPortEnd: "origPortEnd",
   respPortStart: "respPortStart",
   respPortEnd: "respPortEnd",
+  agentId: "agentId",
+} as const;
+
+/**
+ * The `NetworkFilter` fields each record family is allowed to send.
+ * `sensor` and `time` are common to both; the discriminating fields are
+ * the IP/port ranges (network family — Conn) vs `agentId` (sysmon
+ * family — Windows endpoint events).
+ *
+ * Building the filter from this allow-list — rather than hiding inputs
+ * in the UI while still sending stale values — makes the stale-filter
+ * guard **bidirectional**: switching to a sysmon type drops stale
+ * IP/port bounds, and switching back to a network type drops a stale
+ * `agentId`, so neither direction can leak a field that does not belong
+ * to the selected family.
+ */
+const FAMILY_FILTER_FIELDS = {
+  network: new Set(["time", "origAddr", "respAddr", "origPort", "respPort"]),
+  sysmon: new Set(["time", "agentId"]),
 } as const;
 
 /**
@@ -102,32 +129,48 @@ export const FILTER_PARAM_KEYS = {
  * prompt rather than dispatching a query that Giganto would reject for
  * a missing required `sensor`.
  *
- * Only populated bounds are emitted; an `IpRange` / `PortRange` is
- * included only when at least one of its endpoints is set, and a
- * `TimeRange` only when start or end is set. Giganto treats every
- * endpoint as optional within its range input.
+ * `sensor` is always sent (Giganto requires it for every family). Beyond
+ * that, only fields in the selected family's {@link FAMILY_FILTER_FIELDS}
+ * allow-list are emitted, and only when populated — an `IpRange` /
+ * `PortRange` is included only when at least one endpoint is set, a
+ * `TimeRange` only when start or end is set, and `agentId` only when
+ * non-empty.
+ *
+ * The family is taken from `filter.recordType`, so the discriminating
+ * filter follows the selected record type with no ad-hoc per-branch
+ * deletes.
  */
 export function toNetworkFilter(
   filter: EventFilter,
 ): NetworkFilterInput | null {
   if (!filter.sensor) return null;
 
+  const allow = FAMILY_FILTER_FIELDS[recordFamily(filter.recordType)];
   const input: NetworkFilterInput = { sensor: filter.sensor };
 
-  if (filter.start || filter.end) {
+  if (allow.has("time") && (filter.start || filter.end)) {
     input.time = { start: filter.start, end: filter.end };
   }
-  if (filter.origAddrStart || filter.origAddrEnd) {
+  if (allow.has("origAddr") && (filter.origAddrStart || filter.origAddrEnd)) {
     input.origAddr = { start: filter.origAddrStart, end: filter.origAddrEnd };
   }
-  if (filter.respAddrStart || filter.respAddrEnd) {
+  if (allow.has("respAddr") && (filter.respAddrStart || filter.respAddrEnd)) {
     input.respAddr = { start: filter.respAddrStart, end: filter.respAddrEnd };
   }
-  if (filter.origPortStart !== null || filter.origPortEnd !== null) {
+  if (
+    allow.has("origPort") &&
+    (filter.origPortStart !== null || filter.origPortEnd !== null)
+  ) {
     input.origPort = { start: filter.origPortStart, end: filter.origPortEnd };
   }
-  if (filter.respPortStart !== null || filter.respPortEnd !== null) {
+  if (
+    allow.has("respPort") &&
+    (filter.respPortStart !== null || filter.respPortEnd !== null)
+  ) {
     input.respPort = { start: filter.respPortStart, end: filter.respPortEnd };
+  }
+  if (allow.has("agentId") && filter.agentId) {
+    input.agentId = filter.agentId;
   }
 
   return input;
@@ -175,6 +218,7 @@ export function parseFilterFromSearchParams(
     origPortEnd: readPort(source, FILTER_PARAM_KEYS.origPortEnd),
     respPortStart: readPort(source, FILTER_PARAM_KEYS.respPortStart),
     respPortEnd: readPort(source, FILTER_PARAM_KEYS.respPortEnd),
+    agentId: readString(source, FILTER_PARAM_KEYS.agentId),
   };
 }
 
@@ -204,5 +248,6 @@ export function filterToSearchEntries(
   push(FILTER_PARAM_KEYS.origPortEnd, filter.origPortEnd);
   push(FILTER_PARAM_KEYS.respPortStart, filter.respPortStart);
   push(FILTER_PARAM_KEYS.respPortEnd, filter.respPortEnd);
+  push(FILTER_PARAM_KEYS.agentId, filter.agentId);
   return entries;
 }

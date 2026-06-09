@@ -1,0 +1,70 @@
+{
+  "processCreateEvents": {
+    "pageInfo": {
+      "hasPreviousPage": false,
+      "hasNextPage": true,
+      "startCursor": "Y3Vyc29yOjA=",
+      "endCursor": "Y3Vyc29yOjE="
+    },
+    "edges": [
+      {
+        "cursor": "Y3Vyc29yOjA=",
+        "node": {
+          "time": "2026-06-09T00:00:00Z",
+          "agentName": "agentName-0",
+          "agentId": "agentId-0",
+          "processGuid": "processGuid-0",
+          "processId": "4000000000",
+          "image": "image-0",
+          "fileVersion": "fileVersion-0",
+          "description": "description-0",
+          "product": "product-0",
+          "company": "company-0",
+          "originalFileName": "originalFileName-0",
+          "commandLine": "commandLine-0",
+          "currentDirectory": "currentDirectory-0",
+          "user": "user-0",
+          "logonGuid": "logonGuid-0",
+          "logonId": "4000000000",
+          "terminalSessionId": "4000000000",
+          "integrityLevel": "integrityLevel-0",
+          "hashes": ["hashes-a0", "hashes-b0"],
+          "parentProcessGuid": "parentProcessGuid-0",
+          "parentProcessId": "4000000000",
+          "parentImage": "parentImage-0",
+          "parentCommandLine": "parentCommandLine-0",
+          "parentUser": "parentUser-0"
+        }
+      },
+      {
+        "cursor": "Y3Vyc29yOjE=",
+        "node": {
+          "time": "2026-06-09T01:00:00Z",
+          "agentName": "agentName-1",
+          "agentId": "agentId-1",
+          "processGuid": "processGuid-1",
+          "processId": "4000000001",
+          "image": "image-1",
+          "fileVersion": "fileVersion-1",
+          "description": "description-1",
+          "product": "product-1",
+          "company": "company-1",
+          "originalFileName": "originalFileName-1",
+          "commandLine": "commandLine-1",
+          "currentDirectory": "currentDirectory-1",
+          "user": "user-1",
+          "logonGuid": "logonGuid-1",
+          "logonId": "4000000001",
+          "terminalSessionId": "4000000001",
+          "integrityLevel": "integrityLevel-1",
+          "hashes": ["hashes-a1", "hashes-b1"],
+          "parentProcessGuid": "parentProcessGuid-1",
+          "parentProcessId": "4000000001",
+          "parentImage": "parentImage-1",
+          "parentCommandLine": "parentCommandLine-1",
+          "parentUser": "parentUser-1"
+        }
+      }
+    ]
+  }
+}

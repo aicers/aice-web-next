@@ -1,0 +1,57 @@
+# Validates against schemas/giganto.graphql.
+#
+# ProcessCreateEvent (Process create) — Relay cursor pagination over Giganto's
+# ProcessCreateEventConnection. One of the 14 Sysmon / Windows endpoint
+# operations (E2); the node selection is the full ProcessCreateEvent field set,
+# kept in lockstep with SYSMON_RECORD_DEFS in records.ts.
+query ProcessCreateEvents(
+  $filter: NetworkFilter!
+  $first: Int
+  $after: String
+  $last: Int
+  $before: String
+) {
+  processCreateEvents(
+    filter: $filter
+    first: $first
+    after: $after
+    last: $last
+    before: $before
+  ) {
+    pageInfo {
+      hasPreviousPage
+      hasNextPage
+      startCursor
+      endCursor
+    }
+    edges {
+      node {
+        time
+        agentName
+        agentId
+        processGuid
+        processId
+        image
+        fileVersion
+        description
+        product
+        company
+        originalFileName
+        commandLine
+        currentDirectory
+        user
+        logonGuid
+        logonId
+        terminalSessionId
+        integrityLevel
+        hashes
+        parentProcessGuid
+        parentProcessId
+        parentImage
+        parentCommandLine
+        parentUser
+      }
+      cursor
+    }
+  }
+}

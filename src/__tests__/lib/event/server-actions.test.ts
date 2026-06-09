@@ -27,8 +27,11 @@ import {
   EventPermissionError,
   listEventSensors,
   searchConnRawEvents,
+  searchSysmonRawEvents,
 } from "@/lib/event/server-actions";
 import { ExternalServiceUnavailableError } from "@/lib/node/errors";
+
+import processCreatePage from "../../fixtures/event/sysmon/processCreateEvents.json";
 
 const session: AuthSession = {
   accountId: "acct-1",
@@ -48,6 +51,7 @@ const baseFilter: EventFilter = {
   origPortEnd: null,
   respPortStart: null,
   respPortEnd: null,
+  agentId: null,
 };
 
 beforeEach(() => {
@@ -158,6 +162,99 @@ describe("searchConnRawEvents", () => {
     await expect(
       searchConnRawEvents(session, baseFilter, { kind: "head" }, 50),
     ).rejects.toBeInstanceOf(ExternalServiceUnavailableError);
+  });
+});
+
+describe("searchSysmonRawEvents", () => {
+  // A sysmon filter that *also* carries stale network IP/port bounds, to
+  // prove the stale-filter guard drops them from the sent NetworkFilter.
+  const sysmonFilter: EventFilter = {
+    ...baseFilter,
+    recordType: "processCreateEvents",
+    agentId: "agent-7",
+    origAddrStart: "10.0.0.1",
+    respAddrStart: "10.0.0.2",
+    origPortStart: 1000,
+    respPortEnd: 2000,
+  };
+
+  it("dispatches the per-type query and returns its connection", async () => {
+    mockGigantoClient.mockResolvedValue(processCreatePage);
+    const result = await searchSysmonRawEvents(
+      session,
+      "processCreateEvents",
+      sysmonFilter,
+      { kind: "head" },
+      50,
+    );
+    expect(result).toEqual(processCreatePage.processCreateEvents);
+  });
+
+  it("sends sensor/time/agentId but no IP/port for a sysmon type", async () => {
+    mockGigantoClient.mockResolvedValue(processCreatePage);
+    await searchSysmonRawEvents(
+      session,
+      "processCreateEvents",
+      sysmonFilter,
+      { kind: "head" },
+      50,
+    );
+    const [, variables] = mockGigantoClient.mock.calls[0];
+    expect(variables.filter).toEqual({
+      sensor: "sensor-a",
+      time: { start: "2026-06-09T00:00:00Z", end: "2026-06-09T01:00:00Z" },
+      agentId: "agent-7",
+    });
+    // The discriminating assertion: stale network bounds never leak.
+    expect(variables.filter).not.toHaveProperty("origAddr");
+    expect(variables.filter).not.toHaveProperty("respAddr");
+    expect(variables.filter).not.toHaveProperty("origPort");
+    expect(variables.filter).not.toHaveProperty("respPort");
+  });
+
+  it("returns null without dispatching when no sensor is selected", async () => {
+    const result = await searchSysmonRawEvents(
+      session,
+      "processCreateEvents",
+      { ...sysmonFilter, sensor: null },
+      { kind: "head" },
+      50,
+    );
+    expect(result).toBeNull();
+    expect(mockGigantoClient).not.toHaveBeenCalled();
+  });
+
+  it("maps page anchors like the Conn query", async () => {
+    mockGigantoClient.mockResolvedValue(processCreatePage);
+    await searchSysmonRawEvents(
+      session,
+      "processCreateEvents",
+      sysmonFilter,
+      { kind: "after", cursor: "CUR" },
+      25,
+    );
+    const [, variables] = mockGigantoClient.mock.calls[0];
+    expect(variables).toMatchObject({ first: 25, after: "CUR", last: null });
+  });
+});
+
+// Bidirectional guard: a Conn (network family) search must not leak a
+// stale agentId, even when one is present on the filter.
+describe("searchConnRawEvents stale-filter guard", () => {
+  it("drops a stale agentId for the network family", async () => {
+    mockGigantoClient.mockResolvedValue(connPage1);
+    await searchConnRawEvents(
+      session,
+      { ...baseFilter, agentId: "agent-9", origAddrStart: "10.0.0.1" },
+      { kind: "head" },
+      50,
+    );
+    const [, variables] = mockGigantoClient.mock.calls[0];
+    expect(variables.filter).not.toHaveProperty("agentId");
+    expect(variables.filter).toMatchObject({
+      sensor: "sensor-a",
+      origAddr: { start: "10.0.0.1", end: null },
+    });
   });
 });
 

@@ -96,6 +96,56 @@ describe("toNetworkFilter", () => {
     };
     expect(toNetworkFilter(filter)?.origPort).toEqual({ start: 0, end: null });
   });
+
+  // Bidirectional family allow-list: the sent NetworkFilter only ever
+  // carries fields that belong to the selected record family, so neither
+  // direction can leak a stale field.
+  it("drops stale IP/port for a sysmon type, keeping sensor/time/agentId", () => {
+    const filter: EventFilter = {
+      ...EMPTY_EVENT_FILTER,
+      recordType: "processCreateEvents",
+      sensor: "s1",
+      start: "2026-06-09T00:00:00Z",
+      agentId: "agent-1",
+      // Stale network bounds that must NOT be sent for a sysmon type.
+      origAddrStart: "10.0.0.1",
+      respAddrEnd: "10.0.0.9",
+      origPortStart: 80,
+      respPortEnd: 443,
+    };
+    expect(toNetworkFilter(filter)).toEqual({
+      sensor: "s1",
+      time: { start: "2026-06-09T00:00:00Z", end: null },
+      agentId: "agent-1",
+    });
+  });
+
+  it("drops a stale agentId for a network (Conn) type", () => {
+    const filter: EventFilter = {
+      ...EMPTY_EVENT_FILTER,
+      recordType: "conn",
+      sensor: "s1",
+      origPortStart: 443,
+      // Stale agentId that must NOT be sent for the network family.
+      agentId: "agent-1",
+    };
+    const networkFilter = toNetworkFilter(filter);
+    expect(networkFilter).not.toHaveProperty("agentId");
+    expect(networkFilter).toEqual({
+      sensor: "s1",
+      origPort: { start: 443, end: null },
+    });
+  });
+
+  it("omits an empty agentId for a sysmon type", () => {
+    const filter: EventFilter = {
+      ...EMPTY_EVENT_FILTER,
+      recordType: "dnsQueryEvents",
+      sensor: "s1",
+      agentId: null,
+    };
+    expect(toNetworkFilter(filter)).toEqual({ sensor: "s1" });
+  });
 });
 
 describe("parseFilterFromSearchParams", () => {

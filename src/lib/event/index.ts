@@ -12,9 +12,11 @@ export {
   toNetworkFilter,
 } from "./filter";
 export {
+  type BooleanLabels,
   formatCount,
   formatDurationNs,
   formatEndpoint,
+  formatFieldValue,
   protoLabel,
 } from "./format";
 export {
@@ -40,10 +42,24 @@ export {
   RECORD_TYPE_IDS,
   type RecordTypeId,
 } from "./record-types";
+export {
+  type FieldDef,
+  type FieldKind,
+  RECORD_DEFS,
+  type RecordDef,
+  type RecordFamily,
+  recordDef,
+  recordFamily,
+  SYSMON_RECORD_DEFS,
+} from "./records";
 export type {
   ConnRawEvent,
   ConnRawEventConnection,
   ConnRawEventEdge,
   NetworkFilterInput,
   PageInfo,
+  SysmonRawEvent,
+  SysmonRawEventConnection,
+  SysmonRawEventEdge,
+  SysmonRawEventNode,
 } from "./types";

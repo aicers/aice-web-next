@@ -1,0 +1,36 @@
+{
+  "processTerminateEvents": {
+    "pageInfo": {
+      "hasPreviousPage": false,
+      "hasNextPage": true,
+      "startCursor": "Y3Vyc29yOjA=",
+      "endCursor": "Y3Vyc29yOjE="
+    },
+    "edges": [
+      {
+        "cursor": "Y3Vyc29yOjA=",
+        "node": {
+          "time": "2026-06-09T00:00:00Z",
+          "agentName": "agentName-0",
+          "agentId": "agentId-0",
+          "processGuid": "processGuid-0",
+          "processId": "4000000000",
+          "image": "image-0",
+          "user": "user-0"
+        }
+      },
+      {
+        "cursor": "Y3Vyc29yOjE=",
+        "node": {
+          "time": "2026-06-09T01:00:00Z",
+          "agentName": "agentName-1",
+          "agentId": "agentId-1",
+          "processGuid": "processGuid-1",
+          "processId": "4000000001",
+          "image": "image-1",
+          "user": "user-1"
+        }
+      }
+    ]
+  }
+}

@@ -8,6 +8,51 @@
  * — never `Number` — so precision survives above 2^53.
  */
 
+import type { FieldKind } from "./records";
+
+/** Shown for an empty text/list field so cells never render blank. */
+const EMPTY = "—";
+
+/** Locale-aware labels for a `Boolean!` field, supplied by the caller. */
+export interface BooleanLabels {
+  /** Label for `true` (e.g. "Yes"). */
+  true: string;
+  /** Label for `false` (e.g. "No"). */
+  false: string;
+}
+
+/**
+ * Render a generic Sysmon field value by its {@link FieldKind}. This is
+ * the single formatting switch the generic table/detail renderer drives
+ * off the record definition — there is no per-field special-casing in
+ * JSX.
+ *
+ * - `datetime`: shown verbatim (consistent with E0's Conn time display).
+ * - `list`: a `[String!]!` joined with `, ` (empty → em dash).
+ * - `boolean`: a locale-aware label from {@link BooleanLabels}.
+ * - `text`: a `String!` or `StringNumber*` scalar shown as-is. The
+ *   string-serialized 32/64-bit numbers are **never** coerced to a JS
+ *   number, so precision is preserved; a numeric `Int` (e.g. a Sysmon
+ *   network port) is stringified without locale grouping.
+ */
+export function formatFieldValue(
+  value: unknown,
+  kind: FieldKind,
+  booleanLabels: BooleanLabels,
+): string {
+  switch (kind) {
+    case "boolean":
+      return value ? booleanLabels.true : booleanLabels.false;
+    case "list": {
+      if (!Array.isArray(value)) return value == null ? EMPTY : String(value);
+      return value.length > 0 ? value.join(", ") : EMPTY;
+    }
+    case "datetime":
+    case "text":
+      return value == null || value === "" ? EMPTY : String(value);
+  }
+}
+
 /**
  * Map an IP protocol number to a short label. TCP (6) and UDP (17) are
  * the common cases; anything else renders as the bare number so an

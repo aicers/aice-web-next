@@ -15,12 +15,18 @@ import {
   type PageSize,
   pageArgsForAnchor,
 } from "./pagination";
-import { CONN_RAW_EVENTS_QUERY, EVENT_SENSORS_QUERY } from "./queries";
+import {
+  CONN_RAW_EVENTS_QUERY,
+  EVENT_SENSORS_QUERY,
+  SYSMON_QUERIES,
+} from "./queries";
+import type { RecordTypeId } from "./record-types";
 import type {
   ConnRawEventConnection,
   ConnRawEventsResult,
   EventSensorsResult,
   NetworkFilterInput,
+  SysmonRawEventConnection,
 } from "./types";
 
 const EVENT_READ = "event:read";
@@ -133,6 +139,69 @@ export async function searchConnRawEvents(
     ),
   );
   return data.connRawEvents;
+}
+
+interface SysmonRawEventsVariables extends Record<string, unknown> {
+  filter: NetworkFilterInput;
+  first: number | null;
+  after: string | null;
+  last: number | null;
+  before: string | null;
+}
+
+/**
+ * Run a Sysmon raw-event search for one of the 14 endpoint record types
+ * at a cursor anchor. The record type selects the query `DocumentNode`
+ * from {@link SYSMON_QUERIES}, and the result envelope is keyed by the
+ * same id (the Giganto connection field name), so a single generic
+ * dispatch serves every sysmon type — no per-type server action.
+ *
+ * Returns `null` when the filter has no sensor selected (Giganto's
+ * `NetworkFilter.sensor` is required), mirroring {@link searchConnRawEvents}.
+ * The stale-filter guard lives in {@link toNetworkFilter}: the IP/port
+ * bounds are dropped from the sent filter for the sysmon family, and
+ * `agentId` (when set) is sent instead.
+ */
+export async function searchSysmonRawEvents(
+  session: AuthSession,
+  recordType: RecordTypeId,
+  filter: EventFilter,
+  anchor: PageAnchor,
+  pageSize: PageSize,
+  signal?: AbortSignal,
+): Promise<SysmonRawEventConnection | null> {
+  const query = SYSMON_QUERIES[recordType];
+  if (!query) {
+    throw new Error(`Unknown sysmon record type: ${recordType}`);
+  }
+
+  const networkFilter = toNetworkFilter(filter);
+  if (networkFilter === null) return null;
+
+  const ctx = await buildDispatchContext(session);
+  const args: ConnPageArgs = pageArgsForAnchor(anchor, pageSize);
+  const data = await withExternalErrorMapping(
+    "DATA_STORE",
+    gigantoClient<
+      Record<string, SysmonRawEventConnection>,
+      SysmonRawEventsVariables
+    >(
+      query,
+      {
+        filter: networkFilter,
+        first: args.first ?? null,
+        after: args.after ?? null,
+        last: args.last ?? null,
+        before: args.before ?? null,
+      },
+      {
+        role: ctx.role,
+        customerIds: jwtCustomerIdsForEvent(ctx.role, ctx.customerIds),
+      },
+      signal,
+    ),
+  );
+  return data[recordType];
 }
 
 /**

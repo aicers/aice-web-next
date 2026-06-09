@@ -1,0 +1,41 @@
+{
+  "processCreateEvents": {
+    "pageInfo": {
+      "hasPreviousPage": false,
+      "hasNextPage": false,
+      "startCursor": "Y3Vyc29yOjA=",
+      "endCursor": "Y3Vyc29yOjA="
+    },
+    "edges": [
+      {
+        "cursor": "Y3Vyc29yOjA=",
+        "node": {
+          "time": "2026-06-09T00:00:00Z",
+          "agentName": "win-agent-01",
+          "agentId": "agent-7",
+          "processGuid": "{aaaaaaaa-0000-0000-0000-000000000001}",
+          "processId": "4294967295",
+          "image": "C:\\Windows\\System32\\cmd.exe",
+          "fileVersion": "10.0.19041.1",
+          "description": "Windows Command Processor",
+          "product": "Microsoft Windows Operating System",
+          "company": "Microsoft Corporation",
+          "originalFileName": "Cmd.Exe",
+          "commandLine": "cmd.exe /c whoami",
+          "currentDirectory": "C:\\Windows\\System32\\",
+          "user": "WIN-AGENT-01\\analyst",
+          "logonGuid": "{aaaaaaaa-0000-0000-0000-000000000002}",
+          "logonId": "999999",
+          "terminalSessionId": "1",
+          "integrityLevel": "Medium",
+          "hashes": ["SHA256=ABCDEF0123456789", "MD5=0011223344556677"],
+          "parentProcessGuid": "{aaaaaaaa-0000-0000-0000-000000000003}",
+          "parentProcessId": "4321",
+          "parentImage": "C:\\Windows\\explorer.exe",
+          "parentCommandLine": "C:\\Windows\\Explorer.EXE",
+          "parentUser": "WIN-AGENT-01\\analyst"
+        }
+      }
+    ]
+  }
+}

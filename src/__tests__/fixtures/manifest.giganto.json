@@ -24,6 +24,15 @@
     }
   },
   {
+    "operation": "processCreateEvents",
+    "query": "external/giganto/processCreateEvents.graphql",
+    "fixture": "external/giganto/processCreateEvents.page1.json",
+    "variables": {
+      "filter": { "sensor": "sensor-a" },
+      "first": 50
+    }
+  },
+  {
     "operation": "sensors",
     "query": "external/giganto/sensors.graphql",
     "fixture": "external/giganto/sensors.json"

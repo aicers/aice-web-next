@@ -1,0 +1,43 @@
+# Validates against schemas/giganto.graphql.
+#
+# RegistryKeyValueRenameEvent (Registry key/value rename) — Relay cursor pagination over Giganto's
+# RegistryKeyValueRenameEventConnection. One of the 14 Sysmon / Windows endpoint
+# operations (E2); the node selection is the full RegistryKeyValueRenameEvent field set,
+# kept in lockstep with SYSMON_RECORD_DEFS in records.ts.
+query RegistryKeyRenameEvents(
+  $filter: NetworkFilter!
+  $first: Int
+  $after: String
+  $last: Int
+  $before: String
+) {
+  registryKeyRenameEvents(
+    filter: $filter
+    first: $first
+    after: $after
+    last: $last
+    before: $before
+  ) {
+    pageInfo {
+      hasPreviousPage
+      hasNextPage
+      startCursor
+      endCursor
+    }
+    edges {
+      node {
+        time
+        agentName
+        agentId
+        eventType
+        processGuid
+        processId
+        image
+        targetObject
+        newName
+        user
+      }
+      cursor
+    }
+  }
+}

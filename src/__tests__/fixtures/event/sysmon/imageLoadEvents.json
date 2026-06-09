@@ -1,0 +1,56 @@
+{
+  "imageLoadEvents": {
+    "pageInfo": {
+      "hasPreviousPage": false,
+      "hasNextPage": true,
+      "startCursor": "Y3Vyc29yOjA=",
+      "endCursor": "Y3Vyc29yOjE="
+    },
+    "edges": [
+      {
+        "cursor": "Y3Vyc29yOjA=",
+        "node": {
+          "time": "2026-06-09T00:00:00Z",
+          "agentName": "agentName-0",
+          "agentId": "agentId-0",
+          "processGuid": "processGuid-0",
+          "processId": "4000000000",
+          "image": "image-0",
+          "imageLoaded": "imageLoaded-0",
+          "fileVersion": "fileVersion-0",
+          "description": "description-0",
+          "product": "product-0",
+          "company": "company-0",
+          "originalFileName": "originalFileName-0",
+          "hashes": ["hashes-a0", "hashes-b0"],
+          "signed": true,
+          "signature": "signature-0",
+          "signatureStatus": "signatureStatus-0",
+          "user": "user-0"
+        }
+      },
+      {
+        "cursor": "Y3Vyc29yOjE=",
+        "node": {
+          "time": "2026-06-09T01:00:00Z",
+          "agentName": "agentName-1",
+          "agentId": "agentId-1",
+          "processGuid": "processGuid-1",
+          "processId": "4000000001",
+          "image": "image-1",
+          "imageLoaded": "imageLoaded-1",
+          "fileVersion": "fileVersion-1",
+          "description": "description-1",
+          "product": "product-1",
+          "company": "company-1",
+          "originalFileName": "originalFileName-1",
+          "hashes": ["hashes-a1", "hashes-b1"],
+          "signed": false,
+          "signature": "signature-1",
+          "signatureStatus": "signatureStatus-1",
+          "user": "user-1"
+        }
+      }
+    ]
+  }
+}

@@ -1,0 +1,43 @@
+# Validates against schemas/giganto.graphql.
+#
+# FileCreationTimeChangedEvent (File creation time changed) — Relay cursor pagination over Giganto's
+# FileCreationTimeChangedEventConnection. One of the 14 Sysmon / Windows endpoint
+# operations (E2); the node selection is the full FileCreationTimeChangedEvent field set,
+# kept in lockstep with SYSMON_RECORD_DEFS in records.ts.
+query FileCreateTimeEvents(
+  $filter: NetworkFilter!
+  $first: Int
+  $after: String
+  $last: Int
+  $before: String
+) {
+  fileCreateTimeEvents(
+    filter: $filter
+    first: $first
+    after: $after
+    last: $last
+    before: $before
+  ) {
+    pageInfo {
+      hasPreviousPage
+      hasNextPage
+      startCursor
+      endCursor
+    }
+    edges {
+      node {
+        time
+        agentName
+        agentId
+        processGuid
+        processId
+        image
+        targetFilename
+        creationUtcTime
+        previousCreationUtcTime
+        user
+      }
+      cursor
+    }
+  }
+}

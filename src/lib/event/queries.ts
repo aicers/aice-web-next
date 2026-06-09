@@ -78,3 +78,39 @@ function loadDocument(relativePath: string): DocumentNode {
 
 export const CONN_RAW_EVENTS_QUERY = loadDocument("conn-raw-events.graphql");
 export const EVENT_SENSORS_QUERY = loadDocument("sensors.graphql");
+
+// ── Giganto Sysmon / endpoint operations (E2) ──────────────────────
+
+/**
+ * The 14 Sysmon record queries, keyed by record id (which is the
+ * Giganto connection field name). Each `.graphql` filename is the
+ * record id kebab-cased. The map is the server-only half of the record
+ * registry: {@link ../records} carries the client-safe metadata, this
+ * carries the parsed `DocumentNode`s, so the query loader never reaches
+ * the client bundle.
+ */
+const SYSMON_QUERY_IDS = [
+  "processCreateEvents",
+  "fileCreateTimeEvents",
+  "processTerminateEvents",
+  "imageLoadEvents",
+  "fileCreateEvents",
+  "networkConnectEvents",
+  "registryValueSetEvents",
+  "registryKeyRenameEvents",
+  "fileCreateStreamHashEvents",
+  "pipeEventEvents",
+  "dnsQueryEvents",
+  "fileDeleteEvents",
+  "processTamperEvents",
+  "fileDeleteDetectedEvents",
+] as const;
+
+function kebab(id: string): string {
+  return id.replace(/[A-Z]/g, (c) => `-${c.toLowerCase()}`);
+}
+
+export const SYSMON_QUERIES: Readonly<Record<string, DocumentNode>> =
+  Object.fromEntries(
+    SYSMON_QUERY_IDS.map((id) => [id, loadDocument(`${kebab(id)}.graphql`)]),
+  );

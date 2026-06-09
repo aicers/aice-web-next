@@ -14,7 +14,12 @@ import {
   SelectValue,
 } from "@/components/ui/select";
 import { computePeriodRange, PERIOD_KEYS } from "@/lib/detection/period";
-import { type EventFilter, isPortString, RECORD_TYPE_IDS } from "@/lib/event";
+import {
+  type EventFilter,
+  isPortString,
+  RECORD_TYPE_IDS,
+  recordFamily,
+} from "@/lib/event";
 
 const QUICK_RANGE_NONE = "none";
 
@@ -120,12 +125,19 @@ export function EventFilterForm({
     portRawInvalid(rawPorts.respPortStart) ||
     portRawInvalid(rawPorts.respPortEnd);
 
+  // Sysmon (Windows endpoint) types filter by agent id, not IP/port: the
+  // IP/port range inputs are hidden and the agent-id text input is shown.
+  // The IP/port values are also dropped from the sent NetworkFilter by
+  // toNetworkFilter, so a stale invalid port never blocks Apply here.
+  const isSysmon = recordFamily(draft.recordType) === "sysmon";
+  const blockApply = !isSysmon && anyPortInvalid;
+
   return (
     <form
       className="space-y-4"
       onSubmit={(event) => {
         event.preventDefault();
-        if (anyPortInvalid) return;
+        if (blockApply) return;
         onApply();
       }}
     >
@@ -220,63 +232,78 @@ export function EventFilterForm({
         </div>
       </div>
 
-      <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
-        <RangeField
-          label={tf("origAddr")}
-          startLabel={tf("rangeStart")}
-          endLabel={tf("rangeEnd")}
-          idPrefix="event-orig-addr"
-          startValue={draft.origAddrStart ?? ""}
-          endValue={draft.origAddrEnd ?? ""}
-          onStart={(v) => set({ origAddrStart: v || null })}
-          onEnd={(v) => set({ origAddrEnd: v || null })}
-        />
-        <RangeField
-          label={tf("respAddr")}
-          startLabel={tf("rangeStart")}
-          endLabel={tf("rangeEnd")}
-          idPrefix="event-resp-addr"
-          startValue={draft.respAddrStart ?? ""}
-          endValue={draft.respAddrEnd ?? ""}
-          onStart={(v) => set({ respAddrStart: v || null })}
-          onEnd={(v) => set({ respAddrEnd: v || null })}
-        />
-        <RangeField
-          label={tf("origPort")}
-          startLabel={tf("rangeStart")}
-          endLabel={tf("rangeEnd")}
-          idPrefix="event-orig-port"
-          type="number"
-          startValue={rawPorts.origPortStart}
-          endValue={rawPorts.origPortEnd}
-          startInvalid={portRawInvalid(rawPorts.origPortStart)}
-          endInvalid={portRawInvalid(rawPorts.origPortEnd)}
-          onStart={(v) => setPort("origPortStart", v)}
-          onEnd={(v) => setPort("origPortEnd", v)}
-        />
-        <RangeField
-          label={tf("respPort")}
-          startLabel={tf("rangeStart")}
-          endLabel={tf("rangeEnd")}
-          idPrefix="event-resp-port"
-          type="number"
-          startValue={rawPorts.respPortStart}
-          endValue={rawPorts.respPortEnd}
-          startInvalid={portRawInvalid(rawPorts.respPortStart)}
-          endInvalid={portRawInvalid(rawPorts.respPortEnd)}
-          onStart={(v) => setPort("respPortStart", v)}
-          onEnd={(v) => setPort("respPortEnd", v)}
-        />
-      </div>
+      {isSysmon ? (
+        <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
+          <div className="space-y-1.5">
+            <Label htmlFor="event-agent-id">{tf("agentId")}</Label>
+            <Input
+              id="event-agent-id"
+              type="text"
+              placeholder={tf("agentIdPlaceholder")}
+              value={draft.agentId ?? ""}
+              onChange={(e) => set({ agentId: e.target.value || null })}
+            />
+          </div>
+        </div>
+      ) : (
+        <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
+          <RangeField
+            label={tf("origAddr")}
+            startLabel={tf("rangeStart")}
+            endLabel={tf("rangeEnd")}
+            idPrefix="event-orig-addr"
+            startValue={draft.origAddrStart ?? ""}
+            endValue={draft.origAddrEnd ?? ""}
+            onStart={(v) => set({ origAddrStart: v || null })}
+            onEnd={(v) => set({ origAddrEnd: v || null })}
+          />
+          <RangeField
+            label={tf("respAddr")}
+            startLabel={tf("rangeStart")}
+            endLabel={tf("rangeEnd")}
+            idPrefix="event-resp-addr"
+            startValue={draft.respAddrStart ?? ""}
+            endValue={draft.respAddrEnd ?? ""}
+            onStart={(v) => set({ respAddrStart: v || null })}
+            onEnd={(v) => set({ respAddrEnd: v || null })}
+          />
+          <RangeField
+            label={tf("origPort")}
+            startLabel={tf("rangeStart")}
+            endLabel={tf("rangeEnd")}
+            idPrefix="event-orig-port"
+            type="number"
+            startValue={rawPorts.origPortStart}
+            endValue={rawPorts.origPortEnd}
+            startInvalid={portRawInvalid(rawPorts.origPortStart)}
+            endInvalid={portRawInvalid(rawPorts.origPortEnd)}
+            onStart={(v) => setPort("origPortStart", v)}
+            onEnd={(v) => setPort("origPortEnd", v)}
+          />
+          <RangeField
+            label={tf("respPort")}
+            startLabel={tf("rangeStart")}
+            endLabel={tf("rangeEnd")}
+            idPrefix="event-resp-port"
+            type="number"
+            startValue={rawPorts.respPortStart}
+            endValue={rawPorts.respPortEnd}
+            startInvalid={portRawInvalid(rawPorts.respPortStart)}
+            endInvalid={portRawInvalid(rawPorts.respPortEnd)}
+            onStart={(v) => setPort("respPortStart", v)}
+            onEnd={(v) => setPort("respPortEnd", v)}
+          />
+        </div>
+      )}
 
-      {anyPortInvalid ? (
+      {blockApply ? (
         <p className="text-destructive text-sm" role="alert">
           {tf("portRangeInvalid")}
         </p>
       ) : null}
 
       <div className="flex gap-2">
-        <Button type="submit" disabled={pending || anyPortInvalid}>
+        <Button type="submit" disabled={pending || blockApply}>
           {tf("apply")}
         </Button>
         <Button

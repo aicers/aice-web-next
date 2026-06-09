@@ -1,11 +1,44 @@
 import { describe, expect, it } from "vitest";
 
 import {
+  type BooleanLabels,
   formatCount,
   formatDurationNs,
   formatEndpoint,
+  formatFieldValue,
   protoLabel,
 } from "@/lib/event/format";
+
+const LABELS: BooleanLabels = { true: "Yes", false: "No" };
+
+describe("formatFieldValue", () => {
+  it("shows datetime and text scalars verbatim", () => {
+    expect(formatFieldValue("2026-06-09T00:00:00Z", "datetime", LABELS)).toBe(
+      "2026-06-09T00:00:00Z",
+    );
+    expect(formatFieldValue("C:/Windows", "text", LABELS)).toBe("C:/Windows");
+  });
+
+  it("keeps a StringNumber value as its string, never a coerced number", () => {
+    // A u32 near its max must survive as-is (no Number rounding).
+    expect(formatFieldValue("4294967295", "text", LABELS)).toBe("4294967295");
+  });
+
+  it("joins list fields and dashes an empty list", () => {
+    expect(formatFieldValue(["a", "b"], "list", LABELS)).toBe("a, b");
+    expect(formatFieldValue([], "list", LABELS)).toBe("—");
+  });
+
+  it("renders booleans as locale-aware labels", () => {
+    expect(formatFieldValue(true, "boolean", LABELS)).toBe("Yes");
+    expect(formatFieldValue(false, "boolean", LABELS)).toBe("No");
+  });
+
+  it("dashes empty/nullish text and datetime", () => {
+    expect(formatFieldValue("", "text", LABELS)).toBe("—");
+    expect(formatFieldValue(null, "datetime", LABELS)).toBe("—");
+  });
+});
 
 describe("protoLabel", () => {
   it("labels the common protocols", () => {

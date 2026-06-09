@@ -1,0 +1,42 @@
+# Validates against schemas/giganto.graphql.
+#
+# PipeEventEvent (Pipe event) — Relay cursor pagination over Giganto's
+# PipeEventEventConnection. One of the 14 Sysmon / Windows endpoint
+# operations (E2); the node selection is the full PipeEventEvent field set,
+# kept in lockstep with SYSMON_RECORD_DEFS in records.ts.
+query PipeEventEvents(
+  $filter: NetworkFilter!
+  $first: Int
+  $after: String
+  $last: Int
+  $before: String
+) {
+  pipeEventEvents(
+    filter: $filter
+    first: $first
+    after: $after
+    last: $last
+    before: $before
+  ) {
+    pageInfo {
+      hasPreviousPage
+      hasNextPage
+      startCursor
+      endCursor
+    }
+    edges {
+      node {
+        time
+        agentName
+        agentId
+        eventType
+        processGuid
+        processId
+        pipeName
+        image
+        user
+      }
+      cursor
+    }
+  }
+}

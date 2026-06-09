@@ -1,12 +1,36 @@
 /**
- * Registry of Giganto network record types selectable in the Event
- * menu. E0 ships only `conn` end-to-end; later phases (E1) extend this
- * list as each `<type>RawEvents` query is wired through the data layer.
+ * Registry of Giganto record types selectable in the Event menu. E0
+ * shipped the `conn` network slice; E2 adds the 14 Sysmon / Windows
+ * endpoint types. The full record metadata (family, table/detail field
+ * definitions) lives in {@link ./records}; this module owns only the id
+ * list and its coercion helpers so it stays a tiny, dependency-free
+ * source of the {@link RecordTypeId} union.
  *
  * The `id` doubles as the URL value and the i18n key suffix
- * (`event.recordTypes.<id>`), so it stays a stable lowercase slug.
+ * (`event.recordTypes.<id>`). Network ids stay lowercase slugs; the
+ * sysmon ids are the verbatim Giganto query (connection) field names —
+ * including the deliberately doubled `Event` in `pipeEventEvents` /
+ * `dnsQueryEvents` and the `networkConnectEvents` → `NetworkConnectionEvent`
+ * mapping — so the data layer can key the query and result envelope off
+ * the id directly.
  */
-export const RECORD_TYPE_IDS = ["conn"] as const;
+export const RECORD_TYPE_IDS = [
+  "conn",
+  "processCreateEvents",
+  "fileCreateTimeEvents",
+  "processTerminateEvents",
+  "imageLoadEvents",
+  "fileCreateEvents",
+  "networkConnectEvents",
+  "registryValueSetEvents",
+  "registryKeyRenameEvents",
+  "fileCreateStreamHashEvents",
+  "pipeEventEvents",
+  "dnsQueryEvents",
+  "fileDeleteEvents",
+  "processTamperEvents",
+  "fileDeleteDetectedEvents",
+] as const;
 
 export type RecordTypeId = (typeof RECORD_TYPE_IDS)[number];
 

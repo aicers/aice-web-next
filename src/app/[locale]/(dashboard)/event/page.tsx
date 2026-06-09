@@ -1,14 +1,16 @@
 import { getLocale, getTranslations } from "next-intl/server";
 
-import { type ConnResult, EventSearch } from "@/components/event/event-search";
+import { type EventResult, EventSearch } from "@/components/event/event-search";
 import { getCurrentSession, requirePermission } from "@/lib/auth/session";
 import {
   parseFilterFromSearchParams,
   parsePaginationSearchParams,
+  recordFamily,
 } from "@/lib/event";
 import {
   listEventSensors,
   searchConnRawEvents,
+  searchSysmonRawEvents,
 } from "@/lib/event/server-actions";
 
 interface EventPageProps {
@@ -51,22 +53,44 @@ export default async function EventPage({ searchParams }: EventPageProps) {
     sensors = null;
   }
 
-  let result: ConnResult;
+  // Dispatch by record family: the Conn vertical slice keeps its bespoke
+  // typed query, while the 14 Sysmon types share the generic dispatch.
+  let result: EventResult;
   try {
-    const connection = await searchConnRawEvents(
-      session,
-      filter,
-      anchor,
-      pageSize,
-    );
-    result =
-      connection === null
-        ? { status: "prequery" }
-        : {
-            status: "ready",
-            edges: connection.edges,
-            pageInfo: connection.pageInfo,
-          };
+    if (recordFamily(filter.recordType) === "network") {
+      const connection = await searchConnRawEvents(
+        session,
+        filter,
+        anchor,
+        pageSize,
+      );
+      result =
+        connection === null
+          ? { status: "prequery" }
+          : {
+              status: "ready",
+              family: "network",
+              edges: connection.edges,
+              pageInfo: connection.pageInfo,
+            };
+    } else {
+      const connection = await searchSysmonRawEvents(
+        session,
+        filter.recordType,
+        filter,
+        anchor,
+        pageSize,
+      );
+      result =
+        connection === null
+          ? { status: "prequery" }
+          : {
+              status: "ready",
+              family: "sysmon",
+              edges: connection.edges,
+              pageInfo: connection.pageInfo,
+            };
+    }
   } catch {
     result = { status: "error" };
   }

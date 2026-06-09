@@ -1,10 +1,11 @@
 # Event
 
 The Event page is accessed from the sidebar. It browses **source
-events** collected by Giganto — the raw network records the backend
-ingests, before any detection logic runs. This first release covers
-connection (**Conn**) records end to end; other record types arrive in
-later releases.
+events** collected by Giganto — the raw records the backend ingests,
+before any detection logic runs. It covers connection (**Conn**)
+network records and the **Sysmon / Windows endpoint** event types
+(process, file, registry, network-connection, pipe, DNS, and image
+events).
 
 Viewing the page requires the `event:read` permission. The built-in
 roles Security Monitor, Tenant Administrator, and System Administrator
@@ -29,11 +30,14 @@ fetched until you choose a sensor and select **Apply** — a sensor is
 required because Giganto scopes every network query to exactly one
 sensor.
 
-- **Record type** — the kind of source event to browse. This release
-  offers **Connection (Conn)**.
+- **Record type** — the kind of source event to browse: **Connection
+  (Conn)** or one of the 14 Sysmon / Windows endpoint types. The
+  choice also decides which filters apply (see *Sysmon / endpoint
+  events* below).
 - **Sensor** — the single sensor to query. The list is populated from
   the sensors Giganto has ingested data for. If the list cannot be
-  loaded, the selector is disabled and a notice is shown.
+  loaded, the selector is disabled and a notice is shown. A sensor is
+  required for every record type, including the Sysmon types.
 - **Quick range** — a shortcut that fills the start/end time range with
   a relative window (1 hour, 12 hours, 1 day, … up to 3 years).
 - **Time range** — explicit **Start** (inclusive) and **End**
@@ -54,9 +58,38 @@ is shown per record in the **Protocol** results column instead.
 field. The active filter and page are kept in the page URL, so a search
 is shareable and survives a reload.
 
+## Sysmon / endpoint events
+
+Besides Conn, the **Record type** menu lists 14 Sysmon / Windows
+endpoint event types: process create, process terminate, process
+tampering, file create, file create time changed, file create stream
+hash, file delete, file delete detected, image load, network
+connection, registry value set, registry key/value rename, pipe event,
+and DNS query.
+
+These types are filtered by **agent**, not by IP/port:
+
+- When a Sysmon type is selected, the source/destination **IP** and
+  **port** range inputs are replaced by a single **Agent ID** text
+  input. Agent IDs are free text — there is no agent picker — so type
+  the id you want to filter by, or leave it blank to match every agent.
+- The **Sensor** and **Time range** filters still apply and are still
+  required/sent exactly as for Conn. Only the IP/port bounds are
+  dropped; switching type never leaks a stale IP/port (or, switching
+  back to Conn, a stale agent id) into the query.
+
+Each Sysmon type has its own columns and a row-detail panel listing
+every field of that record (timestamps, process identity, hashes, and
+the type-specific fields). List-valued fields such as hashes are joined
+for display, boolean fields show a localized **Yes**/**No**, and the
+string-encoded numeric fields (process id, logon id, query status) are
+shown verbatim.
+
 ## Results
 
-Matching Conn records are listed in a table with these columns:
+Matching records are listed in a table. The Sysmon types render their
+own columns (see *Sysmon / endpoint events* above); Conn records use
+these columns:
 
 | Column | Meaning |
 | --- | --- |
