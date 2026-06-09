@@ -202,8 +202,11 @@ test("event page switches to Statistics and renders the aggregation chart", asyn
   await expect(page).toHaveURL(/sensors=sensor-a/);
 
   // The recharts chart and the metric selector render for the result.
+  // The chart surface carries role="application"; the legend icons share
+  // the recharts-surface class, so scope to the application surface to
+  // avoid a strict-mode multiple-match.
   await expect(page.getByLabel("Metric")).toBeVisible({ timeout: 10_000 });
-  await expect(page.locator("svg.recharts-surface")).toBeVisible();
+  await expect(page.getByRole("application")).toBeVisible();
 });
 
 // ── Korean locale ────────────────────────────────────────────────
