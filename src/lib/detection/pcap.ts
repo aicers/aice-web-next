@@ -8,7 +8,7 @@ import "server-only";
  * Wireshark. Raw bytes are handled only here and in the fetch helper —
  * they never pass through React state or a client action payload.
  *
- * ── Link-layer type (verified, not assumed) ─────────────────────────
+ * ── Link-layer type (in-app-confirmed, real-capture pending) ────────
  *
  * The classic pcap global header carries a single datalink type for
  * the whole file, but `Packet` exposes no datalink field — only
@@ -19,9 +19,13 @@ import "server-only";
  * transport. Because the parsed view and this download derive from the
  * **identical** `packet` bytes, the parsed dump rendering Ethernet/IP
  * layers is the in-app confirmation that the link-layer type is
- * {@link LINKTYPE_ETHERNET}. The recapture / real-stack verification is
- * tracked in #729; the value below is the verified constant, hardcoded
- * per the issue's pre-work gate rather than guessed per-request.
+ * {@link LINKTYPE_ETHERNET}. The value below is hardcoded per the
+ * issue's pre-work gate rather than guessed per-request. The final
+ * real-capture confirmation — that this constant and the timestamp
+ * mapping below produce a Wireshark-usable `.pcap` for a real
+ * detection — requires gauntlet stack access and is tracked in #729;
+ * until it lands this assumption is in-app-confirmed but not yet
+ * verified against real Giganto bytes.
  *
  * ── Timestamp mapping ───────────────────────────────────────────────
  *
