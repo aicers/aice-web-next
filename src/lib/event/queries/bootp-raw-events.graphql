@@ -1,0 +1,56 @@
+# Validates against schemas/giganto.graphql.
+#
+# BootpRawEvent network raw-event query. Relay cursor pagination over
+# Giganto's BootpConnection (pageInfo + edges, no
+# totalCount), mirroring conn-raw-events.graphql. Field names/types are
+# verified against the 0.27.0 SDL by the schema-validation gate.
+query BootpRawEvents(
+  $filter: NetworkFilter!
+  $first: Int
+  $after: String
+  $last: Int
+  $before: String
+) {
+  bootpRawEvents(
+    filter: $filter
+    first: $first
+    after: $after
+    last: $last
+    before: $before
+  ) {
+    pageInfo {
+      hasPreviousPage
+      hasNextPage
+      startCursor
+      endCursor
+    }
+    edges {
+      node {
+        time
+        origAddr
+        origPort
+        respAddr
+        respPort
+        proto
+        startTime
+        duration
+        origPkts
+        respPkts
+        origL2Bytes
+        respL2Bytes
+        op
+        htype
+        hops
+        xid
+        ciaddr
+        yiaddr
+        siaddr
+        giaddr
+        chaddr
+        sname
+        file
+      }
+      cursor
+    }
+  }
+}

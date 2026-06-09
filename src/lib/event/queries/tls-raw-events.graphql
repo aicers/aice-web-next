@@ -1,0 +1,66 @@
+# Validates against schemas/giganto.graphql.
+#
+# TlsRawEvent network raw-event query. Relay cursor pagination over
+# Giganto's TlsConnection (pageInfo + edges, no
+# totalCount), mirroring conn-raw-events.graphql. Field names/types are
+# verified against the 0.27.0 SDL by the schema-validation gate.
+query TlsRawEvents(
+  $filter: NetworkFilter!
+  $first: Int
+  $after: String
+  $last: Int
+  $before: String
+) {
+  tlsRawEvents(
+    filter: $filter
+    first: $first
+    after: $after
+    last: $last
+    before: $before
+  ) {
+    pageInfo {
+      hasPreviousPage
+      hasNextPage
+      startCursor
+      endCursor
+    }
+    edges {
+      node {
+        time
+        origAddr
+        origPort
+        respAddr
+        respPort
+        proto
+        startTime
+        duration
+        origPkts
+        respPkts
+        origL2Bytes
+        respL2Bytes
+        serverName
+        alpnProtocol
+        ja3
+        version
+        clientCipherSuites
+        clientExtensions
+        cipher
+        extensions
+        ja3S
+        serial
+        subjectCountry
+        subjectOrgName
+        subjectCommonName
+        validityNotBefore
+        validityNotAfter
+        subjectAltName
+        issuerCountry
+        issuerOrgName
+        issuerOrgUnitName
+        issuerCommonName
+        lastAlert
+      }
+      cursor
+    }
+  }
+}

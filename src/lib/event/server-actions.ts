@@ -6,6 +6,7 @@ import { hasPermission } from "@/lib/auth/permissions";
 import { gigantoClient } from "@/lib/graphql/external-client";
 import { withExternalErrorMapping } from "@/lib/node/error-mapping";
 
+import { RECORD_DESCRIPTORS } from "./descriptors";
 import { EventPermissionError } from "./errors";
 import type { EventFilter } from "./filter";
 import { toNetworkFilter } from "./filter";
@@ -16,16 +17,17 @@ import {
   pageArgsForAnchor,
 } from "./pagination";
 import {
-  CONN_RAW_EVENTS_QUERY,
   EVENT_SENSORS_QUERY,
+  RAW_EVENT_QUERIES,
   STATISTICS_QUERY,
 } from "./queries";
 import { type StatisticsFilter, toStatisticsVariables } from "./statistics";
 import type {
   ConnRawEventConnection,
-  ConnRawEventsResult,
   EventSensorsResult,
   NetworkFilterInput,
+  RawEvent,
+  RawEventConnection,
   StatisticsRawEvent,
   StatisticsResult,
   StatisticsVariables,
@@ -96,7 +98,7 @@ function jwtCustomerIdsForEvent(
   return role === SYSTEM_ADMINISTRATOR ? undefined : customerIds;
 }
 
-interface ConnRawEventsVariables extends Record<string, unknown> {
+interface RawEventsVariables extends Record<string, unknown> {
   filter: NetworkFilterInput;
   first: number | null;
   after: string | null;
@@ -105,27 +107,36 @@ interface ConnRawEventsVariables extends Record<string, unknown> {
 }
 
 /**
- * Run a Conn raw-event search at a cursor anchor. Returns `null` when
- * the filter has no sensor selected — Giganto's `NetworkFilter.sensor`
- * is required, so the caller renders the pre-query prompt instead of
- * dispatching an invalid query.
+ * Run a network raw-event search for the filter's selected record type
+ * at a cursor anchor. The record type picks the `<type>RawEvents`
+ * document and response key from {@link RECORD_DESCRIPTORS}; every type
+ * shares the `NetworkFilter` + Relay pagination shape, so one dispatch
+ * covers all 20.
+ *
+ * Returns `null` when the filter has no sensor selected — Giganto's
+ * `NetworkFilter.sensor` is required, so the caller renders the
+ * pre-query prompt instead of dispatching an invalid query.
  */
-export async function searchConnRawEvents(
+export async function searchRawEvents(
   session: AuthSession,
   filter: EventFilter,
   anchor: PageAnchor,
   pageSize: PageSize,
   signal?: AbortSignal,
-): Promise<ConnRawEventConnection | null> {
+): Promise<RawEventConnection<RawEvent> | null> {
   const networkFilter = toNetworkFilter(filter);
   if (networkFilter === null) return null;
 
+  const descriptor = RECORD_DESCRIPTORS[filter.recordType];
   const ctx = await buildDispatchContext(session);
   const args: ConnPageArgs = pageArgsForAnchor(anchor, pageSize);
   const data = await withExternalErrorMapping(
     "DATA_STORE",
-    gigantoClient<ConnRawEventsResult, ConnRawEventsVariables>(
-      CONN_RAW_EVENTS_QUERY,
+    gigantoClient<
+      Record<string, RawEventConnection<RawEvent>>,
+      RawEventsVariables
+    >(
+      RAW_EVENT_QUERIES[filter.recordType],
       {
         filter: networkFilter,
         first: args.first ?? null,
@@ -140,7 +151,28 @@ export async function searchConnRawEvents(
       signal,
     ),
   );
-  return data.connRawEvents;
+  return data[descriptor.responseKey];
+}
+
+/**
+ * Conn-specific wrapper retained for E0 call sites and tests. Delegates
+ * to {@link searchRawEvents} with the record type forced to `conn`.
+ */
+export async function searchConnRawEvents(
+  session: AuthSession,
+  filter: EventFilter,
+  anchor: PageAnchor,
+  pageSize: PageSize,
+  signal?: AbortSignal,
+): Promise<ConnRawEventConnection | null> {
+  const connection = await searchRawEvents(
+    session,
+    { ...filter, recordType: "conn" },
+    anchor,
+    pageSize,
+    signal,
+  );
+  return connection as ConnRawEventConnection | null;
 }
 
 /**

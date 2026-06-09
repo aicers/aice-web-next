@@ -1,0 +1,86 @@
+{
+  "httpRawEvents": {
+    "pageInfo": {
+      "hasPreviousPage": false,
+      "hasNextPage": true,
+      "startCursor": "Y3Vyc29yOjA=",
+      "endCursor": "Y3Vyc29yOjE="
+    },
+    "edges": [
+      {
+        "cursor": "Y3Vyc29yOjA=",
+        "node": {
+          "time": "2026-06-09T00:00:00Z",
+          "origAddr": "192.0.2.10",
+          "origPort": 51000,
+          "respAddr": "192.0.2.20",
+          "respPort": 443,
+          "proto": 6,
+          "startTime": "2026-06-09T00:00:00Z",
+          "duration": "1500000000",
+          "origPkts": "1024",
+          "respPkts": "1024",
+          "origL2Bytes": "1024",
+          "respL2Bytes": "1024",
+          "method": "GET",
+          "host": "page1.example.test",
+          "uri": "/index.html",
+          "referer": "referer-value",
+          "version": "1.1",
+          "userAgent": "userAgent-value",
+          "requestLen": "200",
+          "responseLen": "200",
+          "statusCode": 200,
+          "statusMsg": "OK",
+          "username": "username-value",
+          "password": "password-value",
+          "cookie": "cookie-value",
+          "contentEncoding": "gzip",
+          "contentType": "text/html",
+          "cacheControl": "no-cache",
+          "filenames": ["alpha", "beta"],
+          "mimeTypes": ["text/html"],
+          "body": [1, 2, 3],
+          "state": "state-value"
+        }
+      },
+      {
+        "cursor": "Y3Vyc29yOjE=",
+        "node": {
+          "time": "2026-06-09T00:00:01Z",
+          "origAddr": "192.0.2.11",
+          "origPort": 51001,
+          "respAddr": "192.0.2.21",
+          "respPort": 80,
+          "proto": 6,
+          "startTime": "2026-06-09T00:00:01Z",
+          "duration": "250000",
+          "origPkts": "8",
+          "respPkts": "8",
+          "origL2Bytes": "512",
+          "respL2Bytes": "512",
+          "method": "GET",
+          "host": "page1b.example.test",
+          "uri": "/style.css",
+          "referer": "referer-value",
+          "version": "1.1",
+          "userAgent": "userAgent-value",
+          "requestLen": "120",
+          "responseLen": "300",
+          "statusCode": 304,
+          "statusMsg": "Not Modified",
+          "username": "username-value",
+          "password": "password-value",
+          "cookie": "cookie-value",
+          "contentEncoding": "identity",
+          "contentType": "text/css",
+          "cacheControl": "max-age=0",
+          "filenames": ["gamma"],
+          "mimeTypes": ["text/css"],
+          "body": [4, 5, 6],
+          "state": "state-value"
+        }
+      }
+    ]
+  }
+}

@@ -96,6 +96,22 @@ describe("toNetworkFilter", () => {
     };
     expect(toNetworkFilter(filter)?.origPort).toEqual({ start: 0, end: null });
   });
+
+  it("strips port bounds for the Icmp record type", () => {
+    const filter: EventFilter = {
+      ...EMPTY_EVENT_FILTER,
+      recordType: "icmp",
+      sensor: "s1",
+      origAddrStart: "10.0.0.1",
+      origPortStart: 100,
+      respPortEnd: 200,
+    };
+    const result = toNetworkFilter(filter);
+    expect(result?.origPort).toBeUndefined();
+    expect(result?.respPort).toBeUndefined();
+    // Non-port bounds still apply for Icmp.
+    expect(result?.origAddr).toEqual({ start: "10.0.0.1", end: null });
+  });
 });
 
 describe("parseFilterFromSearchParams", () => {

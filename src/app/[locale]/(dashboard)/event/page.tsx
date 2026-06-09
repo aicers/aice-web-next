@@ -1,6 +1,9 @@
 import { getLocale, getTranslations } from "next-intl/server";
 
-import { type ConnResult, EventSearch } from "@/components/event/event-search";
+import {
+  EventSearch,
+  type RawEventResult,
+} from "@/components/event/event-search";
 import { EventViewTabs } from "@/components/event/event-view-tabs";
 import {
   type StatisticsResultState,
@@ -17,7 +20,7 @@ import {
 import {
   fetchStatistics,
   listEventSensors,
-  searchConnRawEvents,
+  searchRawEvents,
 } from "@/lib/event/server-actions";
 
 interface EventPageProps {
@@ -33,12 +36,13 @@ type RawParams = Record<string, string | string[] | undefined>;
  * redirected to `/` by {@link requirePermission}. The nav item itself
  * stays visible to everyone (page-gate only, matching Detection).
  *
- * A `view` toggle switches between the **Events** record table (E0) and
- * the **Statistics** aggregation chart (E5). Both views keep their
- * filter and the active view in the URL so a search is shareable and
- * survives reload; this server component reads them, fetches the sensor
- * list and the selected view's data, then hands it to the matching
- * client orchestrator.
+ * A `view` toggle switches between the **Events** record table and the
+ * **Statistics** aggregation chart. Both views keep their filter and the
+ * active view in the URL so a search is shareable and survives reload;
+ * this server component reads them, fetches the sensor list and the
+ * selected view's data, then hands it to the matching client
+ * orchestrator. The Events view fetches one page of the selected record
+ * type (any of the 20 network types).
  */
 export default async function EventPage({ searchParams }: EventPageProps) {
   const session = await getCurrentSession();
@@ -102,14 +106,9 @@ async function EventsViewSection({
   const filter = parseFilterFromSearchParams(rawParams);
   const { pageSize, anchor } = parsePaginationSearchParams(rawParams);
 
-  let result: ConnResult;
+  let result: RawEventResult;
   try {
-    const connection = await searchConnRawEvents(
-      session,
-      filter,
-      anchor,
-      pageSize,
-    );
+    const connection = await searchRawEvents(session, filter, anchor, pageSize);
     result =
       connection === null
         ? { status: "prequery" }

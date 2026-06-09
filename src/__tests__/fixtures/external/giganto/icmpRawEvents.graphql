@@ -1,0 +1,49 @@
+# Validates against schemas/giganto.graphql.
+#
+# IcmpRawEvent network raw-event query. Relay cursor pagination over
+# Giganto's IcmpConnection (pageInfo + edges, no
+# totalCount), mirroring conn-raw-events.graphql. Field names/types are
+# verified against the 0.27.0 SDL by the schema-validation gate.
+query IcmpRawEvents(
+  $filter: NetworkFilter!
+  $first: Int
+  $after: String
+  $last: Int
+  $before: String
+) {
+  icmpRawEvents(
+    filter: $filter
+    first: $first
+    after: $after
+    last: $last
+    before: $before
+  ) {
+    pageInfo {
+      hasPreviousPage
+      hasNextPage
+      startCursor
+      endCursor
+    }
+    edges {
+      node {
+        time
+        origAddr
+        respAddr
+        proto
+        startTime
+        duration
+        origPkts
+        respPkts
+        origL2Bytes
+        respL2Bytes
+        icmpType
+        icmpCode
+        id
+        seqNum
+        dataLen
+        payload
+      }
+      cursor
+    }
+  }
+}

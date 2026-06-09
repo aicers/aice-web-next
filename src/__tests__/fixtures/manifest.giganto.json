@@ -24,6 +24,52 @@
     }
   },
   {
+    "operation": "httpRawEvents",
+    "query": "external/giganto/httpRawEvents.graphql",
+    "fixture": "external/giganto/httpRawEvents.page1.json",
+    "variables": {
+      "filter": { "sensor": "sensor-a" },
+      "first": 50
+    }
+  },
+  {
+    "operation": "httpRawEvents",
+    "query": "external/giganto/httpRawEvents.graphql",
+    "fixture": "external/giganto/httpRawEvents.page2.json",
+    "variables": {
+      "filter": { "sensor": "sensor-a" },
+      "first": 50,
+      "after": "Y3Vyc29yOjE="
+    }
+  },
+  {
+    "operation": "malformedDnsRawEvents",
+    "query": "external/giganto/malformedDnsRawEvents.graphql",
+    "fixture": "external/giganto/malformedDnsRawEvents.page1.json",
+    "variables": {
+      "filter": { "sensor": "sensor-a" },
+      "first": 50
+    }
+  },
+  {
+    "operation": "icmpRawEvents",
+    "query": "external/giganto/icmpRawEvents.graphql",
+    "fixture": "external/giganto/icmpRawEvents.page1.json",
+    "variables": {
+      "filter": { "sensor": "sensor-a" },
+      "first": 50
+    }
+  },
+  {
+    "operation": "dceRpcRawEvents",
+    "query": "external/giganto/dceRpcRawEvents.graphql",
+    "fixture": "external/giganto/dceRpcRawEvents.page1.json",
+    "variables": {
+      "filter": { "sensor": "sensor-a" },
+      "first": 50
+    }
+  },
+  {
     "operation": "statistics",
     "query": "external/giganto/statistics.graphql",
     "fixture": "external/giganto/statistics.json",

@@ -24,11 +24,14 @@ vi.mock("@/lib/graphql/external-client", () => ({
   tivanClient: vi.fn(),
 }));
 
+import { RECORD_DESCRIPTORS, RECORD_TYPE_IDS } from "@/lib/event";
+import { RAW_EVENT_QUERIES } from "@/lib/event/queries";
 import {
   EventPermissionError,
   fetchStatistics,
   listEventSensors,
   searchConnRawEvents,
+  searchRawEvents,
 } from "@/lib/event/server-actions";
 import { ExternalServiceUnavailableError } from "@/lib/node/errors";
 
@@ -160,6 +163,56 @@ describe("searchConnRawEvents", () => {
     await expect(
       searchConnRawEvents(session, baseFilter, { kind: "head" }, 50),
     ).rejects.toBeInstanceOf(ExternalServiceUnavailableError);
+  });
+});
+
+describe("searchRawEvents dispatch", () => {
+  const connection = {
+    pageInfo: {
+      hasPreviousPage: false,
+      hasNextPage: false,
+      startCursor: null,
+      endCursor: null,
+    },
+    edges: [],
+  };
+
+  it.each(
+    RECORD_TYPE_IDS,
+  )("%s selects its descriptor document and unwraps its response key", async (id) => {
+    const descriptor = RECORD_DESCRIPTORS[id];
+    mockGigantoClient.mockResolvedValue({
+      [descriptor.responseKey]: connection,
+    });
+    const result = await searchRawEvents(
+      session,
+      { ...baseFilter, recordType: id },
+      { kind: "head" },
+      50,
+    );
+    expect(result).toBe(connection);
+    const [document] = mockGigantoClient.mock.calls[0];
+    expect(document).toBe(RAW_EVENT_QUERIES[id]);
+  });
+
+  it("drops port bounds for the Icmp record type", async () => {
+    mockGigantoClient.mockResolvedValue({
+      icmpRawEvents: connection,
+    });
+    await searchRawEvents(
+      session,
+      {
+        ...baseFilter,
+        recordType: "icmp",
+        origPortStart: 100,
+        respPortEnd: 200,
+      },
+      { kind: "head" },
+      50,
+    );
+    const [, variables] = mockGigantoClient.mock.calls[0];
+    expect(variables.filter.origPort).toBeUndefined();
+    expect(variables.filter.respPort).toBeUndefined();
   });
 });
 

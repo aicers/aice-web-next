@@ -2,9 +2,10 @@
 
 The Event page is accessed from the sidebar. It browses **source
 events** collected by Giganto — the raw network records the backend
-ingests, before any detection logic runs. This first release covers
-connection (**Conn**) records end to end; other record types arrive in
-later releases.
+ingests, before any detection logic runs. It covers all 20 Giganto
+network record types — connection (**Conn**) plus the 19 protocol
+record types listed under [Record types](#record-types) — each with
+type-appropriate columns and a full row detail.
 
 Viewing the page requires the `event:read` permission. The built-in
 roles Security Monitor, Tenant Administrator, and System Administrator
@@ -42,8 +43,11 @@ fetched until you choose a sensor and select **Apply** — a sensor is
 required because Giganto scopes every network query to exactly one
 sensor.
 
-- **Record type** — the kind of source event to browse. This release
-  offers **Connection (Conn)**.
+- **Record type** — the kind of source event to browse. All 20 Giganto
+  network record types are selectable (see
+  [Record types](#record-types)). The new type takes effect when you
+  select **Apply**, which re-runs the search and swaps the results
+  columns and detail layout for that type.
 - **Sensor** — the single sensor to query. The list is populated from
   the sensors Giganto has ingested data for. If the list cannot be
   loaded, the selector is disabled and a notice is shown.
@@ -57,7 +61,9 @@ sensor.
   for the originating and responding ports. Ports must be whole numbers
   between 0 and 65535; **Apply** is blocked while a port entry is not a
   whole number in that range (decimal or exponent input is rejected
-  rather than rounded to a different port).
+  rather than rounded to a different port). For the **ICMP** record type
+  the port inputs are disabled and not applied — ICMP records have no
+  ports.
 
 There is no separate protocol filter: Giganto's network filter has no
 protocol field, so the IP protocol cannot be used as a query input. It
@@ -69,7 +75,10 @@ is shareable and survives a reload.
 
 ## Results
 
-Matching Conn records are listed in a table with these columns:
+Matching records are listed in a table. Every type shares a common
+leading column set — **Time**, **Source**, **Destination**, and
+**Protocol** — followed by a curated set of type-specific summary
+columns. For **Conn**, the summary columns are:
 
 | Column | Meaning |
 | --- | --- |
@@ -82,15 +91,54 @@ Matching Conn records are listed in a table with these columns:
 | Bytes out | Bytes sent by the source |
 | Bytes in | Bytes received by the destination |
 
-Byte and packet counts and the connection duration are 64-bit values
-that Giganto returns as strings; they are formatted for display without
-losing precision.
+Each other record type curates its own summary columns (for example HTTP
+shows method, host, URI, and status code). Wide types render only a
+short default column set in the table; the full field list is in the row
+detail. Byte and packet counts and durations are 64-bit values Giganto
+returns as strings; they are formatted for display without losing
+precision.
+
+For the **ICMP** type, which has no ports, the Source and Destination
+columns show bare addresses.
 
 ### Row detail
 
 Selecting a row opens a side panel with the **full** record — every
-field above plus the start time, duration, per-direction packet counts,
-and layer-2 byte counts.
+field of the selected type, not just the summary columns. List-valued
+fields (such as DNS answers or TLS extensions) are shown inline; raw
+byte payloads are shown one row per line; and the nested sub-records of
+**DCE/RPC** (bind contexts), **FTP** (commands), and **DHCP** (options)
+are rendered as labelled sub-blocks.
+
+## Record types
+
+All 20 Giganto network record types are selectable in the **Record
+type** filter:
+
+| Group | Types |
+| --- | --- |
+| Connection | Conn |
+| Name resolution | Dns, MalformedDns |
+| Web | Http, Rdp |
+| Mail | Smtp |
+| Authentication / directory | Ntlm, Kerberos, Ldap, Radius |
+| Remote access / RPC | Ssh, DceRpc |
+| File transfer / sharing | Ftp, Smb, Nfs |
+| Messaging | Mqtt |
+| Encryption | Tls |
+| Address assignment | Bootp, Dhcp |
+| Diagnostics | Icmp |
+
+A few types differ from the rest:
+
+- **MalformedDns** is not shaped like Dns: instead of query/answer/rcode
+  it carries DNS-header counts and the raw malformed query/response byte
+  payloads.
+- **Tls**, **Http**, **Dhcp**, and **Radius** are wide (26–33 fields);
+  the table shows a curated subset and the row detail shows everything.
+- **DceRpc**, **Ftp**, and **Dhcp** carry nested sub-records, rendered in
+  the row detail.
+- **Icmp** has no ports; its port filter inputs are disabled.
 
 ## Pagination
 

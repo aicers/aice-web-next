@@ -1,0 +1,41 @@
+{
+  "malformedDnsRawEvents": {
+    "pageInfo": {
+      "hasPreviousPage": false,
+      "hasNextPage": false,
+      "startCursor": "Y3Vyc29yOjA=",
+      "endCursor": "Y3Vyc29yOjA="
+    },
+    "edges": [
+      {
+        "cursor": "Y3Vyc29yOjA=",
+        "node": {
+          "time": "2026-06-09T00:00:00Z",
+          "origAddr": "192.0.2.10",
+          "origPort": 51000,
+          "respAddr": "192.0.2.20",
+          "respPort": 53,
+          "proto": 17,
+          "startTime": "2026-06-09T00:00:00Z",
+          "duration": "1500000000",
+          "origPkts": "1024",
+          "respPkts": "1024",
+          "origL2Bytes": "1024",
+          "respL2Bytes": "1024",
+          "transId": 4660,
+          "flags": 1,
+          "questionCount": 2,
+          "answerCount": 3,
+          "authorityCount": 1,
+          "additionalCount": 1,
+          "queryCount": "100",
+          "respCount": "100",
+          "queryBytes": "18446744073709551615",
+          "respBytes": "2048",
+          "queryBody": [[1, 2], [3, 4]],
+          "respBody": [[5, 6], [7, 8]]
+        }
+      }
+    ]
+  }
+}

@@ -15,8 +15,6 @@ import {
   SelectValue,
 } from "@/components/ui/select";
 import {
-  type ConnRawEvent,
-  type ConnRawEventEdge,
   coercePageSize,
   EMPTY_EVENT_FILTER,
   type EventFilter,
@@ -26,24 +24,29 @@ import {
   type PageInfo,
   type PageSize,
   paginationToSearchEntries,
+  type RawEvent,
+  type RawEventEdge,
+  RECORD_DESCRIPTORS,
 } from "@/lib/event";
 
-import { ConnDetailSheet } from "./conn-detail-sheet";
-import { ConnResultsTable } from "./conn-results-table";
 import { EventFilterForm } from "./event-filter-form";
+import { RawEventDetailSheet } from "./raw-event-detail-sheet";
+import { RawEventResultsTable } from "./raw-event-results-table";
 
-/** Conn search outcome handed down from the server component. */
-export type ConnResult =
+/** Search outcome handed down from the server component. */
+export type RawEventResult =
   | { status: "prequery" }
   | { status: "error" }
-  | { status: "ready"; edges: ConnRawEventEdge[]; pageInfo: PageInfo };
+  | { status: "ready"; edges: RawEventEdge<RawEvent>[]; pageInfo: PageInfo };
 
 /**
  * Top-level client orchestrator for `/event`. Owns the editable filter
  * draft and the row-detail selection; commits searches and pagination
  * by writing the URL, which the server component re-reads to fetch the
- * next page. Navigation runs inside a transition so the existing page
- * stays interactive (and dimmed) while the server fetch is in flight.
+ * next page. The active record type comes from the committed filter, so
+ * the results table and detail sheet are driven by its descriptor.
+ * Navigation runs inside a transition so the existing page stays
+ * interactive (and dimmed) while the server fetch is in flight.
  */
 export function EventSearch({
   committedFilter,
@@ -55,18 +58,20 @@ export function EventSearch({
   committedFilter: EventFilter;
   sensors: string[] | null;
   pageSize: PageSize;
-  result: ConnResult;
+  result: RawEventResult;
   locale: string;
 }) {
   const router = useRouter();
   const pathname = usePathname();
   const [pending, startTransition] = useTransition();
   const [draft, setDraft] = useState<EventFilter>(committedFilter);
-  const [detail, setDetail] = useState<ConnRawEvent | null>(null);
+  const [detail, setDetail] = useState<RawEvent | null>(null);
   // Bumped on Reset to remount the filter form so its locally-held raw
   // port text re-seeds from the cleared draft (otherwise stale invalid
   // input would linger in the inputs).
   const [formKey, setFormKey] = useState(0);
+
+  const descriptor = RECORD_DESCRIPTORS[committedFilter.recordType];
 
   const navigate = (
     filter: EventFilter,
@@ -123,6 +128,7 @@ export function EventSearch({
       >
         <ResultsRegion
           result={result}
+          descriptorId={committedFilter.recordType}
           pageSize={pageSize}
           locale={locale}
           onRowOpen={(edge) => setDetail(edge.node)}
@@ -146,8 +152,9 @@ export function EventSearch({
         />
       </div>
 
-      <ConnDetailSheet
-        event={detail}
+      <RawEventDetailSheet
+        descriptor={descriptor}
+        record={detail}
         locale={locale}
         onClose={() => setDetail(null)}
       />
@@ -171,6 +178,7 @@ function SensorsUnavailableNotice() {
 
 function ResultsRegion({
   result,
+  descriptorId,
   pageSize,
   locale,
   onRowOpen,
@@ -178,15 +186,17 @@ function ResultsRegion({
   onPrev,
   onNext,
 }: {
-  result: ConnResult;
+  result: RawEventResult;
+  descriptorId: EventFilter["recordType"];
   pageSize: PageSize;
   locale: string;
-  onRowOpen: (edge: ConnRawEventEdge) => void;
+  onRowOpen: (edge: RawEventEdge<RawEvent>) => void;
   onPageSize: (next: PageSize) => void;
   onPrev: () => void;
   onNext: () => void;
 }) {
   const t = useTranslations("event");
+  const descriptor = RECORD_DESCRIPTORS[descriptorId];
 
   if (result.status === "prequery") {
     return <Empty message={t("states.prequery")} />;
@@ -203,7 +213,8 @@ function ResultsRegion({
   return (
     <div className="space-y-3">
       <div className="overflow-x-auto rounded-md border">
-        <ConnResultsTable
+        <RawEventResultsTable
+          descriptor={descriptor}
           edges={result.edges}
           locale={locale}
           onRowOpen={onRowOpen}

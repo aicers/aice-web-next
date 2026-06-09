@@ -1,0 +1,33 @@
+{
+  "icmpRawEvents": {
+    "pageInfo": {
+      "hasPreviousPage": false,
+      "hasNextPage": false,
+      "startCursor": "Y3Vyc29yOjA=",
+      "endCursor": "Y3Vyc29yOjA="
+    },
+    "edges": [
+      {
+        "cursor": "Y3Vyc29yOjA=",
+        "node": {
+          "time": "2026-06-09T00:00:00Z",
+          "origAddr": "192.0.2.10",
+          "respAddr": "192.0.2.20",
+          "proto": 1,
+          "startTime": "2026-06-09T00:00:00Z",
+          "duration": "1500000000",
+          "origPkts": "1024",
+          "respPkts": "1024",
+          "origL2Bytes": "1024",
+          "respL2Bytes": "1024",
+          "icmpType": 8,
+          "icmpCode": 0,
+          "id": 4660,
+          "seqNum": 7,
+          "dataLen": 56,
+          "payload": [1, 2, 3]
+        }
+      }
+    ]
+  }
+}

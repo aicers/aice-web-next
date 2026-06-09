@@ -1,0 +1,49 @@
+{
+  "httpRawEvents": {
+    "pageInfo": {
+      "hasPreviousPage": true,
+      "hasNextPage": false,
+      "startCursor": "Y3Vyc29yOjI=",
+      "endCursor": "Y3Vyc29yOjM="
+    },
+    "edges": [
+      {
+        "cursor": "Y3Vyc29yOjI=",
+        "node": {
+          "time": "2026-06-09T00:00:02Z",
+          "origAddr": "192.0.2.12",
+          "origPort": 51002,
+          "respAddr": "192.0.2.22",
+          "respPort": 8080,
+          "proto": 6,
+          "startTime": "2026-06-09T00:00:02Z",
+          "duration": "900000",
+          "origPkts": "16",
+          "respPkts": "16",
+          "origL2Bytes": "2048",
+          "respL2Bytes": "2048",
+          "method": "POST",
+          "host": "page2.example.test",
+          "uri": "/submit",
+          "referer": "referer-value",
+          "version": "1.1",
+          "userAgent": "userAgent-value",
+          "requestLen": "640",
+          "responseLen": "128",
+          "statusCode": 404,
+          "statusMsg": "Not Found",
+          "username": "username-value",
+          "password": "password-value",
+          "cookie": "cookie-value",
+          "contentEncoding": "identity",
+          "contentType": "application/json",
+          "cacheControl": "no-store",
+          "filenames": ["delta"],
+          "mimeTypes": ["application/json"],
+          "body": [7, 8, 9],
+          "state": "state-value"
+        }
+      }
+    ]
+  }
+}

@@ -1,3 +1,12 @@
+export {
+  type AnyFieldDescriptor,
+  type FieldFormat,
+  RECORD_DESCRIPTORS,
+  type RecordDescriptor,
+  type ScalarKind,
+  STRING_NUMBER_KINDS,
+  SUB_RECORD_FIELDS,
+} from "./descriptors";
 export { EventPermissionError } from "./errors";
 export {
   EMPTY_EVENT_FILTER,
@@ -12,10 +21,14 @@ export {
   toNetworkFilter,
 } from "./filter";
 export {
+  EMPTY_VALUE,
   formatCount,
   formatDurationNs,
   formatEndpoint,
+  listText,
   protoLabel,
+  scalarText,
+  summaryText,
 } from "./format";
 export {
   type ConnPageArgs,
@@ -69,8 +82,15 @@ export type {
   ConnRawEvent,
   ConnRawEventConnection,
   ConnRawEventEdge,
+  DceRpcContextRawEvent,
+  DhcpOptionRawEvent,
+  FtpCommandRawEvent,
   NetworkFilterInput,
   PageInfo,
+  RawEvent,
+  RawEventConnection,
+  RawEventEdge,
+  RawEventFieldValue,
   StatisticsDetail,
   StatisticsInfo,
   StatisticsRawEvent,
