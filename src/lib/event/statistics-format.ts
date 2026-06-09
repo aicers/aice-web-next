@@ -10,9 +10,12 @@
  *     19-digit nanosecond key does not lose precision before the
  *     millisecond divide.
  *   - `count` / `size` are nullable `StringNumberU64` and can exceed
- *     `Number.MAX_SAFE_INTEGER`. They are parsed BigInt-safe and only
- *     then coerced to `number` for plotting (recharts needs a number);
- *     the exact integer is preserved for display via {@link formatCount}.
+ *     `Number.MAX_SAFE_INTEGER`. recharts plots `number`, so the y
+ *     position is necessarily coerced and may lose precision above
+ *     2^53 — but the value the user *reads* must not. The exact
+ *     per-bucket/protocol `BigInt` sum is kept alongside the plot
+ *     number (see {@link StatisticsSeries.exact}) so tooltips show the
+ *     integer Giganto returned, not a rounded approximation.
  */
 
 import { formatCount } from "./format";
@@ -69,6 +72,29 @@ export interface StatisticsSeries {
   data: StatisticsSeriesDatum[];
   /** Protocol keys present in the data, sorted for stable series order. */
   protocols: string[];
+  /**
+   * Exact display values for the integer metrics, indexed
+   * `t -> protocol -> decimal string`. `count` / `size` are summed as
+   * `BigInt`, so this preserves the precise total even past 2^53, where
+   * the plotted {@link StatisticsSeriesDatum} number rounds. Empty for
+   * the float metrics (`bps` / `pps` / `eps`), which have no exact
+   * integer form. Used by the tooltip via {@link exactDisplay}.
+   */
+  exact: Map<number, Map<string, string>>;
+}
+
+/**
+ * Look up the exact decimal string for an integer-metric bucket, or
+ * `null` when there is none (float metric, or no value at that
+ * bucket/protocol). The chart prefers this over the rounded plot number
+ * when rendering a tooltip.
+ */
+export function exactDisplay(
+  series: StatisticsSeries,
+  t: number,
+  protocol: string,
+): string | null {
+  return series.exact.get(t)?.get(protocol) ?? null;
 }
 
 /**
@@ -85,7 +111,11 @@ export function buildStatisticsSeries(
   events: StatisticsRawEvent[],
   metric: StatisticsMetric,
 ): StatisticsSeries {
+  const isInteger = metric === "count" || metric === "size";
   const buckets = new Map<number, Map<string, number>>();
+  // BigInt running totals for count/size, so the exact integer survives
+  // even when the parallel `number` sum below rounds past 2^53.
+  const exactBuckets = new Map<number, Map<string, bigint>>();
   const protocolSet = new Set<string>();
 
   for (const event of events) {
@@ -102,8 +132,29 @@ export function buildStatisticsSeries(
         if (value === null) continue;
         protocolSet.add(detail.protocol);
         row.set(detail.protocol, (row.get(detail.protocol) ?? 0) + value);
+        if (isInteger) {
+          // metricValue returned non-null, so the raw string is a valid
+          // integer literal — accumulate it losslessly.
+          let exactRow = exactBuckets.get(ms);
+          if (!exactRow) {
+            exactRow = new Map();
+            exactBuckets.set(ms, exactRow);
+          }
+          const raw = detail[metric] as string;
+          exactRow.set(
+            detail.protocol,
+            (exactRow.get(detail.protocol) ?? BigInt(0)) + BigInt(raw),
+          );
+        }
       }
     }
+  }
+
+  const exact = new Map<number, Map<string, string>>();
+  for (const [t, row] of exactBuckets) {
+    const out = new Map<string, string>();
+    for (const [protocol, sum] of row) out.set(protocol, sum.toString());
+    exact.set(t, out);
   }
 
   const protocols = [...protocolSet].sort();
@@ -119,13 +170,15 @@ export function buildStatisticsSeries(
       return datum;
     });
 
-  return { data, protocols };
+  return { data, protocols, exact };
 }
 
 /**
- * Format a charted metric value for tooltips. `count` / `size` are
- * whole numbers grouped via {@link formatCount}; the per-second rates
- * keep up to two fractional digits.
+ * Format a plotted metric `number` for axis ticks. `count` / `size` are
+ * grouped whole numbers; the per-second rates keep up to two fractional
+ * digits. This operates on the (possibly rounded) plot number, which is
+ * fine for an axis scale label — tooltips instead use {@link exactDisplay}
+ * to show the exact integer for `count` / `size`.
  */
 export function formatMetricValue(
   value: number,

@@ -58,6 +58,7 @@ export {
 } from "./statistics";
 export {
   buildStatisticsSeries,
+  exactDisplay,
   formatMetricValue,
   metricValue,
   nanosToMillis,

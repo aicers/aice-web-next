@@ -2,6 +2,7 @@ import { describe, expect, it } from "vitest";
 
 import {
   buildStatisticsSeries,
+  exactDisplay,
   formatMetricValue,
   metricValue,
   nanosToMillis,
@@ -60,6 +61,74 @@ describe("metricValue", () => {
     );
     expect(value).not.toBeNull();
     expect(Number.isFinite(value as number)).toBe(true);
+  });
+});
+
+describe("buildStatisticsSeries exact display", () => {
+  it("preserves the exact u64 count past 2^53 for display", () => {
+    // 2^53 + 1 — not representable as a JS number; Number() would round
+    // it down to 2^53. The plotted datum loses this, the exact map must not.
+    const events: StatisticsRawEvent[] = [
+      {
+        sensor: "sensor-a",
+        stats: [
+          {
+            timestamp: "1709528767000000000",
+            detail: [detail("dns", { count: "9007199254740993" })],
+          },
+        ],
+      },
+    ];
+    const series = buildStatisticsSeries(events, "count");
+    const t = series.data[0].t;
+    // The plot number is rounded (recharts needs a number)...
+    expect(series.data[0].dns).toBe(9007199254740992);
+    // ...but the exact display value is the integer Giganto returned.
+    expect(exactDisplay(series, t, "dns")).toBe("9007199254740993");
+  });
+
+  it("sums count exactly across sensors with BigInt, beyond 2^53", () => {
+    const events: StatisticsRawEvent[] = [
+      {
+        sensor: "sensor-a",
+        stats: [
+          {
+            timestamp: "1709528767000000000",
+            detail: [detail("conn", { count: "18446744073709551615" })],
+          },
+        ],
+      },
+      {
+        sensor: "sensor-b",
+        stats: [
+          {
+            timestamp: "1709528767000000000",
+            detail: [detail("conn", { count: "1" })],
+          },
+        ],
+      },
+    ];
+    const series = buildStatisticsSeries(events, "count");
+    expect(exactDisplay(series, series.data[0].t, "conn")).toBe(
+      "18446744073709551616",
+    );
+  });
+
+  it("has no exact entries for float metrics", () => {
+    const events: StatisticsRawEvent[] = [
+      {
+        sensor: "sensor-a",
+        stats: [
+          {
+            timestamp: "1709528767000000000",
+            detail: [detail("conn", { bps: 1000 })],
+          },
+        ],
+      },
+    ];
+    const series = buildStatisticsSeries(events, "bps");
+    expect(series.exact.size).toBe(0);
+    expect(exactDisplay(series, series.data[0].t, "conn")).toBeNull();
   });
 });
 

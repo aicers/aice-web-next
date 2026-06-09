@@ -145,5 +145,6 @@ display switch over the already-fetched data and does not re-query.
 
 The X-axis is the bucket time. Giganto reports each bucket's timestamp
 as an epoch-nanosecond value, which is converted to a calendar time for
-the axis. The 64-bit `count` and `size` values are parsed without losing
-precision before charting.
+the axis. The 64-bit `count` and `size` values can exceed what a chart
+coordinate can hold exactly, so the plotted line may round above
+2^53; the tooltip always shows the exact integer Giganto returned.

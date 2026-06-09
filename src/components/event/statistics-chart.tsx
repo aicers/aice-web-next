@@ -24,10 +24,13 @@ import {
 import {
   buildStatisticsSeries,
   DEFAULT_STATISTICS_METRIC,
+  exactDisplay,
+  formatCount,
   formatMetricValue,
   STATISTICS_METRICS,
   type StatisticsMetric,
   type StatisticsRawEvent,
+  type StatisticsSeriesDatum,
 } from "@/lib/event";
 
 /**
@@ -149,12 +152,25 @@ export function StatisticsChart({
                 labelFormatter={(value) =>
                   typeof value === "number" ? formatStamp(value) : String(value)
                 }
-                formatter={(value, name) => [
-                  typeof value === "number"
-                    ? formatMetricValue(value, metric, locale)
-                    : String(value),
-                  tpr(String(name)),
-                ]}
+                formatter={(value, name, item) => {
+                  // Prefer the exact BigInt total for count/size: the
+                  // plotted `value` is rounded past 2^53, but the tooltip
+                  // must show the integer Giganto returned.
+                  const datum = item?.payload as
+                    | StatisticsSeriesDatum
+                    | undefined;
+                  const exact =
+                    datum && typeof datum.t === "number"
+                      ? exactDisplay(series, datum.t, String(name))
+                      : null;
+                  const text =
+                    exact !== null
+                      ? formatCount(exact, locale)
+                      : typeof value === "number"
+                        ? formatMetricValue(value, metric, locale)
+                        : String(value);
+                  return [text, tpr(String(name))];
+                }}
                 labelStyle={{ fontSize: 11 }}
                 contentStyle={{ fontSize: 11, padding: "4px 8px" }}
               />
