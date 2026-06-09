@@ -136,7 +136,7 @@ service that will actually answer it.
 |------|---------|-------|
 | `schemas/review.graphql` | `review-web` (REview, the manager) | Detection, Triage, and Node management menus |
 | `schemas/review.version` | — | Semver of the REview release the SDL corresponds to (the `review` repo's release tag, not the embedded `review-web` crate version or a commit SHA) |
-| `schemas/giganto.graphql` | Giganto (data store) | Per-service `status` / `config` / `updateConfig` for the Giganto external service |
+| `schemas/giganto.graphql` | Giganto (data store) | Per-service `status` / `config` / `updateConfig` for the Giganto external service, plus the Event-menu source-event browsing surface (network raw-event queries, `sensors`) |
 | `schemas/giganto.version` | — | Semver of the Giganto release the SDL corresponds to |
 | `schemas/tivan.graphql` | Tivan (TI container) | Per-service `status` / `config` / `updateConfig` for the Tivan external service |
 | `schemas/tivan.version` | — | Semver of the Tivan release the SDL corresponds to |

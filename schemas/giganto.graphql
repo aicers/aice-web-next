@@ -4,8 +4,8 @@
 # section of README.md for the update procedure. Its contents must match
 # the Giganto release tagged in schemas/giganto.version.
 #
-# Captured from Giganto 0.26.2
-# (giganto/src/graphql/client/schema/schema.graphql at tag 0.26.2).
+# Captured from Giganto 0.27.0
+# (giganto/src/graphql/client/schema/schema.graphql at tag 0.27.0).
 # aice-web-next opens its own mTLS connection straight to Giganto's
 # GraphQL endpoint — these calls do not go through review-web.
 
@@ -277,12 +277,49 @@ type ConnRawEventEdge {
 	cursor: String!
 }
 
-"""
-Implement the DateTime<Utc> scalar
-
-The input/output is a string in RFC3339 format.
-"""
 scalar DateTime
+
+"""
+Represents a DCE-RPC bind context entry.
+"""
+type DceRpcContextRawEvent {
+	"""
+	Context ID
+	"""
+	id: Int!
+	"""
+	Abstract Syntax identifier encoded as a 32-digit uppercase hexadecimal string
+	"""
+	abstractSyntax: String!
+	"""
+	Abstract Syntax Major Version
+	"""
+	abstractMajor: Int!
+	"""
+	Abstract Syntax Minor Version
+	"""
+	abstractMinor: Int!
+	"""
+	Transfer Syntax identifier encoded as a 32-digit uppercase hexadecimal string
+	"""
+	transferSyntax: String!
+	"""
+	Transfer Syntax Major Version
+	"""
+	transferMajor: Int!
+	"""
+	Transfer Syntax Minor Version
+	"""
+	transferMinor: Int!
+	"""
+	Acceptance Result
+	"""
+	acceptance: Int!
+	"""
+	Rejection Reason
+	"""
+	reason: Int!
+}
 
 """
 Represents an event extracted from the DCE-RPC protocol.
@@ -341,21 +378,13 @@ type DceRpcRawEvent {
 	"""
 	respL2Bytes: StringNumberU64!
 	"""
-	Round-Trip Time
+	Bind Contexts
 	"""
-	rtt: StringNumberI64!
+	context: [DceRpcContextRawEvent!]!
 	"""
-	Named Pipe
+	Requests
 	"""
-	namedPipe: String!
-	"""
-	Endpoint
-	"""
-	endpoint: String!
-	"""
-	Operation
-	"""
-	operation: String!
+	request: [String!]!
 }
 
 type DceRpcRawEventConnection {
@@ -385,6 +414,20 @@ type DceRpcRawEventEdge {
 	A cursor for use in pagination
 	"""
 	cursor: String!
+}
+
+"""
+Represents a DHCP option code-value pair.
+"""
+type DhcpOptionRawEvent {
+	"""
+	DHCP Option Code Number
+	"""
+	code: Int!
+	"""
+	DHCP Option Value
+	"""
+	value: [Int!]!
 }
 
 """
@@ -515,6 +558,10 @@ type DhcpRawEvent {
 	Client ID List
 	"""
 	clientId: [Int!]!
+	"""
+	DHCP Options
+	"""
+	options: [DhcpOptionRawEvent!]!
 }
 
 type DhcpRawEventConnection {
@@ -723,6 +770,20 @@ type DnsRawEventEdge {
 	cursor: String!
 }
 
+"""
+Filters for exporting events.
+
+Some fields are only valid for specific protocol categories and will be
+rejected at runtime if used with an incompatible `protocol`.
+
+Protocol-dependent filters:
+- `origAddr`, `respAddr`, `origPort`, `respPort` are only valid for
+network-related protocols.
+- `agentName`, `agentId` are only valid for Sysmon-related protocols.
+- `kind` is only valid for `log` and `secu log`.
+
+The `protocol` value must be one of the supported protocol names.
+"""
 input ExportFilter {
 	protocol: String!
 	sensorId: String!
@@ -1259,6 +1320,107 @@ type HttpRawEventEdge {
 	cursor: String!
 }
 
+"""
+Represents an event extracted from the ICMP protocol.
+"""
+type IcmpRawEvent {
+	"""
+	Time the event started transmitting from a sensor
+	"""
+	time: DateTime!
+	"""
+	Source IP Address
+	"""
+	origAddr: String!
+	"""
+	Destination IP Address
+	"""
+	respAddr: String!
+	"""
+	Protocol Number
+	"""
+	proto: Int!
+	"""
+	Start Time
+	"""
+	startTime: DateTime!
+	"""
+	Duration
+	
+	It is measured in nanoseconds.
+	"""
+	duration: StringNumberI64!
+	"""
+	Packets Sent by Source
+	"""
+	origPkts: StringNumberU64!
+	"""
+	Packets Received by Destination
+	"""
+	respPkts: StringNumberU64!
+	"""
+	Layer 2 Bytes Sent by Source
+	"""
+	origL2Bytes: StringNumberU64!
+	"""
+	Layer 2 Bytes Received by Destination
+	"""
+	respL2Bytes: StringNumberU64!
+	"""
+	ICMP Type
+	"""
+	icmpType: Int!
+	"""
+	ICMP Code
+	"""
+	icmpCode: Int!
+	"""
+	Identifier
+	"""
+	id: Int!
+	"""
+	Sequence Number
+	"""
+	seqNum: Int!
+	"""
+	Data Length
+	"""
+	dataLen: Int!
+	"""
+	Payload
+	"""
+	payload: [Int!]!
+}
+
+type IcmpRawEventConnection {
+	"""
+	Information to aid in pagination.
+	"""
+	pageInfo: PageInfo!
+	"""
+	A list of edges.
+	"""
+	edges: [IcmpRawEventEdge!]!
+	"""
+	A list of nodes.
+	"""
+	nodes: [IcmpRawEvent!]!
+}
+
+"""
+An edge in a connection.
+"""
+type IcmpRawEventEdge {
+	"""
+	The item at the end of the edge
+	"""
+	node: IcmpRawEvent!
+	"""
+	A cursor for use in pagination
+	"""
+	cursor: String!
+}
+
 type ImageLoadedEvent {
 	time: DateTime!
 	agentName: String!
@@ -1308,6 +1470,15 @@ type ImageLoadedEventEdge {
 	cursor: String!
 }
 
+"""
+IP address range filter.
+
+Range semantics:
+- `start` is inclusive.
+- `end` is exclusive.
+- Omitting `start` means the range is unbounded below.
+- Omitting `end` means the range is unbounded above.
+"""
 input IpRange {
 	start: String
 	end: String
@@ -1392,7 +1563,7 @@ type KerberosRawEvent {
 	"""
 	Client Name
 	"""
-	clientName: [String!]!
+	cname: [String!]!
 	"""
 	Realm
 	"""
@@ -1404,7 +1575,7 @@ type KerberosRawEvent {
 	"""
 	Service Name
 	"""
-	serviceName: [String!]!
+	sname: [String!]!
 }
 
 type KerberosRawEventConnection {
@@ -2015,6 +2186,9 @@ type NetworkConnectionEventEdge {
 	cursor: String!
 }
 
+"""
+Filter options for network queries.
+"""
 input NetworkFilter {
 	time: TimeRange
 	sensor: String!
@@ -2027,7 +2201,7 @@ input NetworkFilter {
 	agentId: String
 }
 
-union NetworkRawEvents = ConnRawEvent | DnsRawEvent | MalformedDnsRawEvent | HttpRawEvent | RdpRawEvent | NtlmRawEvent | KerberosRawEvent | SshRawEvent | DceRpcRawEvent | FtpRawEvent | MqttRawEvent | LdapRawEvent | TlsRawEvent | SmbRawEvent | NfsRawEvent | SmtpRawEvent | BootpRawEvent | DhcpRawEvent | RadiusRawEvent
+union NetworkRawEvents = ConnRawEvent | DnsRawEvent | MalformedDnsRawEvent | HttpRawEvent | RdpRawEvent | NtlmRawEvent | KerberosRawEvent | SshRawEvent | DceRpcRawEvent | FtpRawEvent | MqttRawEvent | LdapRawEvent | TlsRawEvent | SmbRawEvent | NfsRawEvent | SmtpRawEvent | BootpRawEvent | DhcpRawEvent | RadiusRawEvent | IcmpRawEvent
 
 type NetworkRawEventsConnection {
 	"""
@@ -2260,10 +2434,15 @@ type NtlmRawEventEdge {
 	cursor: String!
 }
 
+"""
+Filters for operational log queries.
+
+String filters in this input use substring matching.
+"""
 input OpLogFilter {
 	time: TimeRange
 	sensor: String
-	agentId: String
+	serviceName: String
 	logLevel: String
 	contents: String
 }
@@ -2272,7 +2451,7 @@ type OpLogRawEvent {
 	time: DateTime!
 	level: String!
 	contents: String!
-	agentName: String!
+	serviceName: String!
 	sensor: String!
 }
 
@@ -2414,6 +2593,15 @@ type PipeEventEventEdge {
 	cursor: String!
 }
 
+"""
+Port range filter.
+
+Range semantics:
+- `start` is inclusive.
+- `end` is exclusive.
+- Omitting `start` means the range is unbounded below.
+- Omitting `end` means the range is unbounded above.
+"""
 input PortRange {
 	start: Int
 	end: Int
@@ -2565,6 +2753,15 @@ input PropertyFilter {
 }
 
 type Query {
+	"""
+	Returns raw log events for the given sensor.
+	
+	The filter must specify an event kind.
+	
+	# Errors
+	
+	Returns an error if no event kind is specified in the filter.
+	"""
 	logRawEvents(filter: LogFilter!, after: String, before: String, first: Int, last: Int): LogRawEventConnection!
 	opLogRawEvents(filter: OpLogFilter!, after: String, before: String, first: Int, last: Int): OpLogRawEventConnection!
 	connRawEvents(filter: NetworkFilter!, after: String, before: String, first: Int, last: Int): ConnRawEventConnection!
@@ -2586,6 +2783,7 @@ type Query {
 	bootpRawEvents(filter: NetworkFilter!, after: String, before: String, first: Int, last: Int): BootpRawEventConnection!
 	dhcpRawEvents(filter: NetworkFilter!, after: String, before: String, first: Int, last: Int): DhcpRawEventConnection!
 	radiusRawEvents(filter: NetworkFilter!, after: String, before: String, first: Int, last: Int): RadiusRawEventConnection!
+	icmpRawEvents(filter: NetworkFilter!, after: String, before: String, first: Int, last: Int): IcmpRawEventConnection!
 	networkRawEvents(filter: NetworkFilter!, after: String, before: String, first: Int, last: Int): NetworkRawEventsConnection!
 	searchConnRawEvents(filter: SearchFilter!): [DateTime!]!
 	searchDnsRawEvents(filter: SearchFilter!): [DateTime!]!
@@ -2606,15 +2804,56 @@ type Query {
 	searchBootpRawEvents(filter: SearchFilter!): [DateTime!]!
 	searchDhcpRawEvents(filter: SearchFilter!): [DateTime!]!
 	searchRadiusRawEvents(filter: SearchFilter!): [DateTime!]!
+	searchIcmpRawEvents(filter: SearchFilter!): [DateTime!]!
+	"""
+	Exports matching events to a file and returns the download path.
+	
+	`exportType` must be either `csv` or `json`.
+	The allowed filter fields depend on the selected protocol.
+	
+	Supported filter categories:
+	- IP/port filters (`origAddr`, `respAddr`, `origPort`, `respPort`) are
+	supported only for network-related protocols.
+	- Agent filters (`agentName`, `agentId`) are supported only for
+	Sysmon-related protocols.
+	- `kind` is supported only for log-related protocols such as `log` and
+	`secu log`.
+	
+	# Errors
+	
+	Returns an error if `exportType` is not supported or if the filter
+	contains fields that are invalid for the selected protocol.
+	"""
 	export(exportType: String!, filter: ExportFilter!): String!
 	packets(filter: PacketFilter!, after: String, before: String, first: Int, last: Int): PacketConnection!
 	pcap(filter: PacketFilter!): Pcap!
 	periodicTimeSeries(filter: TimeSeriesFilter!, after: String, before: String, first: Int, last: Int): TimeSeriesConnection!
+	"""
+	Returns the current node status, including CPU, memory, and disk usage.
+	"""
 	status: Status!
 	propertiesCf(filter: PropertyFilter!): Properties!
+	"""
+	Returns the current visible Giganto configuration.
+	"""
 	config: Config!
+	"""
+	Returns `true` when the GraphQL service is reachable.
+	"""
 	ping: Boolean!
+	"""
+	Returns the list of registered sensor names, sorted in ascending order.
+	"""
 	sensors: [String!]!
+	"""
+	Returns statistics for the given sensors.
+	
+	When provided, `protocols` must contain only the following `RawEventKind`
+	strings supported by the statistics API: `conn`, `dns`, `malformed_dns`,
+	`radius`, `rdp`, `http`, `smtp`, `ntlm`, `kerberos`, `ssh`, `dce_rpc`,
+	`ftp`, `mqtt`, `ldap`, `tls`, `smb`, `nfs`, `bootp`, `dhcp`, `icmp`, or `statistics`.
+	Invalid values are rejected at runtime.
+	"""
 	statistics(sensors: [String!]!, time: TimeRange, protocols: [String!], requestFromPeer: Boolean): [StatisticsRawEvent!]!
 	processCreateEvents(filter: NetworkFilter!, after: String, before: String, first: Int, last: Int): ProcessCreateEventConnection!
 	fileCreateTimeEvents(filter: NetworkFilter!, after: String, before: String, first: Int, last: Int): FileCreationTimeChangedEventConnection!
@@ -2968,6 +3207,9 @@ type RegistryValueSetEventEdge {
 	cursor: String!
 }
 
+"""
+Filter options for text search.
+"""
 input SearchFilter {
 	time: TimeRange
 	sensor: String!
@@ -2978,6 +3220,9 @@ input SearchFilter {
 	logLevel: String
 	logContents: String
 	times: [DateTime!]!
+	"""
+	Matches values that contain this keyword, case-insensitively.
+	"""
 	keyword: String
 	agentId: String
 }
@@ -3486,6 +3731,15 @@ type SysmonEventsEdge {
 	cursor: String!
 }
 
+"""
+Time range filter.
+
+Range semantics:
+- `start` is inclusive.
+- `end` is exclusive.
+- Omitting `start` means the range is unbounded below.
+- Omitting `end` means the range is unbounded above.
+"""
 input TimeRange {
 	start: DateTime
 	end: DateTime
@@ -3710,10 +3964,6 @@ directive @include(if: Boolean!) on FIELD | FRAGMENT_SPREAD | INLINE_FRAGMENT
 Directs the executor to skip this field or fragment when the `if` argument is true.
 """
 directive @skip(if: Boolean!) on FIELD | FRAGMENT_SPREAD | INLINE_FRAGMENT
-"""
-Provides a scalar specification URL for specifying the behavior of custom scalar types.
-"""
-directive @specifiedBy(url: String!) on SCALAR
 schema {
 	query: Query
 	mutation: Mutation

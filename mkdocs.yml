@@ -25,6 +25,7 @@ plugins:
           nav:
             - Overview: index.md
             - Getting Started: getting-started.md
+            - Event: event.md
             - Detection: detection.md
             - Event Investigation: event-investigation.md
             - Triage: triage.md
@@ -42,6 +43,7 @@ plugins:
           nav:
             - Overview: index.md
             - Getting Started: getting-started.md
+            - Event: event.md
             - Detection: detection.md
             - Event Investigation: event-investigation.md
             - Triage: triage.md
@@ -56,6 +58,7 @@ plugins:
           nav_translations:
             Overview: 개요
             Getting Started: 시작하기
+            Event: 이벤트
             Detection: 탐지
             Event Investigation: 이벤트 조사
             Triage: 선별

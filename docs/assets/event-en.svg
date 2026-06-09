@@ -1,0 +1,117 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 760 460" font-family="-apple-system, Segoe UI, Roboto, Helvetica, Arial, sans-serif" role="img" aria-labelledby="title desc">
+  <title id="title">Event page — Conn vertical slice (wireframe)</title>
+  <desc id="desc">Wireframe of the /event page. A Filters card holds the record-type selector ("Connection (Conn)"), a single sensor selector, a quick-range dropdown, a start/end time range, and source/destination IP and port range inputs, with Apply and Reset buttons. Below it a results table lists Conn records with columns Time, Source, Destination, Protocol, State, Service, Bytes out and Bytes in; a row opens a detail panel. A Prev/Next cursor paginator and a rows-per-page selector sit under the table. No total count is shown because Giganto connections do not expose one.</desc>
+  <style>
+    .bg { fill: #fafafa; }
+    .panel { fill: #ffffff; stroke: #e5e7eb; stroke-width: 1; }
+    .field { fill: #ffffff; stroke: #d4d4d8; stroke-width: 1; }
+    .h1 { font-size: 18px; fill: #18181b; font-weight: 700; }
+    .sub { font-size: 11px; fill: #71717a; }
+    .label { font-size: 10px; fill: #52525b; font-weight: 600; }
+    .val { font-size: 11px; fill: #18181b; }
+    .muted { font-size: 10px; fill: #a1a1aa; }
+    .btn { fill: #18181b; }
+    .btn-text { fill: #ffffff; font-size: 11px; font-weight: 600; }
+    .btn-outline { fill: #ffffff; stroke: #d4d4d8; stroke-width: 1; }
+    .btn-outline-text { fill: #18181b; font-size: 11px; font-weight: 600; }
+    .th { font-size: 10px; fill: #52525b; font-weight: 700; }
+    .td { font-size: 10px; fill: #27272a; }
+    .row { fill: #ffffff; }
+    .rowalt { fill: #f4f4f5; }
+  </style>
+
+  <rect class="bg" width="760" height="460"/>
+  <text x="24" y="32" class="h1">Event</text>
+  <text x="24" y="48" class="sub">Browse source events collected by Giganto.</text>
+
+  <!-- Filters card -->
+  <rect class="panel" x="24" y="60" width="712" height="150" rx="6" ry="6"/>
+  <text x="40" y="82" class="label">FILTERS</text>
+
+  <!-- row 1: record type, sensor, quick range -->
+  <text x="40" y="104" class="label">Record type</text>
+  <rect class="field" x="40" y="110" width="200" height="24" rx="4"/>
+  <text x="50" y="126" class="val">Connection (Conn)</text>
+
+  <text x="256" y="104" class="label">Sensor</text>
+  <rect class="field" x="256" y="110" width="200" height="24" rx="4"/>
+  <text x="266" y="126" class="val">sensor-a</text>
+
+  <text x="472" y="104" class="label">Quick range</text>
+  <rect class="field" x="472" y="110" width="248" height="24" rx="4"/>
+  <text x="482" y="126" class="val">1 hour</text>
+
+  <!-- row 2: start, end, ip/port ranges -->
+  <text x="40" y="152" class="label">Start</text>
+  <rect class="field" x="40" y="158" width="200" height="24" rx="4"/>
+  <text x="256" y="152" class="label">End</text>
+  <rect class="field" x="256" y="158" width="200" height="24" rx="4"/>
+
+  <text x="472" y="152" class="label">Source / dest IP &amp; port ranges</text>
+  <rect class="field" x="472" y="158" width="120" height="24" rx="4"/>
+  <rect class="field" x="600" y="158" width="120" height="24" rx="4"/>
+
+  <!-- buttons -->
+  <rect class="btn" x="40" y="190" width="64" height="10" rx="3" opacity="0"/>
+  <rect class="btn" x="640" y="60" width="0" height="0"/>
+  <rect class="btn" x="40" y="60" width="0" height="0"/>
+
+  <!-- results table -->
+  <rect class="panel" x="24" y="224" width="712" height="180" rx="6" ry="6"/>
+  <line x1="24" y1="252" x2="736" y2="252" stroke="#e5e7eb" stroke-width="1"/>
+  <text x="40" y="245" class="th">Time</text>
+  <text x="150" y="245" class="th">Source</text>
+  <text x="270" y="245" class="th">Destination</text>
+  <text x="388" y="245" class="th">Protocol</text>
+  <text x="452" y="245" class="th">State</text>
+  <text x="520" y="245" class="th">Service</text>
+  <text x="600" y="245" class="th" text-anchor="end">Bytes out</text>
+  <text x="712" y="245" class="th" text-anchor="end">Bytes in</text>
+
+  <g>
+    <rect class="rowalt" x="25" y="253" width="710" height="26"/>
+    <text x="40" y="270" class="td">2026-06-09 00:00:00</text>
+    <text x="150" y="270" class="td">192.168.0.10:51000</text>
+    <text x="270" y="270" class="td">10.0.0.5:443</text>
+    <text x="388" y="270" class="td">TCP</text>
+    <text x="452" y="270" class="td">ShDdAaFf</text>
+    <text x="520" y="270" class="td">ssl</text>
+    <text x="600" y="270" class="td" text-anchor="end">2,048</text>
+    <text x="712" y="270" class="td" text-anchor="end">9,931</text>
+  </g>
+  <g>
+    <rect class="row" x="25" y="279" width="710" height="26"/>
+    <text x="40" y="296" class="td">2026-06-09 00:00:01</text>
+    <text x="150" y="296" class="td">192.168.0.11:51001</text>
+    <text x="270" y="296" class="td">10.0.0.6:53</text>
+    <text x="388" y="296" class="td">UDP</text>
+    <text x="452" y="296" class="td">—</text>
+    <text x="520" y="296" class="td">dns</text>
+    <text x="600" y="296" class="td" text-anchor="end">64</text>
+    <text x="712" y="296" class="td" text-anchor="end">128</text>
+  </g>
+  <g>
+    <rect class="rowalt" x="25" y="305" width="710" height="26"/>
+    <text x="40" y="322" class="td">2026-06-09 00:00:02</text>
+    <text x="150" y="322" class="td">192.168.0.12:51002</text>
+    <text x="270" y="322" class="td">10.0.0.7:80</text>
+    <text x="388" y="322" class="td">TCP</text>
+    <text x="452" y="322" class="td">ShADad</text>
+    <text x="520" y="322" class="td">http</text>
+    <text x="600" y="322" class="td" text-anchor="end">512</text>
+    <text x="712" y="322" class="td" text-anchor="end">4,096</text>
+  </g>
+
+  <!-- pagination -->
+  <text x="40" y="380" class="label">Rows per page</text>
+  <rect class="field" x="128" y="366" width="56" height="22" rx="4"/>
+  <text x="138" y="381" class="val">50</text>
+
+  <rect class="btn-outline" x="560" y="364" width="74" height="26" rx="4"/>
+  <text x="597" y="381" class="btn-outline-text" text-anchor="middle">‹ Previous</text>
+  <rect class="btn" x="644" y="364" width="62" height="26" rx="4"/>
+  <text x="675" y="381" class="btn-text" text-anchor="middle">Next ›</text>
+
+  <text x="24" y="424" class="muted">Wireframe stand-in — the table shows data received from Giganto, so it ships as a placeholder until a real-data capture is taken.</text>
+</svg>

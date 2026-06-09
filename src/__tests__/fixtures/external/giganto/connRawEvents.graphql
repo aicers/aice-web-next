@@ -1,0 +1,31 @@
+query ConnRawEvents($filter: NetworkFilter!, $first: Int) {
+  connRawEvents(filter: $filter, first: $first) {
+    pageInfo {
+      hasPreviousPage
+      hasNextPage
+      startCursor
+      endCursor
+    }
+    edges {
+      cursor
+      node {
+        time
+        origAddr
+        origPort
+        respAddr
+        respPort
+        proto
+        connState
+        startTime
+        duration
+        service
+        origBytes
+        respBytes
+        origPkts
+        respPkts
+        origL2Bytes
+        respL2Bytes
+      }
+    }
+  }
+}

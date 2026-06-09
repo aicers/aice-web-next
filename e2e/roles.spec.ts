@@ -184,7 +184,7 @@ test.describe("Role management — UI", () => {
 
     const clonedRow = roleRow(page, `${TEST_PREFIX}ui-clone`);
     await expect(clonedRow).toBeVisible({ timeout: 15_000 });
-    await expect(clonedRow).toContainText("25");
+    await expect(clonedRow).toContainText("26");
   });
 
   test("built-in roles have no edit or delete buttons", async ({
