@@ -3,8 +3,13 @@ import "server-only";
 import { resolveEffectiveCustomerIds } from "@/lib/auth/customer-scope";
 import type { AuthSession } from "@/lib/auth/jwt";
 import { hasPermission } from "@/lib/auth/permissions";
+import { graphqlRequest } from "@/lib/graphql/client";
 import { gigantoClient } from "@/lib/graphql/external-client";
-import { withExternalErrorMapping } from "@/lib/node/error-mapping";
+import {
+  withExternalErrorMapping,
+  withManagerErrorMapping,
+} from "@/lib/node/error-mapping";
+import { REVIEW_MAX_PAGE_SIZE } from "@/lib/review/limits";
 
 import { RECORD_DESCRIPTORS } from "./descriptors";
 import { EventPermissionError } from "./errors";
@@ -12,30 +17,50 @@ import type { EventFilter } from "./filter";
 import { toNetworkFilter } from "./filter";
 import {
   type ConnPageArgs,
+  GIGANTO_MAX_PAGE_SIZE,
   type PageAnchor,
   type PageSize,
   pageArgsForAnchor,
 } from "./pagination";
 import {
   EVENT_SENSORS_QUERY,
+  PERIODIC_TIME_SERIES_QUERY,
   RAW_EVENT_QUERIES,
   STATISTICS_QUERY,
 } from "./queries";
+import { SAMPLING_POLICY_LIST_QUERY } from "./review-queries";
 import { type StatisticsFilter, toStatisticsVariables } from "./statistics";
+import { type TimeSeriesFilter, toTimeSeriesFilterInput } from "./time-series";
 import type {
   ConnRawEventConnection,
   EventSensorsResult,
   NetworkFilterInput,
+  PeriodicTimeSeriesResult,
+  PeriodicTimeSeriesVariables,
   RawEvent,
   RawEventConnection,
+  SamplingPolicy,
+  SamplingPolicyListResult,
   StatisticsRawEvent,
   StatisticsResult,
   StatisticsVariables,
+  TimeSeriesNode,
 } from "./types";
 
 const EVENT_READ = "event:read";
 const CUSTOMERS_ACCESS_ALL = "customers:access-all";
 const SYSTEM_ADMINISTRATOR = "System Administrator";
+
+/**
+ * Defensive upper bound on how many Relay pages a single connection walk
+ * will fetch before giving up. The selector and chart need the *whole*
+ * connection (there is no UI paging for either), so both walks follow
+ * `pageInfo.hasNextPage` to the tail. This cap exists only so a backend
+ * that wrongly reports `hasNextPage: true` forever cannot spin the BFF in
+ * an unbounded loop; at 100 rows/page it allows up to 100k nodes, far
+ * beyond any realistic sampling-policy count or charted series length.
+ */
+const MAX_CONNECTION_PAGES = 1000;
 
 interface DispatchContext {
   role: string;
@@ -100,6 +125,14 @@ function jwtCustomerIdsForEvent(
 
 interface RawEventsVariables extends Record<string, unknown> {
   filter: NetworkFilterInput;
+  first: number | null;
+  after: string | null;
+  last: number | null;
+  before: string | null;
+}
+
+/** Relay pagination args for the REview `samplingPolicyList` query. */
+interface SamplingPolicyListVariables extends Record<string, unknown> {
   first: number | null;
   after: string | null;
   last: number | null;
@@ -210,6 +243,130 @@ export async function fetchStatistics(
 }
 
 /**
+ * Fetch the periodic time series for a selected sampling policy `id`.
+ * Returns `null` when no id is selected — Giganto's `TimeSeriesFilter.id`
+ * is required, so the caller renders the pre-query prompt instead of
+ * dispatching an invalid query.
+ *
+ * The chart renders the returned nodes as the *complete* series, so this
+ * walks the Relay connection forward (`first`/`after`) until
+ * `hasNextPage` is false rather than returning only the first page —
+ * otherwise a series longer than {@link GIGANTO_MAX_PAGE_SIZE} chunks
+ * would silently render truncated. {@link MAX_CONNECTION_PAGES} bounds the
+ * walk defensively.
+ */
+export async function fetchPeriodicTimeSeries(
+  session: AuthSession,
+  filter: TimeSeriesFilter,
+  signal?: AbortSignal,
+): Promise<TimeSeriesNode[] | null> {
+  const input = toTimeSeriesFilterInput(filter);
+  if (input === null) return null;
+
+  const ctx = await buildDispatchContext(session);
+  const context = {
+    role: ctx.role,
+    customerIds: jwtCustomerIdsForEvent(ctx.role, ctx.customerIds),
+  };
+
+  const nodes: TimeSeriesNode[] = [];
+  let after: string | null = null;
+  for (let page = 0; page < MAX_CONNECTION_PAGES; page += 1) {
+    // Annotated to break the otherwise-circular inference: `after` feeds
+    // the next request's variables and is itself derived from `data`.
+    const data: PeriodicTimeSeriesResult = await withExternalErrorMapping(
+      "DATA_STORE",
+      gigantoClient<PeriodicTimeSeriesResult, PeriodicTimeSeriesVariables>(
+        PERIODIC_TIME_SERIES_QUERY,
+        {
+          filter: input,
+          first: GIGANTO_MAX_PAGE_SIZE,
+          after,
+          last: null,
+          before: null,
+        },
+        context,
+        signal,
+      ),
+    );
+    const connection = data.periodicTimeSeries;
+    nodes.push(...connection.nodes);
+    if (
+      !connection.pageInfo.hasNextPage ||
+      connection.pageInfo.endCursor === null
+    ) {
+      break;
+    }
+    after = connection.pageInfo.endCursor;
+  }
+  return nodes;
+}
+
+/**
+ * List sampling policies from REview to populate the Periodic Time
+ * Series `id` selector.
+ *
+ * Unlike the other Event actions this targets **REview** (via
+ * `graphqlRequest`), not Giganto — `samplingPolicyList` lives in REview's
+ * SDL. The BFF gate is still `event:read`: the lookup exists solely to
+ * drive the Event menu's Time Series view, the permission enum carries no
+ * sampling-policy-specific permission, and REview independently enforces
+ * its own mTLS + Context-JWT authorization on the dispatched request. The
+ * same `buildDispatchContext` resolves the caller's customer scope into
+ * the JWT, so the manager sees the same identity it does for Node/Triage
+ * reads.
+ *
+ * The selector has no free-form fallback and no UI paging, so this walks
+ * the connection forward (`first`/`after`) until `hasNextPage` is false:
+ * a deployment with more than {@link REVIEW_MAX_PAGE_SIZE} policies must
+ * still surface every selectable id. {@link MAX_CONNECTION_PAGES} bounds
+ * the walk defensively.
+ */
+export async function listSamplingPolicies(
+  session: AuthSession,
+  signal?: AbortSignal,
+): Promise<SamplingPolicy[]> {
+  const ctx = await buildDispatchContext(session);
+  const context = {
+    role: ctx.role,
+    customerIds: jwtCustomerIdsForEvent(ctx.role, ctx.customerIds),
+  };
+
+  const nodes: SamplingPolicy[] = [];
+  let after: string | null = null;
+  for (let page = 0; page < MAX_CONNECTION_PAGES; page += 1) {
+    // Annotated to break the otherwise-circular inference: `after` feeds
+    // the next request's variables and is itself derived from `data`.
+    const data: SamplingPolicyListResult = await withManagerErrorMapping(
+      // biome-ignore format: keep the override on the helper-name line so
+      // scripts/check-dispatch-context.mjs sees `// scope-allowlist:` within
+      // the call expression range (helper-name → opening paren).
+      graphqlRequest<SamplingPolicyListResult, SamplingPolicyListVariables>( // scope-allowlist: REview samplingPolicyList backs the Event Time Series id selector; event:read-gated, scope via buildDispatchContext.
+        SAMPLING_POLICY_LIST_QUERY,
+        {
+          first: REVIEW_MAX_PAGE_SIZE,
+          after,
+          last: null,
+          before: null,
+        },
+        context,
+        signal,
+      ),
+    );
+    const connection = data.samplingPolicyList;
+    nodes.push(...connection.nodes);
+    if (
+      !connection.pageInfo.hasNextPage ||
+      connection.pageInfo.endCursor === null
+    ) {
+      break;
+    }
+    after = connection.pageInfo.endCursor;
+  }
+  return nodes;
+}
+
+/**
  * List the sensor ids Giganto has ingested data for. Populates the
  * single-sensor selector.
  */
@@ -233,6 +390,9 @@ export async function listEventSensors(
   return data.sensors;
 }
 
-export { ExternalServiceUnavailableError } from "@/lib/node/errors";
+export {
+  ExternalServiceUnavailableError,
+  ManagerUnavailableError,
+} from "@/lib/node/errors";
 // Re-export errors so callers import from one module (mirrors Node).
 export { EventPermissionError } from "./errors";

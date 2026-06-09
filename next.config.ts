@@ -10,14 +10,19 @@ const nextConfig: NextConfig = {
   // `src/lib/triage/queries/**/*.graphql` (#561's `event-fields`
   // fragment is shared between the period-walk query and the per-id
   // member fetch), and the Event menu from
-  // `src/lib/event/queries/**/*.graphql` (the Giganto Conn data layer).
+  // `src/lib/event/queries/**/*.graphql` (the Giganto Conn data layer)
+  // plus `src/lib/event/review-queries/**/*.graphql` (the REview
+  // `samplingPolicyList` selector behind the Periodic Time Series view).
   // The trace-include keeps those files in the standalone output so the
   // runtime path resolves correctly.
   outputFileTracingIncludes: {
     "/api/nodes/**/*": ["./src/lib/node/queries/**/*"],
     "/[locale]/(dashboard)/nodes/**/*": ["./src/lib/node/queries/**/*"],
     "/[locale]/(dashboard)/triage/**/*": ["./src/lib/triage/queries/**/*"],
-    "/[locale]/(dashboard)/event/**/*": ["./src/lib/event/queries/**/*"],
+    "/[locale]/(dashboard)/event/**/*": [
+      "./src/lib/event/queries/**/*",
+      "./src/lib/event/review-queries/**/*",
+    ],
   },
   // Backstop against future NFT regressions broadening route
   // traces to the project root. Only excludes operator-side files

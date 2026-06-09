@@ -26,16 +26,18 @@ without it is redirected away.
 
 ## Views
 
-A toggle at the top of the page switches between two views of the same
+A toggle at the top of the page switches between three views of the same
 sensor data:
 
 - **Events** — the record table described below. This is the default.
 - **Statistics** — an aggregation chart of per-protocol metrics over
   time (see [Statistics](#statistics)).
+- **Time Series** — the periodic numeric series of a selected sampling
+  policy (see [Time Series](#time-series)).
 
 The active view is kept in the page URL alongside the filter, so a
 chosen view is shareable and survives a reload. Each view keeps its own
-filter, so switching back and forth does not discard either one.
+filter, so switching back and forth does not discard any of them.
 
 ## Filters
 
@@ -240,3 +242,49 @@ as an epoch-nanosecond value, which is converted to a calendar time for
 the axis. The 64-bit `count` and `size` values can exceed what a chart
 coordinate can hold exactly, so the plotted line may round above
 2^53; the tooltip always shows the exact integer Giganto returned.
+
+## Time Series
+
+The **Time Series** view charts the **periodic numeric series** of a
+single sampling policy, rather than aggregating traffic metrics. Select
+it from the [view toggle](#views).
+
+![Event time series view](../assets/event-timeseries-en.svg)
+
+!!! note "Wireframe stand-in"
+
+    The figure above is an SVG wireframe rather than a real capture.
+    The chart shows data received from Giganto, so a real screenshot is
+    taken from a stack with real data loaded and replaces this
+    placeholder in the final documentation sweep.
+
+### Time series filters
+
+- **Sampling policy** — a single-select dropdown that chooses which
+  series to chart. The options are the sampling policies defined in
+  REview; each option's label is the policy name. A policy is **required**
+  before **Apply** is enabled, because Giganto keys a time series by its
+  policy id. If the policy list cannot be loaded, the selector is
+  disabled and a notice is shown.
+- **Quick range** and **Time range** — the same relative-window shortcut
+  and explicit start/end bounds as the other views. The window is
+  optional; leaving it unset charts the policy's full available series.
+
+Reading the sampling policy list and the series both require the
+`event:read` permission — the same gate as the rest of the Event menu.
+The policy list is sourced from REview while the series itself comes from
+Giganto; no additional permission is needed.
+
+### Chart
+
+The chart draws **one line** for the selected policy's `data` values. The
+series may arrive in several chunks, each with its own origin time; they
+are ordered by that origin and joined into one continuous line. The
+**series origin** — the timestamp of the first chunk — is shown above the
+chart.
+
+The X-axis is the **cumulative sample index** (the series carries no
+per-sample interval), and the Y-axis is the sample value. Values are
+plain numbers, so unlike Statistics they need no 64-bit parsing. When the
+selected policy has no data points, an empty-state message is shown
+instead of an empty chart.

@@ -148,5 +148,11 @@
     "query": "node/applyAgentConfig.success.graphql",
     "fixture": "node/applyAgentConfig.success.json",
     "variables": { "nodeId": "11", "agentKeys": null }
+  },
+  {
+    "operation": "samplingPolicyList",
+    "query": "review/sampling-policy-list.graphql",
+    "fixture": "review/sampling-policy-list.json",
+    "variables": { "first": 100, "after": null, "last": null, "before": null }
   }
 ]

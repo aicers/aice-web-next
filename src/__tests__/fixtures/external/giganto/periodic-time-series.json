@@ -1,0 +1,22 @@
+{
+  "periodicTimeSeries": {
+    "pageInfo": {
+      "hasPreviousPage": false,
+      "hasNextPage": false,
+      "startCursor": "Y3Vyc29yLTA=",
+      "endCursor": "Y3Vyc29yLTE="
+    },
+    "nodes": [
+      {
+        "start": "2026-06-09T00:00:00Z",
+        "id": "policy-1",
+        "data": [1.5, 2.0, 3.25]
+      },
+      {
+        "start": "2026-06-09T01:00:00Z",
+        "id": "policy-1",
+        "data": [4.0, 5.5]
+      }
+    ]
+  }
+}

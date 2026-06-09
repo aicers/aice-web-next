@@ -1394,7 +1394,8 @@
     },
     "views": {
       "events": "Events",
-      "statistics": "Statistics"
+      "statistics": "Statistics",
+      "timeseries": "Time Series"
     },
     "protocols": {
       "conn": "Conn",
@@ -1436,6 +1437,19 @@
       "prequery": "Select sensors and apply filters to view aggregated statistics.",
       "empty": "No statistics match the current filters.",
       "noMetricData": "No data for the selected metric."
+    },
+    "timeSeries": {
+      "policy": "Sampling policy",
+      "policyPlaceholder": "Select a sampling policy",
+      "policyRequired": "Select a sampling policy to view its time series.",
+      "noPoliciesAvailable": "No sampling policies are available from REview.",
+      "policiesUnavailable": "Could not load the sampling policy list from REview.",
+      "origin": "Series origin: {start}",
+      "sample": "Sample {index}",
+      "value": "Value",
+      "prequery": "Select a sampling policy and apply filters to view its periodic time series.",
+      "empty": "No time series data matches the current filters.",
+      "noData": "No data points for the selected sampling policy."
     },
     "filters": {
       "heading": "Filters",

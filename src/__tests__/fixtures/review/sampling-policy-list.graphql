@@ -1,0 +1,24 @@
+query SamplingPolicyList(
+  $first: Int
+  $after: String
+  $last: Int
+  $before: String
+) {
+  samplingPolicyList(
+    first: $first
+    after: $after
+    last: $last
+    before: $before
+  ) {
+    pageInfo {
+      hasPreviousPage
+      hasNextPage
+      startCursor
+      endCursor
+    }
+    nodes {
+      id
+      name
+    }
+  }
+}

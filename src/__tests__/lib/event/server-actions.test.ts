@@ -1,15 +1,22 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
 import type { AuthSession } from "@/lib/auth/jwt";
-import type { EventFilter, StatisticsFilter } from "@/lib/event";
+import type {
+  EventFilter,
+  StatisticsFilter,
+  TimeSeriesFilter,
+} from "@/lib/event";
 
 import connPage1 from "../../fixtures/external/giganto/connRawEvents.page1.json";
+import periodicTimeSeriesFixture from "../../fixtures/external/giganto/periodic-time-series.json";
 import sensorsFixture from "../../fixtures/external/giganto/sensors.json";
 import statisticsFixture from "../../fixtures/external/giganto/statistics.json";
+import samplingPolicyFixture from "../../fixtures/review/sampling-policy-list.json";
 
 const mockHasPermission = vi.hoisted(() => vi.fn());
 const mockResolveEffectiveCustomerIds = vi.hoisted(() => vi.fn());
 const mockGigantoClient = vi.hoisted(() => vi.fn());
+const mockGraphqlRequest = vi.hoisted(() => vi.fn());
 
 vi.mock("@/lib/auth/permissions", () => ({
   hasPermission: mockHasPermission,
@@ -24,12 +31,19 @@ vi.mock("@/lib/graphql/external-client", () => ({
   tivanClient: vi.fn(),
 }));
 
+vi.mock("@/lib/graphql/client", () => ({
+  graphqlRequest: mockGraphqlRequest,
+}));
+
 import { RECORD_DESCRIPTORS, RECORD_TYPE_IDS } from "@/lib/event";
 import { RAW_EVENT_QUERIES } from "@/lib/event/queries";
 import {
   EventPermissionError,
+  fetchPeriodicTimeSeries,
   fetchStatistics,
   listEventSensors,
+  listSamplingPolicies,
+  ManagerUnavailableError,
   searchConnRawEvents,
   searchRawEvents,
 } from "@/lib/event/server-actions";
@@ -64,6 +78,7 @@ beforeEach(() => {
   mockResolveEffectiveCustomerIds.mockReset();
   mockResolveEffectiveCustomerIds.mockResolvedValue([1]);
   mockGigantoClient.mockReset();
+  mockGraphqlRequest.mockReset();
 });
 
 describe("searchConnRawEvents", () => {
@@ -290,6 +305,194 @@ describe("fetchStatistics", () => {
     mockGigantoClient.mockRejectedValue(new TypeError("fetch failed"));
     await expect(fetchStatistics(session, statsFilter)).rejects.toBeInstanceOf(
       ExternalServiceUnavailableError,
+    );
+  });
+});
+
+const tsFilter: TimeSeriesFilter = {
+  id: "policy-1",
+  start: "2026-06-09T00:00:00Z",
+  end: "2026-06-09T01:00:00Z",
+};
+
+describe("fetchPeriodicTimeSeries", () => {
+  it("returns null without dispatching when no policy id is selected", async () => {
+    const result = await fetchPeriodicTimeSeries(session, {
+      ...tsFilter,
+      id: null,
+    });
+    expect(result).toBeNull();
+    expect(mockGigantoClient).not.toHaveBeenCalled();
+  });
+
+  it("maps the filter to query variables and returns the series nodes", async () => {
+    mockGigantoClient.mockResolvedValue(periodicTimeSeriesFixture);
+    const result = await fetchPeriodicTimeSeries(session, tsFilter);
+    expect(result).toEqual(periodicTimeSeriesFixture.periodicTimeSeries.nodes);
+    const [, variables] = mockGigantoClient.mock.calls[0];
+    expect(variables).toMatchObject({
+      filter: {
+        id: "policy-1",
+        time: { start: "2026-06-09T00:00:00Z", end: "2026-06-09T01:00:00Z" },
+      },
+      first: 100,
+      after: null,
+      last: null,
+      before: null,
+    });
+  });
+
+  it("omits the time window when no bound is set", async () => {
+    mockGigantoClient.mockResolvedValue(periodicTimeSeriesFixture);
+    await fetchPeriodicTimeSeries(session, {
+      id: "policy-1",
+      start: null,
+      end: null,
+    });
+    const [, variables] = mockGigantoClient.mock.calls[0];
+    expect(variables.filter).toEqual({ id: "policy-1" });
+  });
+
+  it("walks every page to the tail when hasNextPage is true", async () => {
+    const page1 = {
+      periodicTimeSeries: {
+        pageInfo: {
+          hasPreviousPage: false,
+          hasNextPage: true,
+          startCursor: "c0",
+          endCursor: "c1",
+        },
+        nodes: [{ start: "2026-06-09T00:00:00Z", id: "policy-1", data: [1.0] }],
+      },
+    };
+    const page2 = {
+      periodicTimeSeries: {
+        pageInfo: {
+          hasPreviousPage: true,
+          hasNextPage: false,
+          startCursor: "c2",
+          endCursor: "c3",
+        },
+        nodes: [{ start: "2026-06-09T01:00:00Z", id: "policy-1", data: [2.0] }],
+      },
+    };
+    mockGigantoClient.mockResolvedValueOnce(page1).mockResolvedValueOnce(page2);
+
+    const result = await fetchPeriodicTimeSeries(session, tsFilter);
+
+    expect(mockGigantoClient).toHaveBeenCalledTimes(2);
+    expect(result).toEqual([
+      ...page1.periodicTimeSeries.nodes,
+      ...page2.periodicTimeSeries.nodes,
+    ]);
+    // First page starts at the head; the second advances past page 1.
+    expect(mockGigantoClient.mock.calls[0][1]).toMatchObject({
+      first: 100,
+      after: null,
+    });
+    expect(mockGigantoClient.mock.calls[1][1]).toMatchObject({
+      first: 100,
+      after: "c1",
+    });
+  });
+
+  it("throws EventPermissionError when the caller lacks event:read", async () => {
+    mockHasPermission.mockResolvedValue(false);
+    await expect(
+      fetchPeriodicTimeSeries(session, tsFilter),
+    ).rejects.toBeInstanceOf(EventPermissionError);
+    expect(mockGigantoClient).not.toHaveBeenCalled();
+  });
+
+  it("maps a Giganto connection failure to ExternalServiceUnavailableError", async () => {
+    mockGigantoClient.mockRejectedValue(new TypeError("fetch failed"));
+    await expect(
+      fetchPeriodicTimeSeries(session, tsFilter),
+    ).rejects.toBeInstanceOf(ExternalServiceUnavailableError);
+  });
+});
+
+describe("listSamplingPolicies", () => {
+  it("dispatches to REview via graphqlRequest and returns the policy nodes", async () => {
+    mockGraphqlRequest.mockResolvedValue(samplingPolicyFixture);
+    const result = await listSamplingPolicies(session);
+    expect(result).toEqual(samplingPolicyFixture.samplingPolicyList.nodes);
+    expect(mockGigantoClient).not.toHaveBeenCalled();
+    const [, variables] = mockGraphqlRequest.mock.calls[0];
+    expect(variables).toMatchObject({ first: 100 });
+  });
+
+  it("walks every page to the tail so policies past the first page are reachable", async () => {
+    const page1 = {
+      samplingPolicyList: {
+        pageInfo: {
+          hasPreviousPage: false,
+          hasNextPage: true,
+          startCursor: "c0",
+          endCursor: "c1",
+        },
+        nodes: [{ id: "policy-1", name: "Hourly conn rollup" }],
+      },
+    };
+    const page2 = {
+      samplingPolicyList: {
+        pageInfo: {
+          hasPreviousPage: true,
+          hasNextPage: false,
+          startCursor: "c2",
+          endCursor: "c3",
+        },
+        nodes: [{ id: "policy-2", name: "Daily DNS rollup" }],
+      },
+    };
+    mockGraphqlRequest
+      .mockResolvedValueOnce(page1)
+      .mockResolvedValueOnce(page2);
+
+    const result = await listSamplingPolicies(session);
+
+    expect(mockGraphqlRequest).toHaveBeenCalledTimes(2);
+    expect(result).toEqual([
+      ...page1.samplingPolicyList.nodes,
+      ...page2.samplingPolicyList.nodes,
+    ]);
+    // The tail policy is only reachable because the second page advances
+    // past the first page's end cursor.
+    expect(mockGraphqlRequest.mock.calls[1][1]).toMatchObject({
+      first: 100,
+      after: "c1",
+    });
+  });
+
+  it("ships the materialized customer scope for non-admin callers", async () => {
+    mockGraphqlRequest.mockResolvedValue(samplingPolicyFixture);
+    await listSamplingPolicies(session);
+    const [, , context] = mockGraphqlRequest.mock.calls[0];
+    expect(context.customerIds).toEqual([1]);
+  });
+
+  it("omits the customer_ids JWT claim for System Administrator", async () => {
+    mockGraphqlRequest.mockResolvedValue(samplingPolicyFixture);
+    await listSamplingPolicies({
+      ...session,
+      roles: ["System Administrator"],
+    } as AuthSession);
+    const [, , context] = mockGraphqlRequest.mock.calls[0];
+    expect(context.customerIds).toBeUndefined();
+  });
+
+  it("throws EventPermissionError when the caller lacks event:read", async () => {
+    mockHasPermission.mockResolvedValue(false);
+    await expect(listSamplingPolicies(session)).rejects.toBeInstanceOf(
+      EventPermissionError,
+    );
+    expect(mockGraphqlRequest).not.toHaveBeenCalled();
+  });
+
+  it("maps a REview connection failure to ManagerUnavailableError", async () => {
+    mockGraphqlRequest.mockRejectedValue(new TypeError("fetch failed"));
+    await expect(listSamplingPolicies(session)).rejects.toBeInstanceOf(
+      ManagerUnavailableError,
     );
   });
 });

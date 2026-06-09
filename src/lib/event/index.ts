@@ -82,6 +82,19 @@ export {
   type StatisticsSeries,
   type StatisticsSeriesDatum,
 } from "./statistics-format";
+export {
+  EMPTY_TIME_SERIES_FILTER,
+  parseTimeSeriesFilterFromSearchParams,
+  TIME_SERIES_PARAM_KEYS,
+  type TimeSeriesFilter,
+  timeSeriesFilterToSearchEntries,
+  toTimeSeriesFilterInput,
+} from "./time-series";
+export {
+  buildTimeSeries,
+  type TimeSeriesData,
+  type TimeSeriesPoint,
+} from "./time-series-format";
 export type {
   ConnRawEvent,
   ConnRawEventConnection,
@@ -95,9 +108,11 @@ export type {
   RawEventConnection,
   RawEventEdge,
   RawEventFieldValue,
+  SamplingPolicy,
   StatisticsDetail,
   StatisticsInfo,
   StatisticsRawEvent,
+  TimeSeriesNode,
 } from "./types";
 export {
   coerceViewMode,

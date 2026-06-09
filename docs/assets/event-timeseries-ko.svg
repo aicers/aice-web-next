@@ -1,0 +1,60 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 760 460" font-family="-apple-system, Segoe UI, Roboto, Helvetica, Arial, sans-serif" role="img" aria-labelledby="title desc">
+  <title id="title">이벤트 페이지 — 시계열 보기 (와이어프레임)</title>
+  <desc id="desc">/event 페이지 주기 시계열 보기의 와이어프레임. 상단의 보기 토글은 이벤트, 통계, 시계열을 제공하며 시계열이 활성 상태입니다. 필터 카드에는 샘플링 정책 드롭다운(REview의 samplingPolicyList로 채워지는 id 선택기), 빠른 범위 드롭다운, 시작/종료 시간 입력이 있으며 적용과 초기화 버튼이 있습니다. 그 아래 라인 차트는 선택한 정책의 숫자 데이터 계열을 그립니다. 캡션은 계열 기준 시각을 표시하고, X축은 누적 샘플 인덱스, Y축은 값입니다.</desc>
+  <style>
+    .bg { fill: #fafafa; }
+    .panel { fill: #ffffff; stroke: #e5e7eb; stroke-width: 1; }
+    .field { fill: #ffffff; stroke: #d4d4d8; stroke-width: 1; }
+    .h1 { font-size: 18px; fill: #18181b; font-weight: 700; }
+    .sub { font-size: 11px; fill: #71717a; }
+    .label { font-size: 10px; fill: #52525b; font-weight: 600; }
+    .val { font-size: 11px; fill: #18181b; }
+    .muted { font-size: 10px; fill: #a1a1aa; }
+    .btn { fill: #18181b; }
+    .btn-text { fill: #ffffff; font-size: 11px; font-weight: 600; }
+    .btn-outline { fill: #ffffff; stroke: #d4d4d8; stroke-width: 1; }
+    .btn-outline-text { fill: #18181b; font-size: 11px; font-weight: 600; }
+    .tab-on { fill: #18181b; }
+    .tab-on-text { fill: #ffffff; font-size: 11px; font-weight: 600; }
+    .tab-off { fill: #f4f4f5; stroke: #e5e7eb; stroke-width: 1; }
+    .tab-off-text { fill: #52525b; font-size: 11px; font-weight: 600; }
+    .axis { stroke: #d4d4d8; stroke-width: 1; }
+    .s1 { stroke: #2563eb; stroke-width: 2; fill: none; }
+  </style>
+  <rect class="bg" x="0" y="0" width="760" height="460" />
+
+  <text class="h1" x="24" y="34">이벤트</text>
+  <text class="sub" x="24" y="52">Giganto가 수집한 원본 이벤트를 탐색합니다.</text>
+
+  <!-- View-mode toggle -->
+  <rect class="tab-off" x="24" y="66" width="80" height="26" rx="6" />
+  <text class="tab-off-text" x="64" y="83" text-anchor="middle">이벤트</text>
+  <rect class="tab-off" x="106" y="66" width="80" height="26" rx="6" />
+  <text class="tab-off-text" x="146" y="83" text-anchor="middle">통계</text>
+  <rect class="tab-on" x="188" y="66" width="80" height="26" rx="6" />
+  <text class="tab-on-text" x="228" y="83" text-anchor="middle">시계열</text>
+
+  <!-- Filters card -->
+  <rect class="panel" x="24" y="104" width="712" height="104" rx="8" />
+  <text class="label" x="40" y="126">샘플링 정책</text>
+  <rect class="field" x="40" y="134" width="220" height="20" rx="4" />
+  <text class="val" x="48" y="148">시간별 conn 집계 ▾</text>
+  <text class="label" x="320" y="126">시간 범위</text>
+  <rect class="field" x="320" y="134" width="180" height="20" rx="4" />
+  <text class="muted" x="328" y="148">시작 — 종료</text>
+  <rect class="btn" x="600" y="168" width="60" height="24" rx="6" />
+  <text class="btn-text" x="630" y="184" text-anchor="middle">적용</text>
+  <rect class="btn-outline" x="668" y="168" width="60" height="24" rx="6" />
+  <text class="btn-outline-text" x="698" y="184" text-anchor="middle">초기화</text>
+
+  <!-- Chart -->
+  <text class="muted" x="24" y="236">계열 기준 시각: 2026-06-09 00:00</text>
+  <rect class="panel" x="24" y="248" width="712" height="188" rx="8" />
+  <line class="axis" x1="60" y1="272" x2="60" y2="412" />
+  <line class="axis" x1="60" y1="412" x2="708" y2="412" />
+  <polyline class="s1" points="60,392 160,348 260,372 360,300 460,332 560,288 660,312" />
+  <text class="muted" x="60" y="428">0</text>
+  <text class="muted" x="700" y="428" text-anchor="end">n</text>
+  <text class="muted" x="34" y="276">값</text>
+</svg>

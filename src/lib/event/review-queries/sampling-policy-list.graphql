@@ -1,0 +1,34 @@
+# Validates against schemas/review.graphql.
+#
+# Sampling policies sourced from REview (NOT Giganto), used to populate
+# the Periodic Time Series `id` selector (E5 Part 2). This document lives
+# under `src/lib/event/review-queries/` rather than the sibling
+# `src/lib/event/queries/` tree because the latter is hard-routed to the
+# Giganto SDL by the schema-validation test; a REview query placed there
+# would be validated against the wrong SDL and fail. `SamplingPolicy.id`
+# is `ID!` (the selector value); `name` is the human-readable option
+# label.
+query SamplingPolicyList(
+  $first: Int
+  $after: String
+  $last: Int
+  $before: String
+) {
+  samplingPolicyList(
+    first: $first
+    after: $after
+    last: $last
+    before: $before
+  ) {
+    pageInfo {
+      hasPreviousPage
+      hasNextPage
+      startCursor
+      endCursor
+    }
+    nodes {
+      id
+      name
+    }
+  }
+}

@@ -8,12 +8,12 @@ import { Tabs, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { VIEW_MODE_PARAM, VIEW_MODES, type ViewMode } from "@/lib/event";
 
 /**
- * The Event page view-mode toggle (`Events | Statistics`).
+ * The Event page view-mode toggle (`Events | Statistics | Time Series`).
  *
  * Switching writes `?view=` into the URL — the active filter for each
- * view rides in its own params, so flipping the toggle keeps both
- * views' state and the server component re-reads the URL to render the
- * selected one. Time Series is added here in E5 Part 2.
+ * view rides in its own params, so flipping the toggle keeps every
+ * view's state and the server component re-reads the URL to render the
+ * selected one. Time Series was added here in E5 Part 2.
  */
 export function EventViewTabs({ active }: { active: ViewMode }) {
   const t = useTranslations("event.views");
