@@ -1,0 +1,54 @@
+{
+  "connRawEvents": {
+    "pageInfo": {
+      "hasPreviousPage": true,
+      "hasNextPage": false,
+      "startCursor": "Y3Vyc29yOjI=",
+      "endCursor": "Y3Vyc29yOjM="
+    },
+    "edges": [
+      {
+        "cursor": "Y3Vyc29yOjI=",
+        "node": {
+          "time": "2026-06-09T00:00:02Z",
+          "origAddr": "192.168.0.12",
+          "origPort": 51002,
+          "respAddr": "10.0.0.7",
+          "respPort": 80,
+          "proto": 6,
+          "connState": "S0",
+          "startTime": "2026-06-09T00:00:02Z",
+          "duration": "750000000",
+          "service": "http",
+          "origBytes": "512",
+          "respBytes": "1024",
+          "origPkts": "4",
+          "respPkts": "6",
+          "origL2Bytes": "768",
+          "respL2Bytes": "1280"
+        }
+      },
+      {
+        "cursor": "Y3Vyc29yOjM=",
+        "node": {
+          "time": "2026-06-09T00:00:03Z",
+          "origAddr": "192.168.0.13",
+          "origPort": 51003,
+          "respAddr": "10.0.0.8",
+          "respPort": 21,
+          "proto": 6,
+          "connState": "RSTO",
+          "startTime": "2026-06-09T00:00:03Z",
+          "duration": "500000000",
+          "service": "ftp",
+          "origBytes": "256",
+          "respBytes": "768",
+          "origPkts": "3",
+          "respPkts": "5",
+          "origL2Bytes": "384",
+          "respL2Bytes": "896"
+        }
+      }
+    ]
+  }
+}

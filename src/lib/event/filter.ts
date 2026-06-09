@@ -52,6 +52,19 @@ export const EMPTY_EVENT_FILTER: EventFilter = {
   respPortEnd: null,
 };
 
+/** Inclusive 16-bit port bounds Giganto accepts in a `PortRange`. */
+export const MIN_PORT = 0;
+export const MAX_PORT = 65535;
+
+/**
+ * Whether a parsed port is a whole number within Giganto's range. The
+ * form and the URL parser share this so a port the form accepts is
+ * never silently dropped server-side (and vice versa).
+ */
+export function isPortInRange(value: number): boolean {
+  return Number.isInteger(value) && value >= MIN_PORT && value <= MAX_PORT;
+}
+
 /** URL query-string names that persist the filter. */
 export const FILTER_PARAM_KEYS = {
   recordType: "type",
@@ -123,8 +136,7 @@ function readPort(
   if (raw === null) return null;
   if (!/^\d+$/.test(raw)) return null;
   const n = Number.parseInt(raw, 10);
-  if (!Number.isInteger(n) || n < 0 || n > 65535) return null;
-  return n;
+  return isPortInRange(n) ? n : null;
 }
 
 /**

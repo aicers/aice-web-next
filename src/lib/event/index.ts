@@ -4,6 +4,9 @@ export {
   type EventFilter,
   FILTER_PARAM_KEYS,
   filterToSearchEntries,
+  isPortInRange,
+  MAX_PORT,
+  MIN_PORT,
   parseFilterFromSearchParams,
   toNetworkFilter,
 } from "./filter";

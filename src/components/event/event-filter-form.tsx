@@ -13,7 +13,7 @@ import {
   SelectValue,
 } from "@/components/ui/select";
 import { computePeriodRange, PERIOD_KEYS } from "@/lib/detection/period";
-import { type EventFilter, RECORD_TYPE_IDS } from "@/lib/event";
+import { type EventFilter, isPortInRange, RECORD_TYPE_IDS } from "@/lib/event";
 
 const QUICK_RANGE_NONE = "none";
 
@@ -80,15 +80,36 @@ export function EventFilterForm({
     return Number.isInteger(n) ? n : null;
   };
 
+  // A port is valid when empty or a whole number in `0..65535`. The
+  // server drops out-of-range values when parsing the URL, so the form
+  // must block Apply rather than let the query silently widen past what
+  // the operator sees (e.g. `70000` would otherwise vanish server-side).
+  // Shares {@link isPortInRange} with the URL parser so the two agree.
+  const portInvalid = (value: number | null): boolean =>
+    value !== null && !isPortInRange(value);
+  const anyPortInvalid =
+    portInvalid(draft.origPortStart) ||
+    portInvalid(draft.origPortEnd) ||
+    portInvalid(draft.respPortStart) ||
+    portInvalid(draft.respPortEnd);
+
   return (
     <form
       className="space-y-4"
       onSubmit={(event) => {
         event.preventDefault();
+        if (anyPortInvalid) return;
         onApply();
       }}
     >
       <div className="grid grid-cols-1 gap-4 sm:grid-cols-2 lg:grid-cols-3">
+        {/*
+          Record type is the "record-type/protocol selector" from the
+          issue scope: it picks which Giganto event kind to browse.
+          There is no separate protocol filter because Giganto's
+          `NetworkFilter` has no protocol field — the IP protocol is a
+          per-record value shown as a results column, not a query input.
+        */}
         <div className="space-y-1.5">
           <Label htmlFor="event-record-type">{t("recordType")}</Label>
           <Select
@@ -203,6 +224,8 @@ export function EventFilterForm({
             draft.origPortStart === null ? "" : String(draft.origPortStart)
           }
           endValue={draft.origPortEnd === null ? "" : String(draft.origPortEnd)}
+          startInvalid={portInvalid(draft.origPortStart)}
+          endInvalid={portInvalid(draft.origPortEnd)}
           onStart={(v) => set({ origPortStart: parsePort(v) })}
           onEnd={(v) => set({ origPortEnd: parsePort(v) })}
         />
@@ -216,13 +239,21 @@ export function EventFilterForm({
             draft.respPortStart === null ? "" : String(draft.respPortStart)
           }
           endValue={draft.respPortEnd === null ? "" : String(draft.respPortEnd)}
+          startInvalid={portInvalid(draft.respPortStart)}
+          endInvalid={portInvalid(draft.respPortEnd)}
           onStart={(v) => set({ respPortStart: parsePort(v) })}
           onEnd={(v) => set({ respPortEnd: parsePort(v) })}
         />
       </div>
 
+      {anyPortInvalid ? (
+        <p className="text-destructive text-sm" role="alert">
+          {tf("portRangeInvalid")}
+        </p>
+      ) : null}
+
       <div className="flex gap-2">
-        <Button type="submit" disabled={pending}>
+        <Button type="submit" disabled={pending || anyPortInvalid}>
           {tf("apply")}
         </Button>
         <Button
@@ -246,6 +277,8 @@ function RangeField({
   type = "text",
   startValue,
   endValue,
+  startInvalid = false,
+  endInvalid = false,
   onStart,
   onEnd,
 }: {
@@ -256,6 +289,8 @@ function RangeField({
   type?: "text" | "number";
   startValue: string;
   endValue: string;
+  startInvalid?: boolean;
+  endInvalid?: boolean;
   onStart: (value: string) => void;
   onEnd: (value: string) => void;
 }) {
@@ -267,6 +302,7 @@ function RangeField({
           id={`${idPrefix}-start`}
           type={type}
           aria-label={`${label} ${startLabel}`}
+          aria-invalid={startInvalid || undefined}
           placeholder={startLabel}
           value={startValue}
           onChange={(e) => onStart(e.target.value)}
@@ -276,6 +312,7 @@ function RangeField({
           id={`${idPrefix}-end`}
           type={type}
           aria-label={`${label} ${endLabel}`}
+          aria-invalid={endInvalid || undefined}
           placeholder={endLabel}
           value={endValue}
           onChange={(e) => onEnd(e.target.value)}

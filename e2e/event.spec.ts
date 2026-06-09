@@ -46,6 +46,28 @@ test.beforeAll(async ({ workerUsername, workerPrefix }) => {
       fixture: "external/giganto/connRawEvents.page1.json",
     },
   });
+
+  // Forward step: Next sends `first/after` with page 1's endCursor.
+  // Page 2 reports hasPreviousPage true / hasNextPage false.
+  await session.registerStub({
+    operation: "connRawEvents",
+    matchVariables: { first: 50, after: "Y3Vyc29yOjE=" },
+    response: {
+      kind: "fixture",
+      fixture: "external/giganto/connRawEvents.page2.json",
+    },
+  });
+
+  // Backward step: Previous sends `last/before` with page 2's
+  // startCursor, returning to page 1.
+  await session.registerStub({
+    operation: "connRawEvents",
+    matchVariables: { last: 50, before: "Y3Vyc29yOjI=" },
+    response: {
+      kind: "fixture",
+      fixture: "external/giganto/connRawEvents.page1.json",
+    },
+  });
 });
 
 test.beforeEach(async ({ workerUsername }) => {
@@ -113,6 +135,24 @@ test("event page renders filter form, Conn search, pagination, detail", async ({
   // Pagination driven off pageInfo: Prev disabled, Next enabled.
   await expect(page.getByRole("button", { name: "Previous" })).toBeDisabled();
   await expect(page.getByRole("button", { name: "Next" })).toBeEnabled();
+
+  // Next steps forward via `first/after`: page 2 content appears, the
+  // cursor lands in the URL, and pageInfo flips Prev on / Next off.
+  await page.getByRole("button", { name: "Next" }).click();
+  await expect(page.getByRole("cell", { name: "http" })).toBeVisible({
+    timeout: 10_000,
+  });
+  await expect(page.getByText("ShDdAaFf")).toBeHidden();
+  await expect(page).toHaveURL(/after=Y3Vyc29yOjE%3D/);
+  await expect(page.getByRole("button", { name: "Previous" })).toBeEnabled();
+  await expect(page.getByRole("button", { name: "Next" })).toBeDisabled();
+
+  // Previous steps backward via `last/before`: page 1 content returns
+  // and the backward cursor lands in the URL.
+  await page.getByRole("button", { name: "Previous" }).click();
+  await expect(page.getByText("ShDdAaFf")).toBeVisible({ timeout: 10_000 });
+  await expect(page.getByRole("cell", { name: "http" })).toBeHidden();
+  await expect(page).toHaveURL(/before=Y3Vyc29yOjI%3D/);
 
   // Page-size selector exposes 25 / 50 / 100.
   const pageSizeTrigger = page.getByLabel("Rows per page");

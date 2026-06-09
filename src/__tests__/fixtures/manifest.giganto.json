@@ -14,6 +14,16 @@
     }
   },
   {
+    "operation": "connRawEvents",
+    "query": "external/giganto/connRawEvents.graphql",
+    "fixture": "external/giganto/connRawEvents.page2.json",
+    "variables": {
+      "filter": { "sensor": "sensor-a" },
+      "first": 50,
+      "after": "Y3Vyc29yOjE="
+    }
+  },
+  {
     "operation": "sensors",
     "query": "external/giganto/sensors.graphql",
     "fixture": "external/giganto/sensors.json"

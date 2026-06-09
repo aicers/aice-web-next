@@ -1375,6 +1375,7 @@
       "respPort": "Destination port range",
       "rangeStart": "Start",
       "rangeEnd": "End",
+      "portRangeInvalid": "Ports must be whole numbers between 0 and 65535.",
       "apply": "Apply",
       "reset": "Reset"
     },

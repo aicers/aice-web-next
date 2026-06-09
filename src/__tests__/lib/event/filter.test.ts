@@ -4,9 +4,28 @@ import {
   EMPTY_EVENT_FILTER,
   type EventFilter,
   filterToSearchEntries,
+  isPortInRange,
+  MAX_PORT,
+  MIN_PORT,
   parseFilterFromSearchParams,
   toNetworkFilter,
 } from "@/lib/event/filter";
+
+describe("isPortInRange", () => {
+  it("accepts whole numbers within the 16-bit range", () => {
+    expect(isPortInRange(MIN_PORT)).toBe(true);
+    expect(isPortInRange(443)).toBe(true);
+    expect(isPortInRange(MAX_PORT)).toBe(true);
+  });
+
+  it("rejects out-of-range or non-integer values", () => {
+    expect(isPortInRange(-1)).toBe(false);
+    expect(isPortInRange(MAX_PORT + 1)).toBe(false);
+    expect(isPortInRange(70000)).toBe(false);
+    expect(isPortInRange(443.5)).toBe(false);
+    expect(isPortInRange(Number.NaN)).toBe(false);
+  });
+});
 
 describe("toNetworkFilter", () => {
   it("returns null when no sensor is selected", () => {
