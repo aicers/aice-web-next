@@ -23,7 +23,7 @@ import {
  * attachment`). The handler calls the shared `fetchDetectionPackets`
  * helper — the single `packets` fetch layer, which paginates the
  * `PacketConnection` under hard packet / byte caps — then frames the
- * decoded bytes with `assemblePcapFile` (verified
+ * decoded bytes with `assemblePcapFile` (in-app-confirmed
  * `LINKTYPE_ETHERNET`, per-packet `packetTime` timestamps). Raw bytes
  * are handled entirely server-side; they never pass through client
  * state.
