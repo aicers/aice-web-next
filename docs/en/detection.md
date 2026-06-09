@@ -680,6 +680,12 @@ rows rather than a column of dashes.
     is exposed on every row — the detection service issues a
     stable `id` for every event, so the link always lands on a
     valid investigation.
+  - **Open packet detail** opens the same Investigation view
+    deep-linked to its **PCAP** tab (`?tab=pcap`), so the parsed
+    packet capture and the **Download .pcap** action are one
+    click away. Like **Open full investigation** it is a real
+    anchor, so middle-click / Cmd-Ctrl-click open it in a new
+    tab.
   - **Pivot links** — `Same source IP · last 24h`,
     `Same destination IP · last 24h`, and `Same kind ·
     last 7d` — are also real anchor tags pointing at the

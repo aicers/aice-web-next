@@ -697,6 +697,8 @@ export default async function DetectionPage({
       booleanFalse: t("quickPeek.booleanFalse"),
       openInvestigation: t("quickPeek.openInvestigation"),
       openInvestigationTooltip: t("quickPeek.openInvestigationTooltip"),
+      openPacketDetail: t("quickPeek.openPacketDetail"),
+      openPacketDetailTooltip: t("quickPeek.openPacketDetailTooltip"),
       pivotSource: t("quickPeek.pivotSource"),
       pivotDestination: t("quickPeek.pivotDestination"),
       pivotKind: t("quickPeek.pivotKind"),

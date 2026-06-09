@@ -1,6 +1,6 @@
 "use client";
 
-import { Check, Copy, ExternalLink, X } from "lucide-react";
+import { Check, Copy, ExternalLink, FileSearch, X } from "lucide-react";
 import { useEffect, useState } from "react";
 import { MorePopover } from "@/components/detection/more-popover";
 import {
@@ -53,6 +53,8 @@ export interface QuickPeekInspectorLabels {
   booleanFalse: string;
   openInvestigation: string;
   openInvestigationTooltip: string;
+  openPacketDetail: string;
+  openPacketDetailTooltip: string;
   pivotSource: string;
   pivotDestination: string;
   pivotKind: string;
@@ -270,6 +272,27 @@ export function QuickPeekInspector({
               >
                 <ExternalLink className="size-3.5" aria-hidden="true" />
                 {labels.openInvestigation}
+              </Link>
+            ) : null}
+            {/*
+             * Deep link into the Investigation PCAP tab (#728). Built
+             * by appending `&tab=pcap` to the same investigate href —
+             * which already carries `?returnTo=...` — so the packet
+             * detail opens directly without a manual tab click. Omitted
+             * when the event is not addressable (no investigate href),
+             * and when the event has no sensor: the PCAP tab is keyed by
+             * sensor and hidden in that case (see
+             * `EventInvestigation`'s `showPcap`), so the deep link would
+             * silently fall back to Overview — a misleading action.
+             */}
+            {investigateHref && event.sensor.length > 0 ? (
+              <Link
+                href={`${investigateHref}&tab=pcap`}
+                className="border-border text-foreground hover:bg-muted focus-visible:ring-ring/50 inline-flex items-center justify-center gap-1.5 rounded-md border px-3 py-1.5 text-xs font-medium focus-visible:ring-2 focus-visible:outline-none"
+                title={labels.openPacketDetailTooltip}
+              >
+                <FileSearch className="size-3.5" aria-hidden="true" />
+                {labels.openPacketDetail}
               </Link>
             ) : null}
             <Pivots

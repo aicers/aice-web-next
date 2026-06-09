@@ -7,6 +7,9 @@ import type { AuthSession } from "@/lib/auth/jwt";
 import { hasPermission } from "@/lib/auth/permissions";
 import type { EventLocator } from "@/lib/events/event-locator";
 import { graphqlRequest } from "@/lib/graphql/client";
+import { gigantoClient } from "@/lib/graphql/external-client";
+import { withExternalErrorMapping } from "@/lib/node/error-mapping";
+import { GIGANTO_PACKETS_QUERY, GIGANTO_PCAP_QUERY } from "@/lib/node/queries";
 import { withReviewErrorMapping } from "@/lib/review/error-mapping";
 import {
   ReviewForbiddenError,
@@ -22,6 +25,13 @@ import {
   type PageSize,
   searchArgsForAnchor,
 } from "./pagination";
+import {
+  estimateBase64Bytes,
+  PCAP_MAX_BYTES,
+  PCAP_MAX_PACKETS,
+  PcapCapExceededError,
+  type PcapPacketInput,
+} from "./pcap";
 import {
   EVENT_BY_ID_QUERY,
   EVENT_COUNTS_BY_CATEGORY_QUERY,
@@ -563,4 +573,166 @@ export async function eventFrequencySeries(
     ),
   );
   return data.eventFrequencySeries;
+}
+
+// ── Giganto PCAP / packets (Detection packet detail, #728) ─────────
+//
+// `pcap` and `packets` are answered by Giganto (the data store), not
+// REview, so they dispatch through `gigantoClient` (mTLS + Context
+// JWT straight to the configured endpoint) and map transport/GraphQL
+// failures with `withExternalErrorMapping("DATA_STORE", …)`. Both run
+// the Detection permission + customer-scope gate
+// (`buildDispatchContext`) first — with an empty structured filter,
+// like `lookupIpLocation` / `fetchEventByLocator` — so an
+// unauthorized caller is rejected before any network traffic, and the
+// caller's role / materialized customer scope rides the Context JWT.
+//
+// The detection event's `time` (`DateTime!`) maps to the filter's
+// required `requestTime`; `packetTime` (a `TimeRange`) is left unset so
+// Giganto returns every packet stored for that request. Per-packet
+// on-wire times come back on each `Packet.packetTime` for the `.pcap`
+// record headers (see `assemblePcapFile`).
+
+/**
+ * Page size for the `packets` connection. Giganto rejects `first`
+ * above its `MAXIMUM_PAGE_SIZE` (100, mirrored in
+ * `src/lib/event/pagination.ts`), so the download pages at the max to
+ * minimize round-trips while staying within the cap; the hard
+ * packet / byte ceilings bound total work regardless.
+ */
+const PCAP_FETCH_PAGE_SIZE = 100;
+
+interface PacketFilterInput {
+  sensor: string;
+  requestTime: string;
+}
+
+interface GigantoPcapResult {
+  pcap: { requestTime: string; parsedPcap: string };
+}
+
+interface GigantoPcapVariables extends Record<string, unknown> {
+  filter: PacketFilterInput;
+}
+
+interface GigantoPacketsResult {
+  packets: {
+    pageInfo: { hasNextPage: boolean; endCursor: string | null };
+    nodes: { requestTime: string; packetTime: string; packet: string }[];
+  };
+}
+
+interface GigantoPacketsVariables extends Record<string, unknown> {
+  filter: PacketFilterInput;
+  first: number;
+  after: string | null;
+}
+
+export interface DetectionPcap {
+  requestTime: string;
+  parsedPcap: string;
+}
+
+/**
+ * Fetch the parsed (human-readable) PCAP text for a Detection event.
+ * Backs the Investigation PCAP tab. The caller supplies the event's
+ * `sensor` and `time`; the Detection guard authorizes the request and
+ * Giganto scopes the capture to the caller's sensors / customers via
+ * the Context JWT.
+ */
+export async function fetchDetectionPcap(
+  session: AuthSession,
+  sensor: string,
+  requestTime: string,
+  signal?: AbortSignal,
+): Promise<DetectionPcap> {
+  const ctx = await buildDispatchContext(session, {
+    mode: "structured",
+    input: {},
+  });
+  const data = await withExternalErrorMapping(
+    "DATA_STORE",
+    gigantoClient<GigantoPcapResult, GigantoPcapVariables>(
+      GIGANTO_PCAP_QUERY,
+      { filter: { sensor, requestTime } },
+      {
+        role: ctx.role,
+        customerIds: jwtCustomerIdsForDetection(ctx.role, ctx.customerIds),
+      },
+      signal,
+    ),
+  );
+  return data.pcap;
+}
+
+/**
+ * Fetch the raw packet records for a Detection event, paging the
+ * `PacketConnection` to completion under hard packet-count
+ * ({@link PCAP_MAX_PACKETS}) and byte ({@link PCAP_MAX_BYTES}) caps so
+ * a large capture cannot blow up memory or response time. This is the
+ * single `packets` fetch layer — the download Route Handler calls it
+ * rather than re-fetching, and feeds the result straight into
+ * `assemblePcapFile`. Raw `packet` bytes are returned only to that
+ * server-side assembler; they never reach the client.
+ *
+ * A `hasNextPage` with no / non-advancing `endCursor` aborts the loop
+ * (mirrors the CSV export stream's pagination guard) rather than
+ * spinning or silently truncating.
+ */
+export async function fetchDetectionPackets(
+  session: AuthSession,
+  sensor: string,
+  requestTime: string,
+  signal?: AbortSignal,
+): Promise<PcapPacketInput[]> {
+  const ctx = await buildDispatchContext(session, {
+    mode: "structured",
+    input: {},
+  });
+
+  const records: PcapPacketInput[] = [];
+  let after: string | null = null;
+  let totalBytes = 0;
+
+  for (;;) {
+    // Annotate `data` so TypeScript does not chase a circular
+    // inference: `after` feeds the request that produces `data`, and
+    // `after` is later reassigned from a value derived from `data`.
+    const data: GigantoPacketsResult = await withExternalErrorMapping(
+      "DATA_STORE",
+      gigantoClient<GigantoPacketsResult, GigantoPacketsVariables>(
+        GIGANTO_PACKETS_QUERY,
+        { filter: { sensor, requestTime }, first: PCAP_FETCH_PAGE_SIZE, after },
+        {
+          role: ctx.role,
+          customerIds: jwtCustomerIdsForDetection(ctx.role, ctx.customerIds),
+        },
+        signal,
+      ),
+    );
+    const connection = data.packets;
+    for (const node of connection.nodes) {
+      if (records.length >= PCAP_MAX_PACKETS) {
+        throw new PcapCapExceededError("packets");
+      }
+      totalBytes += estimateBase64Bytes(node.packet);
+      if (totalBytes > PCAP_MAX_BYTES) {
+        throw new PcapCapExceededError("bytes");
+      }
+      records.push({ packetTime: node.packetTime, packet: node.packet });
+    }
+    if (!connection.pageInfo.hasNextPage) break;
+    const next = connection.pageInfo.endCursor;
+    if (!next || next === after) {
+      // More pages were promised but no usable cursor was returned (or
+      // it failed to advance). Stop loudly so the download fails
+      // visibly instead of looping or truncating to a plausible file.
+      throw new Error(
+        "Giganto packets pagination aborted: hasNextPage was true but endCursor was missing or did not advance",
+      );
+    }
+    after = next;
+  }
+
+  return records;
 }

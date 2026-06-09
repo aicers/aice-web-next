@@ -120,6 +120,8 @@ function labels(): QuickPeekInspectorLabels {
     booleanFalse: "No",
     openInvestigation: "Open full investigation",
     openInvestigationTooltip: "Middle-click or Cmd+click to open in new tab",
+    openPacketDetail: "Open packet detail",
+    openPacketDetailTooltip: "Open the PCAP tab",
     pivotSource: "Same source IP",
     pivotDestination: "Same destination IP",
     pivotKind: "Same kind",

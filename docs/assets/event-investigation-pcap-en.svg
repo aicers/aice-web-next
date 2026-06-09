@@ -1,0 +1,33 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 880 320" font-family="-apple-system, Segoe UI, Roboto, Helvetica, Arial, sans-serif" role="img" aria-labelledby="title desc">
+  <title id="title">Event Investigation PCAP tab (wireframe)</title>
+  <desc id="desc">Wireframe of the PCAP tab: a header row with the "Packet capture" title and a "Download .pcap" button on the right, a one-line description, and a scrollable parsed-packet text panel below showing placeholder packet lines.</desc>
+
+  <style>
+    .card { fill: #ffffff; stroke: #e5e7eb; stroke-width: 1; }
+    .title { font-size: 14px; fill: #18181b; font-weight: 600; }
+    .desc { font-size: 12px; fill: #71717a; }
+    .btn { fill: #ffffff; stroke: #d4d4d8; stroke-width: 1; }
+    .btn-label { font-size: 12px; fill: #18181b; font-weight: 500; }
+    .pre { fill: #f4f4f5; stroke: #e5e7eb; stroke-width: 1; }
+    .mono { font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: 11px; fill: #3f3f46; }
+  </style>
+
+  <rect x="0" y="0" width="880" height="320" fill="#fafafa" />
+  <rect class="card" x="16" y="16" width="848" height="288" rx="8" />
+
+  <text class="title" x="36" y="48">Packet capture</text>
+  <text class="desc" x="36" y="70">Parsed packet capture for this event, read from the data store.</text>
+
+  <rect class="btn" x="712" y="32" width="132" height="32" rx="6" />
+  <path d="M 736 48 l 0 8 M 732 52 l 4 4 4 -4 M 730 62 l 12 0" stroke="#18181b" stroke-width="1.4" fill="none" stroke-linecap="round" stroke-linejoin="round" />
+  <text class="btn-label" x="752" y="52">Download .pcap</text>
+
+  <rect class="pre" x="36" y="92" width="808" height="192" rx="6" />
+  <text class="mono" x="52" y="116">1   0.000000  ETHER  10.0.0.5 → 203.0.113.45  TCP 74</text>
+  <text class="mono" x="52" y="138">2   0.000118  ETHER  203.0.113.45 → 10.0.0.5  TCP 74</text>
+  <text class="mono" x="52" y="160">3   0.000254  ETHER  10.0.0.5 → 203.0.113.45  TCP 66</text>
+  <text class="mono" x="52" y="182">4   0.001902  ETHER  10.0.0.5 → 203.0.113.45  HTTP GET /</text>
+  <text class="mono" x="52" y="204">5   0.043118  ETHER  203.0.113.45 → 10.0.0.5  HTTP 200 OK</text>
+  <text class="mono" x="52" y="226">…</text>
+</svg>

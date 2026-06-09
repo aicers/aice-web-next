@@ -1,16 +1,13 @@
 /**
- * Verifies the prop chain from {@link EventInvestigation} →
- * {@link OverviewTab} → {@link AimerBanner} forwards `locator`,
- * `candidates`, `customerBridgeEligible`, and `aimerSetup` unchanged.
- *
- * `AimerBanner` is mocked out so the test can assert the exact props
- * the wrapper hands it without rendering any of the modal / fetch
- * machinery.
+ * #728: the quick-peek "Open packet detail" action deep-links to
+ * `?tab=pcap`. `EventInvestigation` must open directly on the PCAP tab
+ * when `initialTab="pcap"` (no manual tab click), and fall back to
+ * Overview for an unknown / unavailable tab value.
  */
 
-import { render } from "@testing-library/react";
+import { render, screen, waitFor } from "@testing-library/react";
 import { NextIntlClientProvider } from "next-intl";
-import { describe, expect, it, vi } from "vitest";
+import { beforeEach, describe, expect, it, vi } from "vitest";
 
 vi.mock("next/navigation", () => ({
   usePathname: () => "/",
@@ -23,34 +20,29 @@ vi.mock("@/i18n/navigation", () => ({
   ),
   useRouter: () => ({ push: () => {}, replace: () => {} }),
 }));
-
-const aimerBannerCalls: unknown[] = [];
 vi.mock("@/components/events/aimer-banner", () => ({
-  AimerBanner: (props: unknown) => {
-    aimerBannerCalls.push(props);
-    return <div data-testid="aimer-banner-mock" />;
-  },
+  AimerBanner: () => <div data-testid="aimer-banner-mock" />,
+}));
+
+const loadEventPcapMock = vi.fn();
+vi.mock("@/lib/detection/pcap-view", () => ({
+  loadEventPcap: (...args: unknown[]) => loadEventPcapMock(...args),
 }));
 
 import {
   EventInvestigation,
   type EventInvestigationLabels,
 } from "@/components/events/event-investigation";
-import { OverviewTab } from "@/components/events/tabs/overview-tab";
 import enMessages from "@/i18n/messages/en.json";
-import type { AimerCustomerCandidate } from "@/lib/aimer/candidate-customers";
-import type { AimerIntegrationSetupStatus } from "@/lib/aimer/setup-status";
 import type { Event } from "@/lib/detection/types";
 import type { EventLocator } from "@/lib/events/event-locator";
 
-const LOCATOR: EventLocator = {
-  id: "evt-AAAA-BBBB-CCCC",
-};
+const LOCATOR: EventLocator = { id: "evt-AAAA" };
 
 const EVENT: Event = {
   __typename: "HttpThreat",
-  id: "evt-AAAA-BBBB-CCCC",
-  time: "2026-04-22T10:00:00.000000000Z",
+  id: "evt-AAAA",
+  time: "2026-04-22T10:00:00.000Z",
   sensor: "sensor-1",
   confidence: 0.8,
   category: null,
@@ -58,94 +50,59 @@ const EVENT: Event = {
   triageScores: null,
 } as Event;
 
-const CANDIDATES: AimerCustomerCandidate[] = [
-  { id: 1, name: "Acme" },
-  { id: 2, name: "Beta" },
-];
+function renderInvestigation(initialTab?: string) {
+  return render(
+    <NextIntlClientProvider locale="en" messages={enMessages}>
+      <EventInvestigation
+        event={EVENT}
+        locator={LOCATOR}
+        backHref="/detection"
+        labels={buildLabels()}
+        initialTab={initialTab}
+        candidates={[]}
+        customerBridgeEligible={{}}
+        aimerSetup={{ configured: false, missingReasons: [] }}
+      />
+    </NextIntlClientProvider>,
+  );
+}
 
-const ELIGIBLE: Record<number, boolean> = { 1: true, 2: false };
+describe("EventInvestigation deep link (#728)", () => {
+  beforeEach(() => {
+    loadEventPcapMock.mockReset();
+    loadEventPcapMock.mockResolvedValue({ status: "ok", parsedPcap: "x" });
+  });
 
-const AIMER_SETUP: AimerIntegrationSetupStatus = {
-  configured: false,
-  missingReasons: ["bridgeUrl"],
-};
-
-const OVERVIEW_LABELS = {
-  summary: "Summary",
-  time: "Time",
-  kind: "Kind",
-  category: "Category",
-  level: "Level",
-  confidence: "Confidence",
-  triageScores: "Triage",
-  noTriage: "No triage",
-  pivotsTitle: "Pivots",
-  pivotSameSource: "Same source",
-  pivotSameDestination: "Same destination",
-  pivotSameKind: "Same kind",
-};
-
-describe("OverviewTab → AimerBanner prop forwarding", () => {
-  it("forwards locator, candidates, customerBridgeEligible, and aimerSetup unchanged", () => {
-    aimerBannerCalls.length = 0;
-    render(
-      <NextIntlClientProvider locale="en" messages={enMessages}>
-        <OverviewTab
-          event={EVENT}
-          locator={LOCATOR}
-          labels={OVERVIEW_LABELS}
-          candidates={CANDIDATES}
-          customerBridgeEligible={ELIGIBLE}
-          aimerSetup={AIMER_SETUP}
-        />
-      </NextIntlClientProvider>,
+  it("opens directly on the PCAP tab for ?tab=pcap and fires its load", async () => {
+    renderInvestigation("pcap");
+    const pcapTab = screen.getByRole("tab", { name: "PCAP" });
+    expect(pcapTab.getAttribute("data-state")).toBe("active");
+    // The PCAP tab content is mounted, so its lazy fetch runs.
+    await waitFor(() =>
+      expect(loadEventPcapMock).toHaveBeenCalledWith(
+        "sensor-1",
+        "2026-04-22T10:00:00.000Z",
+      ),
     );
-    expect(aimerBannerCalls).toHaveLength(1);
-    const props = aimerBannerCalls[0] as {
-      locator: EventLocator;
-      candidates: AimerCustomerCandidate[];
-      customerBridgeEligible: Record<number, boolean>;
-      aimerSetup: AimerIntegrationSetupStatus;
-    };
-    expect(props.locator).toBe(LOCATOR);
-    expect(props.candidates).toBe(CANDIDATES);
-    expect(props.customerBridgeEligible).toBe(ELIGIBLE);
-    expect(props.aimerSetup).toBe(AIMER_SETUP);
+  });
+
+  it("falls back to Overview when no initial tab is given", () => {
+    renderInvestigation();
+    expect(
+      screen.getByRole("tab", { name: "Overview" }).getAttribute("data-state"),
+    ).toBe("active");
+    expect(loadEventPcapMock).not.toHaveBeenCalled();
+  });
+
+  it("falls back to Overview for an unknown tab value", () => {
+    renderInvestigation("bogus");
+    expect(
+      screen.getByRole("tab", { name: "Overview" }).getAttribute("data-state"),
+    ).toBe("active");
   });
 });
 
-describe("EventInvestigation → OverviewTab forwarding", () => {
-  it("threads candidates, customerBridgeEligible, and aimerSetup through to the AimerBanner", () => {
-    aimerBannerCalls.length = 0;
-    const fullLabels = buildFullLabels();
-    render(
-      <NextIntlClientProvider locale="en" messages={enMessages}>
-        <EventInvestigation
-          event={EVENT}
-          locator={LOCATOR}
-          backHref="/detection"
-          labels={fullLabels}
-          candidates={CANDIDATES}
-          customerBridgeEligible={ELIGIBLE}
-          aimerSetup={AIMER_SETUP}
-        />
-      </NextIntlClientProvider>,
-    );
-    expect(aimerBannerCalls).toHaveLength(1);
-    const props = aimerBannerCalls[0] as {
-      locator: EventLocator;
-      candidates: AimerCustomerCandidate[];
-      customerBridgeEligible: Record<number, boolean>;
-      aimerSetup: AimerIntegrationSetupStatus;
-    };
-    expect(props.locator).toBe(LOCATOR);
-    expect(props.candidates).toBe(CANDIDATES);
-    expect(props.customerBridgeEligible).toBe(ELIGIBLE);
-    expect(props.aimerSetup).toBe(AIMER_SETUP);
-  });
-});
-
-function buildFullLabels(): EventInvestigationLabels {
+function buildLabels(): EventInvestigationLabels {
   const e = "";
   return {
     back: e,
@@ -154,14 +111,27 @@ function buildFullLabels(): EventInvestigationLabels {
     confidence: e,
     tabs: {
       overview: "Overview",
-      endpoints: e,
-      protocol: e,
-      payload: e,
-      pcap: e,
-      context: e,
-      related: e,
+      endpoints: "Endpoints",
+      protocol: "Protocol",
+      payload: "Payload",
+      pcap: "PCAP",
+      context: "Context",
+      related: "Related",
     },
-    overview: OVERVIEW_LABELS,
+    overview: {
+      summary: e,
+      time: e,
+      kind: e,
+      category: e,
+      level: e,
+      confidence: e,
+      triageScores: e,
+      noTriage: e,
+      pivotsTitle: e,
+      pivotSameSource: e,
+      pivotSameDestination: e,
+      pivotSameKind: e,
+    },
     endpoints: {
       source: e,
       destination: e,
@@ -288,15 +258,15 @@ function buildFullLabels(): EventInvestigationLabels {
       downloadName: e,
     },
     pcap: {
-      title: e,
+      title: "Packet capture",
       description: e,
-      loading: e,
+      loading: "Loading packet capture…",
       empty: e,
       forbidden: e,
       unavailable: e,
       error: e,
-      download: e,
-      downloadName: e,
+      download: "Download .pcap",
+      downloadName: "detection.pcap",
     },
     context: {
       threatName: e,

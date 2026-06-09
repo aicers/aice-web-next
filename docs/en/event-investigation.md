@@ -47,6 +47,13 @@ current `/detection/events/<eventToken>` path with their query string
 menu stays highlighted because the redirect resolves before any
 dashboard content renders.
 
+An optional `?tab=<name>` query parameter selects which tab opens
+first — for example `?tab=pcap` lands directly on the PCAP tab. The
+Quick peek inspector's **Open packet detail** action uses this to
+deep-link straight into the packet view. An unknown value, or a tab
+that is hidden for the resolved event, falls back to **Overview**
+rather than selecting a tab with no content.
+
 ## Header
 
 The page header shows:
@@ -99,6 +106,9 @@ hidden rather than painting an empty placeholder:
 - The **Payload** tab is hidden for events that carry no captured
   byte stream (today only HTTP Threat events surface payload bytes,
   via the HTTP body field).
+- The **PCAP** tab is hidden for events with no sensor, since the
+  data store's packet query is keyed by sensor. For every other
+  event it shows the parsed packet capture and a download action.
 
 The other tabs — Overview, Endpoints, Context, and Related Events —
 are always available.
@@ -118,12 +128,14 @@ The event itself is fetched once when the page loads — a single
 fragment the page knows how to render. That call powers Overview,
 Protocol, Payload, and Context without any additional network
 traffic, and it also decides whether the Protocol and Payload
-tabs are visible at all. The two tabs that make extra detection-
-service calls — Endpoints (`ipLocation` enrichment) and Related
-Events (per-pivot count + last-seen snippets) — defer their work
-until a user first opens the tab. Once a lazy tab has been
-activated its data is kept in memory for the life of the page:
-switching away and back does not re-issue the lookup.
+tabs are visible at all. The tabs that make extra calls —
+Endpoints (`ipLocation` enrichment), Related Events (per-pivot
+count + last-seen snippets), and PCAP (the parsed capture from
+the data store) — defer their work until a user first opens the
+tab. Once a lazy tab has been activated its data is kept in
+memory for the life of the page: switching away and back does
+not re-issue the lookup. A deep link (`?tab=pcap`) counts as
+opening the tab, so the capture fetch starts on page load.
 
 ### Overview
 
@@ -327,6 +339,46 @@ columns, plus a **Download payload** action that saves the
 bytes as a `.bin` file for offline analysis (for example a
 Wireshark or `xxd` workflow). The tab is hidden for events
 without captured bytes.
+
+### PCAP
+
+The PCAP tab shows the packet capture the data store recorded
+around the event. It has two parts:
+
+- **Parsed view** (primary) — a readable, human-formatted dump
+  of the packets, the same way most analysts look at a capture.
+  It is fetched lazily from the data store the first time the
+  tab opens (or immediately when the page is deep-linked with
+  `?tab=pcap`). While the fetch is in flight the tab shows a
+  loading line; an event with no stored packets shows a short
+  "no packet data" message, and an access or data-store error
+  shows a distinct message so "denied" is never confused with
+  "could not load".
+- **Download .pcap** — saves the raw packets as a standard
+  `.pcap` file that opens in Wireshark or any other capture
+  tool. The file is assembled on the server from the same
+  capture the parsed view reads — the raw bytes never pass
+  through the browser as text — and is served as a binary
+  download. Large captures are bounded: the server pages
+  through the stored packets up to a fixed packet-count and
+  byte ceiling, and a capture beyond that ceiling fails the
+  download loudly rather than saving a silently truncated file.
+
+There is no in-app raw-packet browser: looking at raw bytes
+in the page has no standalone value, so the only path to the
+raw packets is the `.pcap` download, which hands them to a
+purpose-built external tool.
+
+![Event Investigation PCAP tab — wireframe stand-in](../assets/event-investigation-pcap-en.svg)
+
+!!! note "Screenshot pending real capture"
+
+    The PCAP tab renders packets read from the data store. The
+    authoring worktree has no stack with seeded capture data, so a
+    capture taken here would show the empty-state message rather than
+    a real parsed dump. Per `docs/AUTHORING.md`'s real-data rule, the
+    illustration above is an SVG wireframe placeholder; the real-data
+    capture is tracked in the batched recapture issue (#729).
 
 ### Context
 

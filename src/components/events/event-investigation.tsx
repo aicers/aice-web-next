@@ -22,6 +22,7 @@ import { ContextTab } from "./tabs/context-tab";
 import { EndpointsTab } from "./tabs/endpoints-tab";
 import { OverviewTab } from "./tabs/overview-tab";
 import { hasPayloadData, PayloadTab } from "./tabs/payload-tab";
+import { type PcapLabels, PcapTab } from "./tabs/pcap-tab";
 import { hasProtocolData, ProtocolTab } from "./tabs/protocol-tab";
 import { RelatedTab } from "./tabs/related-tab";
 
@@ -35,6 +36,7 @@ export interface EventInvestigationLabels {
     endpoints: string;
     protocol: string;
     payload: string;
+    pcap: string;
     context: string;
     related: string;
   };
@@ -194,6 +196,7 @@ export interface EventInvestigationLabels {
     download: string;
     downloadName: string;
   };
+  pcap: PcapLabels;
   context: {
     threatName: string;
     threatCategory: string;
@@ -226,6 +229,15 @@ interface Props {
   locator: EventLocator;
   backHref: string;
   labels: EventInvestigationLabels;
+  /**
+   * Tab to open on first render, parsed from the `?tab=` query param
+   * (#728 deep link). Falls back to "overview" when absent or when the
+   * requested tab is not available for this event (e.g. `pcap` on an
+   * event with no sensor). Used as the uncontrolled `defaultValue` and
+   * to pre-seed the activated-tabs set so the deep-linked tab's lazy
+   * fetch fires immediately.
+   */
+  initialTab?: string;
   /**
    * Customer IDs the operator was narrowed to on the originating
    * Detection page (#384). Threaded through to the Overview and
@@ -261,6 +273,7 @@ export function EventInvestigation({
   locator,
   backHref,
   labels,
+  initialTab,
   customers,
   candidates,
   customerBridgeEligible,
@@ -271,6 +284,15 @@ export function EventInvestigation({
   const endpointSummary = formatEndpointSummary(event);
   const showPayload = hasPayloadData(event);
   const showProtocol = hasProtocolData(event);
+  // The PCAP tab needs a sensor to query Giganto's `PacketFilter`;
+  // events without one (rare, but the field is a plain `String`) get
+  // no tab rather than a tab that can only error.
+  const showPcap = event.sensor.length > 0;
+  const initialValue = resolveInitialTab(initialTab, {
+    showProtocol,
+    showPayload,
+    showPcap,
+  });
 
   // Track which tabs the user has activated. Lazy-tab components
   // (EndpointsTab, RelatedTab) fetch their data on mount — but #291
@@ -282,7 +304,7 @@ export function EventInvestigation({
   // the pre-caching behaviour.
   const timezone = useTimezone();
   const [activated, setActivated] = useState<Set<string>>(
-    () => new Set(["overview"]),
+    () => new Set([initialValue]),
   );
   const markActivated = (value: string) => {
     setActivated((prev) => (prev.has(value) ? prev : new Set(prev).add(value)));
@@ -335,7 +357,7 @@ export function EventInvestigation({
       </header>
 
       <Tabs
-        defaultValue="overview"
+        defaultValue={initialValue}
         className="w-full"
         onValueChange={markActivated}
       >
@@ -347,6 +369,9 @@ export function EventInvestigation({
           ) : null}
           {showPayload ? (
             <TabsTrigger value="payload">{labels.tabs.payload}</TabsTrigger>
+          ) : null}
+          {showPcap ? (
+            <TabsTrigger value="pcap">{labels.tabs.pcap}</TabsTrigger>
           ) : null}
           <TabsTrigger value="context">{labels.tabs.context}</TabsTrigger>
           <TabsTrigger value="related">{labels.tabs.related}</TabsTrigger>
@@ -392,6 +417,19 @@ export function EventInvestigation({
             <PayloadTab event={event} labels={labels.payload} />
           </TabsContent>
         ) : null}
+        {showPcap ? (
+          <TabsContent
+            value="pcap"
+            className="pt-4"
+            forceMount={forceMount("pcap")}
+          >
+            <PcapTab
+              sensor={event.sensor}
+              requestTime={event.time}
+              labels={labels.pcap}
+            />
+          </TabsContent>
+        ) : null}
         <TabsContent
           value="context"
           className="pt-4"
@@ -413,4 +451,28 @@ export function EventInvestigation({
       </Tabs>
     </div>
   );
+}
+
+/**
+ * Resolve the deep-linked `?tab=` value to a tab that actually renders
+ * for this event. "overview", "endpoints", "context", and "related"
+ * are always present; "protocol" / "payload" / "pcap" are conditional,
+ * so a deep link to a hidden tab (or an unknown value) collapses to
+ * "overview" rather than selecting a tab with no trigger.
+ */
+function resolveInitialTab(
+  requested: string | undefined,
+  available: { showProtocol: boolean; showPayload: boolean; showPcap: boolean },
+): string {
+  if (!requested) return "overview";
+  const enabled = new Set<string>([
+    "overview",
+    "endpoints",
+    "context",
+    "related",
+  ]);
+  if (available.showProtocol) enabled.add("protocol");
+  if (available.showPayload) enabled.add("payload");
+  if (available.showPcap) enabled.add("pcap");
+  return enabled.has(requested) ? requested : "overview";
 }
