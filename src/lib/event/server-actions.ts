@@ -51,6 +51,17 @@ const EVENT_READ = "event:read";
 const CUSTOMERS_ACCESS_ALL = "customers:access-all";
 const SYSTEM_ADMINISTRATOR = "System Administrator";
 
+/**
+ * Defensive upper bound on how many Relay pages a single connection walk
+ * will fetch before giving up. The selector and chart need the *whole*
+ * connection (there is no UI paging for either), so both walks follow
+ * `pageInfo.hasNextPage` to the tail. This cap exists only so a backend
+ * that wrongly reports `hasNextPage: true` forever cannot spin the BFF in
+ * an unbounded loop; at 100 rows/page it allows up to 100k nodes, far
+ * beyond any realistic sampling-policy count or charted series length.
+ */
+const MAX_CONNECTION_PAGES = 1000;
+
 interface DispatchContext {
   role: string;
   customerIds: number[];
@@ -237,8 +248,12 @@ export async function fetchStatistics(
  * is required, so the caller renders the pre-query prompt instead of
  * dispatching an invalid query.
  *
- * A single generous page is fetched (`first: GIGANTO_MAX_PAGE_SIZE`); the
- * Relay args are wired so a future view can page a very long series.
+ * The chart renders the returned nodes as the *complete* series, so this
+ * walks the Relay connection forward (`first`/`after`) until
+ * `hasNextPage` is false rather than returning only the first page —
+ * otherwise a series longer than {@link GIGANTO_MAX_PAGE_SIZE} chunks
+ * would silently render truncated. {@link MAX_CONNECTION_PAGES} bounds the
+ * walk defensively.
  */
 export async function fetchPeriodicTimeSeries(
   session: AuthSession,
@@ -249,25 +264,42 @@ export async function fetchPeriodicTimeSeries(
   if (input === null) return null;
 
   const ctx = await buildDispatchContext(session);
-  const data = await withExternalErrorMapping(
-    "DATA_STORE",
-    gigantoClient<PeriodicTimeSeriesResult, PeriodicTimeSeriesVariables>(
-      PERIODIC_TIME_SERIES_QUERY,
-      {
-        filter: input,
-        first: GIGANTO_MAX_PAGE_SIZE,
-        after: null,
-        last: null,
-        before: null,
-      },
-      {
-        role: ctx.role,
-        customerIds: jwtCustomerIdsForEvent(ctx.role, ctx.customerIds),
-      },
-      signal,
-    ),
-  );
-  return data.periodicTimeSeries.nodes;
+  const context = {
+    role: ctx.role,
+    customerIds: jwtCustomerIdsForEvent(ctx.role, ctx.customerIds),
+  };
+
+  const nodes: TimeSeriesNode[] = [];
+  let after: string | null = null;
+  for (let page = 0; page < MAX_CONNECTION_PAGES; page += 1) {
+    // Annotated to break the otherwise-circular inference: `after` feeds
+    // the next request's variables and is itself derived from `data`.
+    const data: PeriodicTimeSeriesResult = await withExternalErrorMapping(
+      "DATA_STORE",
+      gigantoClient<PeriodicTimeSeriesResult, PeriodicTimeSeriesVariables>(
+        PERIODIC_TIME_SERIES_QUERY,
+        {
+          filter: input,
+          first: GIGANTO_MAX_PAGE_SIZE,
+          after,
+          last: null,
+          before: null,
+        },
+        context,
+        signal,
+      ),
+    );
+    const connection = data.periodicTimeSeries;
+    nodes.push(...connection.nodes);
+    if (
+      !connection.pageInfo.hasNextPage ||
+      connection.pageInfo.endCursor === null
+    ) {
+      break;
+    }
+    after = connection.pageInfo.endCursor;
+  }
+  return nodes;
 }
 
 /**
@@ -283,32 +315,55 @@ export async function fetchPeriodicTimeSeries(
  * same `buildDispatchContext` resolves the caller's customer scope into
  * the JWT, so the manager sees the same identity it does for Node/Triage
  * reads.
+ *
+ * The selector has no free-form fallback and no UI paging, so this walks
+ * the connection forward (`first`/`after`) until `hasNextPage` is false:
+ * a deployment with more than {@link REVIEW_MAX_PAGE_SIZE} policies must
+ * still surface every selectable id. {@link MAX_CONNECTION_PAGES} bounds
+ * the walk defensively.
  */
 export async function listSamplingPolicies(
   session: AuthSession,
   signal?: AbortSignal,
 ): Promise<SamplingPolicy[]> {
   const ctx = await buildDispatchContext(session);
-  const data = await withManagerErrorMapping(
-    // biome-ignore format: keep the override on the helper-name line so
-    // scripts/check-dispatch-context.mjs sees `// scope-allowlist:` within
-    // the call expression range (helper-name → opening paren).
-    graphqlRequest<SamplingPolicyListResult, SamplingPolicyListVariables>( // scope-allowlist: REview samplingPolicyList backs the Event Time Series id selector; event:read-gated, scope via buildDispatchContext.
-      SAMPLING_POLICY_LIST_QUERY,
-      {
-        first: REVIEW_MAX_PAGE_SIZE,
-        after: null,
-        last: null,
-        before: null,
-      },
-      {
-        role: ctx.role,
-        customerIds: jwtCustomerIdsForEvent(ctx.role, ctx.customerIds),
-      },
-      signal,
-    ),
-  );
-  return data.samplingPolicyList.nodes;
+  const context = {
+    role: ctx.role,
+    customerIds: jwtCustomerIdsForEvent(ctx.role, ctx.customerIds),
+  };
+
+  const nodes: SamplingPolicy[] = [];
+  let after: string | null = null;
+  for (let page = 0; page < MAX_CONNECTION_PAGES; page += 1) {
+    // Annotated to break the otherwise-circular inference: `after` feeds
+    // the next request's variables and is itself derived from `data`.
+    const data: SamplingPolicyListResult = await withManagerErrorMapping(
+      // biome-ignore format: keep the override on the helper-name line so
+      // scripts/check-dispatch-context.mjs sees `// scope-allowlist:` within
+      // the call expression range (helper-name → opening paren).
+      graphqlRequest<SamplingPolicyListResult, SamplingPolicyListVariables>( // scope-allowlist: REview samplingPolicyList backs the Event Time Series id selector; event:read-gated, scope via buildDispatchContext.
+        SAMPLING_POLICY_LIST_QUERY,
+        {
+          first: REVIEW_MAX_PAGE_SIZE,
+          after,
+          last: null,
+          before: null,
+        },
+        context,
+        signal,
+      ),
+    );
+    const connection = data.samplingPolicyList;
+    nodes.push(...connection.nodes);
+    if (
+      !connection.pageInfo.hasNextPage ||
+      connection.pageInfo.endCursor === null
+    ) {
+      break;
+    }
+    after = connection.pageInfo.endCursor;
+  }
+  return nodes;
 }
 
 /**

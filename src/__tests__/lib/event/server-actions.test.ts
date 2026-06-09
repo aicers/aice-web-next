@@ -353,6 +353,49 @@ describe("fetchPeriodicTimeSeries", () => {
     expect(variables.filter).toEqual({ id: "policy-1" });
   });
 
+  it("walks every page to the tail when hasNextPage is true", async () => {
+    const page1 = {
+      periodicTimeSeries: {
+        pageInfo: {
+          hasPreviousPage: false,
+          hasNextPage: true,
+          startCursor: "c0",
+          endCursor: "c1",
+        },
+        nodes: [{ start: "2026-06-09T00:00:00Z", id: "policy-1", data: [1.0] }],
+      },
+    };
+    const page2 = {
+      periodicTimeSeries: {
+        pageInfo: {
+          hasPreviousPage: true,
+          hasNextPage: false,
+          startCursor: "c2",
+          endCursor: "c3",
+        },
+        nodes: [{ start: "2026-06-09T01:00:00Z", id: "policy-1", data: [2.0] }],
+      },
+    };
+    mockGigantoClient.mockResolvedValueOnce(page1).mockResolvedValueOnce(page2);
+
+    const result = await fetchPeriodicTimeSeries(session, tsFilter);
+
+    expect(mockGigantoClient).toHaveBeenCalledTimes(2);
+    expect(result).toEqual([
+      ...page1.periodicTimeSeries.nodes,
+      ...page2.periodicTimeSeries.nodes,
+    ]);
+    // First page starts at the head; the second advances past page 1.
+    expect(mockGigantoClient.mock.calls[0][1]).toMatchObject({
+      first: 100,
+      after: null,
+    });
+    expect(mockGigantoClient.mock.calls[1][1]).toMatchObject({
+      first: 100,
+      after: "c1",
+    });
+  });
+
   it("throws EventPermissionError when the caller lacks event:read", async () => {
     mockHasPermission.mockResolvedValue(false);
     await expect(
@@ -377,6 +420,48 @@ describe("listSamplingPolicies", () => {
     expect(mockGigantoClient).not.toHaveBeenCalled();
     const [, variables] = mockGraphqlRequest.mock.calls[0];
     expect(variables).toMatchObject({ first: 100 });
+  });
+
+  it("walks every page to the tail so policies past the first page are reachable", async () => {
+    const page1 = {
+      samplingPolicyList: {
+        pageInfo: {
+          hasPreviousPage: false,
+          hasNextPage: true,
+          startCursor: "c0",
+          endCursor: "c1",
+        },
+        nodes: [{ id: "policy-1", name: "Hourly conn rollup" }],
+      },
+    };
+    const page2 = {
+      samplingPolicyList: {
+        pageInfo: {
+          hasPreviousPage: true,
+          hasNextPage: false,
+          startCursor: "c2",
+          endCursor: "c3",
+        },
+        nodes: [{ id: "policy-2", name: "Daily DNS rollup" }],
+      },
+    };
+    mockGraphqlRequest
+      .mockResolvedValueOnce(page1)
+      .mockResolvedValueOnce(page2);
+
+    const result = await listSamplingPolicies(session);
+
+    expect(mockGraphqlRequest).toHaveBeenCalledTimes(2);
+    expect(result).toEqual([
+      ...page1.samplingPolicyList.nodes,
+      ...page2.samplingPolicyList.nodes,
+    ]);
+    // The tail policy is only reachable because the second page advances
+    // past the first page's end cursor.
+    expect(mockGraphqlRequest.mock.calls[1][1]).toMatchObject({
+      first: 100,
+      after: "c1",
+    });
   });
 
   it("ships the materialized customer scope for non-admin callers", async () => {
