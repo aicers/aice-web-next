@@ -1214,6 +1214,7 @@
       "audit-logs": "Audit Logs",
       "dashboard": "Dashboard",
       "detection": "Detection",
+      "event": "Event",
       "nodes": "Nodes",
       "services": "Services",
       "system-settings": "System Settings",
@@ -1234,6 +1235,7 @@
       "dashboard:read": "Read",
       "dashboard:write": "Write",
       "detection:read": "Read",
+      "event:read": "Read",
       "nodes:read": "Read",
       "nodes:write": "Write",
       "nodes:delete": "Delete",
@@ -1348,6 +1350,87 @@
       "notConfigured": "No mTLS certificate configured",
       "loading": "Checking certificate...",
       "error": "Failed to check certificate status"
+    }
+  },
+  "event": {
+    "title": "Event",
+    "description": "Browse source events collected by Giganto.",
+    "recordType": "Record type",
+    "recordTypes": {
+      "conn": "Connection (Conn)"
+    },
+    "filters": {
+      "heading": "Filters",
+      "sensor": "Sensor",
+      "sensorPlaceholder": "Select a sensor",
+      "sensorRequired": "Select a sensor to search.",
+      "quickRange": "Quick range",
+      "quickRangeNone": "Custom",
+      "time": "Time range",
+      "start": "Start",
+      "end": "End",
+      "origAddr": "Source IP range",
+      "respAddr": "Destination IP range",
+      "origPort": "Source port range",
+      "respPort": "Destination port range",
+      "rangeStart": "Start",
+      "rangeEnd": "End",
+      "apply": "Apply",
+      "reset": "Reset"
+    },
+    "periods": {
+      "1h": "1 hour",
+      "12h": "12 hours",
+      "1d": "1 day",
+      "1w": "1 week",
+      "1m": "1 month",
+      "3m": "3 months",
+      "6m": "6 months",
+      "1y": "1 year",
+      "3y": "3 years"
+    },
+    "table": {
+      "time": "Time",
+      "source": "Source",
+      "destination": "Destination",
+      "proto": "Protocol",
+      "connState": "State",
+      "service": "Service",
+      "origBytes": "Bytes out",
+      "respBytes": "Bytes in",
+      "viewDetail": "View details"
+    },
+    "detail": {
+      "title": "Connection detail",
+      "close": "Close",
+      "time": "Time",
+      "startTime": "Start time",
+      "duration": "Duration",
+      "proto": "Protocol",
+      "connState": "Connection state",
+      "service": "Service",
+      "origAddr": "Source IP",
+      "origPort": "Source port",
+      "respAddr": "Destination IP",
+      "respPort": "Destination port",
+      "origBytes": "Bytes sent (source)",
+      "respBytes": "Bytes received (destination)",
+      "origPkts": "Packets sent (source)",
+      "respPkts": "Packets received (destination)",
+      "origL2Bytes": "L2 bytes sent (source)",
+      "respL2Bytes": "L2 bytes received (destination)"
+    },
+    "pagination": {
+      "pageSize": "Rows per page",
+      "previous": "Previous",
+      "next": "Next"
+    },
+    "states": {
+      "prequery": "Select a sensor and apply filters to search source events.",
+      "empty": "No events match the current filters.",
+      "loading": "Loading events…",
+      "error": "Could not reach Giganto. Try again later.",
+      "sensorsUnavailable": "Could not load the sensor list from Giganto."
     }
   },
   "detection": {

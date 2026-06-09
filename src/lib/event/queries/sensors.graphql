@@ -1,0 +1,8 @@
+# Validates against schemas/giganto.graphql.
+#
+# Lists the sensor ids Giganto has ingested data for. Populates the
+# single-sensor selector — NetworkFilter.sensor is a `String!`, so the
+# Event menu picks exactly one of these per query.
+query EventSensors {
+  sensors
+}

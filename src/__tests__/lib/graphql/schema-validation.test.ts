@@ -21,13 +21,23 @@ const TIVAN_VERSION_PATH = path.join(REPO_ROOT, "schemas/tivan.version");
 const QUERY_ROOT = path.join(REPO_ROOT, "src");
 
 /**
- * Per-SDL routing for `.graphql` files under `src/lib/node/queries/`.
+ * Per-SDL routing for `.graphql` files under `src/lib/`.
  *
  * Manager queries validate against `schemas/review.graphql`; Giganto
  * queries against `schemas/giganto.graphql`; Tivan queries against
  * `schemas/tivan.graphql`. A document validated against the wrong SDL
  * must fail — this is the contract the per-service direct-dispatch
  * design relies on.
+ *
+ * Two conventions route a document to Giganto:
+ *
+ *   - The mixed-target `src/lib/node/queries/external/` directory holds
+ *     Giganto **and** Tivan per-service `status` / `config` documents in
+ *     one place, so routing there keys off the `giganto-` / `tivan-`
+ *     filename prefix.
+ *   - The `src/lib/event/queries/` directory is wholly Giganto (the
+ *     Event-menu source-event browsing surface), so the entire tree
+ *     routes to the Giganto SDL by path — no per-file prefix needed.
  *
  * Inline GraphQL in TypeScript sources is unconditionally validated
  * against the manager SDL, since the only inline-parse() callers in
@@ -45,6 +55,9 @@ function pickSchemaForQueryFile(
 ): { schema: GraphQLSchema; sdl: string } {
   const rel = path.relative(REPO_ROOT, doc);
   const base = path.basename(doc);
+  if (rel.startsWith("src/lib/event/queries/")) {
+    return { schema: schemas.giganto, sdl: "schemas/giganto.graphql" };
+  }
   if (rel.startsWith("src/lib/node/queries/external/")) {
     if (base.startsWith("giganto-"))
       return { schema: schemas.giganto, sdl: "schemas/giganto.graphql" };
@@ -196,6 +209,7 @@ function findSourceFiles(root: string): string[] {
 const STATIC_QUERY_LOADERS = new Set<string>([
   "src/lib/node/queries.ts",
   "src/lib/triage/queries.ts",
+  "src/lib/event/queries.ts",
 ]);
 
 interface StaticDoc {

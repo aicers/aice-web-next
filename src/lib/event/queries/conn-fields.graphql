@@ -1,0 +1,29 @@
+# Validates against schemas/giganto.graphql.
+#
+# Single source for the Conn selection used by `conn-raw-events.graphql`
+# (the Event-menu Conn vertical slice). Composed via the `# requires:`
+# header in queries.ts and the schema-validation test, so a field added
+# here flows to every operation that requires it without a hand-edit.
+#
+# 64-bit numeric scalars (StringNumberU64 byte/packet counts and the
+# StringNumberI64 duration) are serialized as strings to avoid precision
+# loss — they stay `string` in types.ts and are never cast to a JS
+# number.
+fragment ConnFields on ConnRawEvent {
+  time
+  origAddr
+  origPort
+  respAddr
+  respPort
+  proto
+  connState
+  startTime
+  duration
+  service
+  origBytes
+  respBytes
+  origPkts
+  respPkts
+  origL2Bytes
+  respL2Bytes
+}

@@ -5,6 +5,20 @@
     "fixture": "external/giganto/config.base.json"
   },
   {
+    "operation": "connRawEvents",
+    "query": "external/giganto/connRawEvents.graphql",
+    "fixture": "external/giganto/connRawEvents.page1.json",
+    "variables": {
+      "filter": { "sensor": "sensor-a" },
+      "first": 2
+    }
+  },
+  {
+    "operation": "sensors",
+    "query": "external/giganto/sensors.graphql",
+    "fixture": "external/giganto/sensors.json"
+  },
+  {
     "operation": "updateConfig",
     "query": "external/giganto/updateConfig.graphql",
     "fixture": "external/giganto/updateConfig.success.json",

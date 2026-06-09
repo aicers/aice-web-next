@@ -1,0 +1,54 @@
+{
+  "connRawEvents": {
+    "pageInfo": {
+      "hasPreviousPage": false,
+      "hasNextPage": true,
+      "startCursor": "Y3Vyc29yOjA=",
+      "endCursor": "Y3Vyc29yOjE="
+    },
+    "edges": [
+      {
+        "cursor": "Y3Vyc29yOjA=",
+        "node": {
+          "time": "2026-06-09T00:00:00Z",
+          "origAddr": "192.168.0.10",
+          "origPort": 51000,
+          "respAddr": "10.0.0.5",
+          "respPort": 443,
+          "proto": 6,
+          "connState": "ShDdAaFf",
+          "startTime": "2026-06-09T00:00:00Z",
+          "duration": "1500000000",
+          "service": "ssl",
+          "origBytes": "18446744073709551615",
+          "respBytes": "2048",
+          "origPkts": "12",
+          "respPkts": "10",
+          "origL2Bytes": "4096",
+          "respL2Bytes": "3072"
+        }
+      },
+      {
+        "cursor": "Y3Vyc29yOjE=",
+        "node": {
+          "time": "2026-06-09T00:00:01Z",
+          "origAddr": "192.168.0.11",
+          "origPort": 51001,
+          "respAddr": "10.0.0.6",
+          "respPort": 53,
+          "proto": 17,
+          "connState": "",
+          "startTime": "2026-06-09T00:00:01Z",
+          "duration": "250000",
+          "service": "dns",
+          "origBytes": "64",
+          "respBytes": "128",
+          "origPkts": "1",
+          "respPkts": "1",
+          "origL2Bytes": "96",
+          "respL2Bytes": "160"
+        }
+      }
+    ]
+  }
+}
