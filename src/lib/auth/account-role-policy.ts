@@ -54,6 +54,7 @@ const SECURITY_MONITOR_EQUIVALENT_PERMISSIONS: ReadonlySet<string> = new Set([
   "audit-logs:read",
   "dashboard:read",
   "detection:read",
+  "event:read",
   "nodes:read",
   "services:read",
   "triage:read",
