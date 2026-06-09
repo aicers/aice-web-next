@@ -107,6 +107,12 @@ export function EventFilterForm({
     set({ [key]: value } as Partial<EventFilter>);
   };
 
+  // Icmp records have no ports, so port bounds are not applied for them
+  // (mirrored server-side in `toNetworkFilter`). Disable the port inputs
+  // and ignore their validity so a leftover entry never blocks Apply
+  // after switching to Icmp.
+  const portsDisabled = draft.recordType === "icmp";
+
   // A port input is invalid when non-empty but not an accepted port
   // string. The server drops such values when parsing the URL, so the
   // form blocks Apply rather than let the query silently widen past
@@ -115,10 +121,11 @@ export function EventFilterForm({
   const portRawInvalid = (raw: string): boolean =>
     raw.trim() !== "" && !isPortString(raw.trim());
   const anyPortInvalid =
-    portRawInvalid(rawPorts.origPortStart) ||
-    portRawInvalid(rawPorts.origPortEnd) ||
-    portRawInvalid(rawPorts.respPortStart) ||
-    portRawInvalid(rawPorts.respPortEnd);
+    !portsDisabled &&
+    (portRawInvalid(rawPorts.origPortStart) ||
+      portRawInvalid(rawPorts.origPortEnd) ||
+      portRawInvalid(rawPorts.respPortStart) ||
+      portRawInvalid(rawPorts.respPortEnd));
 
   return (
     <form
@@ -247,10 +254,13 @@ export function EventFilterForm({
           endLabel={tf("rangeEnd")}
           idPrefix="event-orig-port"
           type="number"
+          disabled={portsDisabled}
           startValue={rawPorts.origPortStart}
           endValue={rawPorts.origPortEnd}
-          startInvalid={portRawInvalid(rawPorts.origPortStart)}
-          endInvalid={portRawInvalid(rawPorts.origPortEnd)}
+          startInvalid={
+            !portsDisabled && portRawInvalid(rawPorts.origPortStart)
+          }
+          endInvalid={!portsDisabled && portRawInvalid(rawPorts.origPortEnd)}
           onStart={(v) => setPort("origPortStart", v)}
           onEnd={(v) => setPort("origPortEnd", v)}
         />
@@ -260,14 +270,23 @@ export function EventFilterForm({
           endLabel={tf("rangeEnd")}
           idPrefix="event-resp-port"
           type="number"
+          disabled={portsDisabled}
           startValue={rawPorts.respPortStart}
           endValue={rawPorts.respPortEnd}
-          startInvalid={portRawInvalid(rawPorts.respPortStart)}
-          endInvalid={portRawInvalid(rawPorts.respPortEnd)}
+          startInvalid={
+            !portsDisabled && portRawInvalid(rawPorts.respPortStart)
+          }
+          endInvalid={!portsDisabled && portRawInvalid(rawPorts.respPortEnd)}
           onStart={(v) => setPort("respPortStart", v)}
           onEnd={(v) => setPort("respPortEnd", v)}
         />
       </div>
+
+      {portsDisabled ? (
+        <p className="text-muted-foreground text-sm">
+          {tf("portsNotApplicable")}
+        </p>
+      ) : null}
 
       {anyPortInvalid ? (
         <p className="text-destructive text-sm" role="alert">
@@ -298,6 +317,7 @@ function RangeField({
   endLabel,
   idPrefix,
   type = "text",
+  disabled = false,
   startValue,
   endValue,
   startInvalid = false,
@@ -310,6 +330,7 @@ function RangeField({
   endLabel: string;
   idPrefix: string;
   type?: "text" | "number";
+  disabled?: boolean;
   startValue: string;
   endValue: string;
   startInvalid?: boolean;
@@ -318,7 +339,7 @@ function RangeField({
   onEnd: (value: string) => void;
 }) {
   return (
-    <fieldset className="space-y-1.5">
+    <fieldset className="space-y-1.5" disabled={disabled}>
       <legend className="text-sm font-medium">{label}</legend>
       <div className="flex items-center gap-2">
         <Input

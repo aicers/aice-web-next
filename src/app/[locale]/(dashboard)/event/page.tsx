@@ -1,15 +1,15 @@
 import { getLocale, getTranslations } from "next-intl/server";
 
-import { type ConnResult, EventSearch } from "@/components/event/event-search";
+import {
+  EventSearch,
+  type RawEventResult,
+} from "@/components/event/event-search";
 import { getCurrentSession, requirePermission } from "@/lib/auth/session";
 import {
   parseFilterFromSearchParams,
   parsePaginationSearchParams,
 } from "@/lib/event";
-import {
-  listEventSensors,
-  searchConnRawEvents,
-} from "@/lib/event/server-actions";
+import { listEventSensors, searchRawEvents } from "@/lib/event/server-actions";
 
 interface EventPageProps {
   searchParams: Promise<Record<string, string | string[] | undefined>>;
@@ -25,8 +25,8 @@ interface EventPageProps {
  *
  * The filter and pagination live in the URL so a search is shareable
  * and survives reload; this server component reads them, fetches the
- * sensor list and (when a sensor is chosen) the Conn page, then hands
- * the data to the client orchestrator.
+ * sensor list and (when a sensor is chosen) one page of the selected
+ * record type, then hands the data to the client orchestrator.
  */
 export default async function EventPage({ searchParams }: EventPageProps) {
   const session = await getCurrentSession();
@@ -51,14 +51,9 @@ export default async function EventPage({ searchParams }: EventPageProps) {
     sensors = null;
   }
 
-  let result: ConnResult;
+  let result: RawEventResult;
   try {
-    const connection = await searchConnRawEvents(
-      session,
-      filter,
-      anchor,
-      pageSize,
-    );
+    const connection = await searchRawEvents(session, filter, anchor, pageSize);
     result =
       connection === null
         ? { status: "prequery" }

@@ -1,0 +1,67 @@
+# Validates against schemas/giganto.graphql.
+#
+# DhcpRawEvent network raw-event query. Relay cursor pagination over
+# Giganto's DhcpConnection (pageInfo + edges, no
+# totalCount), mirroring conn-raw-events.graphql. Field names/types are
+# verified against the 0.27.0 SDL by the schema-validation gate.
+query DhcpRawEvents(
+  $filter: NetworkFilter!
+  $first: Int
+  $after: String
+  $last: Int
+  $before: String
+) {
+  dhcpRawEvents(
+    filter: $filter
+    first: $first
+    after: $after
+    last: $last
+    before: $before
+  ) {
+    pageInfo {
+      hasPreviousPage
+      hasNextPage
+      startCursor
+      endCursor
+    }
+    edges {
+      node {
+        time
+        origAddr
+        origPort
+        respAddr
+        respPort
+        proto
+        startTime
+        duration
+        origPkts
+        respPkts
+        origL2Bytes
+        respL2Bytes
+        msgType
+        ciaddr
+        yiaddr
+        siaddr
+        giaddr
+        subnetMask
+        router
+        domainNameServer
+        reqIpAddr
+        leaseTime
+        serverId
+        paramReqList
+        message
+        renewalTime
+        rebindingTime
+        classId
+        clientIdType
+        clientId
+        options {
+          code
+          value
+        }
+      }
+      cursor
+    }
+  }
+}

@@ -123,11 +123,19 @@ export function toNetworkFilter(
   if (filter.respAddrStart || filter.respAddrEnd) {
     input.respAddr = { start: filter.respAddrStart, end: filter.respAddrEnd };
   }
-  if (filter.origPortStart !== null || filter.origPortEnd !== null) {
-    input.origPort = { start: filter.origPortStart, end: filter.origPortEnd };
-  }
-  if (filter.respPortStart !== null || filter.respPortEnd !== null) {
-    input.respPort = { start: filter.respPortStart, end: filter.respPortEnd };
+  // Icmp records carry no ports, so port bounds are meaningless for them
+  // and Giganto's port filter would never match. Drop them for Icmp so
+  // the rest of the filter still applies. The form disables the port
+  // inputs for Icmp too, but stripping here keeps a stale URL param (or
+  // a record-type switch after typing ports) from silently emptying the
+  // result set.
+  if (filter.recordType !== "icmp") {
+    if (filter.origPortStart !== null || filter.origPortEnd !== null) {
+      input.origPort = { start: filter.origPortStart, end: filter.origPortEnd };
+    }
+    if (filter.respPortStart !== null || filter.respPortEnd !== null) {
+      input.respPort = { start: filter.respPortStart, end: filter.respPortEnd };
+    }
   }
 
   return input;

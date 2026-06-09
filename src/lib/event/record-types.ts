@@ -1,12 +1,35 @@
 /**
  * Registry of Giganto network record types selectable in the Event
- * menu. E0 ships only `conn` end-to-end; later phases (E1) extend this
- * list as each `<type>RawEvents` query is wired through the data layer.
+ * menu. E0 shipped `conn`; E1 adds the remaining 19 members of the
+ * `NetworkRawEvents` union. The order here is the order shown in the
+ * record-type selector.
  *
- * The `id` doubles as the URL value and the i18n key suffix
- * (`event.recordTypes.<id>`), so it stays a stable lowercase slug.
+ * Each `id` is the camelCase slug of the matching `<id>RawEvents` query
+ * and doubles as the URL value and the i18n key suffix
+ * (`event.recordTypes.<id>`), so it stays a stable identifier.
  */
-export const RECORD_TYPE_IDS = ["conn"] as const;
+export const RECORD_TYPE_IDS = [
+  "conn",
+  "dns",
+  "malformedDns",
+  "http",
+  "rdp",
+  "smtp",
+  "ntlm",
+  "kerberos",
+  "ssh",
+  "dceRpc",
+  "ftp",
+  "mqtt",
+  "ldap",
+  "tls",
+  "smb",
+  "nfs",
+  "bootp",
+  "dhcp",
+  "radius",
+  "icmp",
+] as const;
 
 export type RecordTypeId = (typeof RECORD_TYPE_IDS)[number];
 
