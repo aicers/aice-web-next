@@ -207,6 +207,16 @@ export function parseFilterFromSearchParams(
  * Encode a filter into URL-safe entries. Only set fields are written
  * so a fresh `/event` URL stays tidy; the record type is omitted when
  * it is the default.
+ *
+ * The serialization is family-aware, mirroring {@link toNetworkFilter}'s
+ * allow-list: only the fields the selected family carries are written.
+ * Without this, a hidden-family value typed before switching record type
+ * (a stale port after moving to a sysmon type, or a stale `agentId`
+ * after moving back to a network type) would persist in the URL and
+ * silently reactivate on reload or when switching back — even though
+ * `toNetworkFilter` already drops it from the query. Guarding both the
+ * URL and the query keeps the committed state consistent in both
+ * directions.
  */
 export function filterToSearchEntries(
   filter: EventFilter,
@@ -218,17 +228,25 @@ export function filterToSearchEntries(
   const push = (key: string, value: string | number | null): void => {
     if (value !== null && value !== "") entries.push([key, String(value)]);
   };
+  // Shared by both families.
   push(FILTER_PARAM_KEYS.sensor, filter.sensor);
   push(FILTER_PARAM_KEYS.start, filter.start);
   push(FILTER_PARAM_KEYS.end, filter.end);
+
+  if (recordFamily(filter.recordType) === "sysmon") {
+    push(FILTER_PARAM_KEYS.agentId, filter.agentId);
+    return entries;
+  }
+
   push(FILTER_PARAM_KEYS.origAddrStart, filter.origAddrStart);
   push(FILTER_PARAM_KEYS.origAddrEnd, filter.origAddrEnd);
   push(FILTER_PARAM_KEYS.respAddrStart, filter.respAddrStart);
   push(FILTER_PARAM_KEYS.respAddrEnd, filter.respAddrEnd);
-  push(FILTER_PARAM_KEYS.origPortStart, filter.origPortStart);
-  push(FILTER_PARAM_KEYS.origPortEnd, filter.origPortEnd);
-  push(FILTER_PARAM_KEYS.respPortStart, filter.respPortStart);
-  push(FILTER_PARAM_KEYS.respPortEnd, filter.respPortEnd);
-  push(FILTER_PARAM_KEYS.agentId, filter.agentId);
+  if (filter.recordType !== "icmp") {
+    push(FILTER_PARAM_KEYS.origPortStart, filter.origPortStart);
+    push(FILTER_PARAM_KEYS.origPortEnd, filter.origPortEnd);
+    push(FILTER_PARAM_KEYS.respPortStart, filter.respPortStart);
+    push(FILTER_PARAM_KEYS.respPortEnd, filter.respPortEnd);
+  }
   return entries;
 }

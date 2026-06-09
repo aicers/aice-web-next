@@ -112,6 +112,38 @@ export function EventFilterForm({
     set({ [key]: value } as Partial<EventFilter>);
   };
 
+  // Switching record type drops the draft fields the *other* family
+  // owns, so a value typed into a now-hidden input never resurfaces
+  // after switching back. This pairs with the family-aware URL
+  // serialization in `filterToSearchEntries`: the form clears the live
+  // draft, the serializer guards what reaches the URL. The local raw
+  // port text is reset alongside the committed draft so a stale entry
+  // does not reappear in the port inputs.
+  const onRecordTypeChange = (value: string): void => {
+    const recordType = value as EventFilter["recordType"];
+    if (recordFamily(recordType) === "sysmon") {
+      set({
+        recordType,
+        origAddrStart: null,
+        origAddrEnd: null,
+        respAddrStart: null,
+        respAddrEnd: null,
+        origPortStart: null,
+        origPortEnd: null,
+        respPortStart: null,
+        respPortEnd: null,
+      });
+      setRawPorts({
+        origPortStart: "",
+        origPortEnd: "",
+        respPortStart: "",
+        respPortEnd: "",
+      });
+      return;
+    }
+    set({ recordType, agentId: null });
+  };
+
   // Sysmon types filter by a free-text `agentId` instead of IP/port, so
   // the IP/port grid is hidden for them and an `agentId` input is shown.
   const isSysmon = recordFamily(draft.recordType) === "sysmon";
@@ -155,12 +187,7 @@ export function EventFilterForm({
         */}
         <div className="space-y-1.5">
           <Label htmlFor="event-record-type">{t("recordType")}</Label>
-          <Select
-            value={draft.recordType}
-            onValueChange={(value) =>
-              set({ recordType: value as EventFilter["recordType"] })
-            }
-          >
+          <Select value={draft.recordType} onValueChange={onRecordTypeChange}>
             <SelectTrigger id="event-record-type">
               <SelectValue />
             </SelectTrigger>

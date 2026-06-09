@@ -73,8 +73,9 @@ sensor.
   than by network address, so this is a free-text match on the agent id
   (Giganto exposes no agent list to populate a dropdown). When you switch
   between a network type and a Sysmon type, the inputs that do not apply
-  to the new type are hidden **and** dropped from the query, so a value
-  typed for one family never leaks into the other.
+  to the new type are hidden, cleared, and dropped from both the query
+  and the bookmarkable URL, so a value typed for one family never leaks
+  into the other — not even after a reload or after switching back.
 
 There is no separate protocol filter: Giganto's network filter has no
 protocol field, so the IP protocol cannot be used as a query input. It

@@ -206,3 +206,61 @@ describe("parseFilterFromSearchParams", () => {
     expect(entries.find(([key]) => key === "type")).toBeUndefined();
   });
 });
+
+describe("filterToSearchEntries family allow-list", () => {
+  // The URL serialization must be family-aware too: `toNetworkFilter`
+  // already drops cross-family fields from the query, but if they
+  // persisted in the URL they would silently reactivate on reload or
+  // when switching record type back.
+  it("drops stale IP/port for a sysmon record type", () => {
+    const params = Object.fromEntries(
+      filterToSearchEntries({
+        ...EMPTY_EVENT_FILTER,
+        recordType: "processCreate",
+        sensor: "s1",
+        agentId: "agent-1",
+        // Stale network values typed before switching families.
+        origAddrStart: "10.0.0.1",
+        origPortStart: 443,
+        respPortEnd: 1024,
+      }),
+    );
+    expect(params).toEqual({
+      type: "processCreate",
+      sensor: "s1",
+      agentId: "agent-1",
+    });
+  });
+
+  it("drops a stale agentId for a network record type", () => {
+    const params = Object.fromEntries(
+      filterToSearchEntries({
+        ...EMPTY_EVENT_FILTER,
+        recordType: "conn",
+        sensor: "s1",
+        origPortStart: 443,
+        // Stale sysmon value typed before switching back to a network type.
+        agentId: "agent-1",
+      }),
+    );
+    expect(params.agentId).toBeUndefined();
+    expect(params.origPortStart).toBe("443");
+  });
+
+  it("drops stale port bounds for the Icmp record type", () => {
+    const params = Object.fromEntries(
+      filterToSearchEntries({
+        ...EMPTY_EVENT_FILTER,
+        recordType: "icmp",
+        sensor: "s1",
+        origAddrStart: "10.0.0.1",
+        origPortStart: 100,
+        respPortEnd: 200,
+      }),
+    );
+    expect(params.origPortStart).toBeUndefined();
+    expect(params.respPortEnd).toBeUndefined();
+    // Non-port bounds still serialize for Icmp.
+    expect(params.origAddrStart).toBe("10.0.0.1");
+  });
+});

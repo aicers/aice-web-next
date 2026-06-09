@@ -283,6 +283,10 @@ test("event filter swaps agentId and IP/port inputs by family", async ({
   await expect(page.locator("#event-orig-port-start")).toBeVisible();
   await expect(page.locator("#event-agent-id")).toBeHidden();
 
+  // Type a port while on the network family — this is the value that
+  // must not leak once we switch to a sysmon type.
+  await page.locator("#event-orig-port-start").fill("443");
+
   // Switching to a sysmon type hides the IP/port inputs and shows the
   // agent-id input.
   await page.locator("#event-record-type").click();
@@ -292,11 +296,24 @@ test("event filter swaps agentId and IP/port inputs by family", async ({
   await expect(page.locator("#event-agent-id")).toBeVisible();
   await expect(page.locator("#event-orig-port-start")).toBeHidden();
 
+  // Apply the sysmon search: the committed URL must carry the sysmon
+  // selection but NOT the stale port from the network family.
+  await page.locator("#event-sensor").click();
+  await page.getByRole("option", { name: "sensor-a" }).click();
+  await page.locator("#event-agent-id").fill("agent-id-1");
+  await page.getByRole("button", { name: "Apply" }).click();
+
+  await expect(page).toHaveURL(/type=processCreate/);
+  await expect(page).toHaveURL(/agentId=agent-id-1/);
+  expect(new URL(page.url()).searchParams.has("origPortStart")).toBe(false);
+
   // Switching back to a network type restores the IP/port inputs and
-  // hides the agent-id input again.
+  // hides the agent-id input — and the port input is empty again, not
+  // resurrecting the value typed before the family switch.
   await page.locator("#event-record-type").click();
   await page.getByRole("option", { name: "Connection (Conn)" }).click();
   await expect(page.locator("#event-orig-port-start")).toBeVisible();
+  await expect(page.locator("#event-orig-port-start")).toHaveValue("");
   await expect(page.locator("#event-agent-id")).toBeHidden();
 });
 
