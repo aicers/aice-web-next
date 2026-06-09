@@ -80,10 +80,17 @@ export function formatDurationNs(value: string): string {
 
 /** Format `abs / unit` with two fractional digits, BigInt-safe. */
 function formatFixed(abs: bigint, unit: bigint): string {
-  const whole = abs / unit;
+  let whole = abs / unit;
   const remainder = abs % unit;
   // Two fractional digits, rounded half-up.
-  const scaled = (remainder * BigInt(100) + unit / BigInt(2)) / unit;
+  let scaled = (remainder * BigInt(100) + unit / BigInt(2)) / unit;
+  // Carry: when the fraction rounds up to a full 100 hundredths it must
+  // roll into the whole part, otherwise the two-digit formatter would emit
+  // an impossible three-digit fraction (e.g. `999.100 µs` for 999995 ns).
+  if (scaled >= BigInt(100)) {
+    whole += BigInt(1);
+    scaled -= BigInt(100);
+  }
   const frac = scaled.toString().padStart(2, "0");
   return `${whole.toString()}.${frac}`;
 }

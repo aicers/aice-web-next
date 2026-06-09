@@ -59,6 +59,13 @@ describe("formatDurationNs", () => {
     expect(formatDurationNs("1500000000")).toBe("1.50 s");
   });
 
+  it("carries a rounding boundary into the whole part", () => {
+    // 999.995 µs rounds to 1000.00, not the impossible 999.100.
+    expect(formatDurationNs("999995")).toBe("1000.00 µs");
+    // 999.9999 ms rounds the same way at the ms boundary.
+    expect(formatDurationNs("999999999")).toBe("1000.00 ms");
+  });
+
   it("returns the raw string for non-numeric input", () => {
     expect(formatDurationNs("")).toBe("");
   });
