@@ -41,6 +41,11 @@ export default async function EventInvestigationPage({
   // out of `returnTo` so this route does not have to know the
   // encoded `?f=` filter shape.
   const investigationCustomers = parseCustomersParam(resolvedSearch.customers);
+  // #728 deep link: the quick-peek "Open packet detail" action lands
+  // here with `?tab=pcap` so the Investigation view opens straight on
+  // the PCAP tab. `EventInvestigation` validates the value against the
+  // tabs available for the resolved event.
+  const initialTab = parseTabParam(resolvedSearch.tab);
   const t = await getTranslations("events");
 
   const locator = decodeEventLocator(token);
@@ -124,6 +129,7 @@ export default async function EventInvestigationPage({
       locator={locator}
       backHref={backHref}
       labels={buildInvestigationLabels(t)}
+      initialTab={initialTab}
       customers={investigationCustomers}
       candidates={candidates}
       customerBridgeEligible={customerBridgeEligible}
@@ -158,6 +164,27 @@ function parseCustomersParam(
   return out.length > 0 ? out : undefined;
 }
 
+/**
+ * Read the `?tab=` deep-link param. Accepts only the known tab slugs
+ * so a junk value falls through to the default (`EventInvestigation`
+ * also validates against the tabs available for the resolved event).
+ * Returns `undefined` when absent or unrecognized.
+ */
+function parseTabParam(raw: string | string[] | undefined): string | undefined {
+  const value = typeof raw === "string" ? raw : undefined;
+  if (!value) return undefined;
+  const known = new Set([
+    "overview",
+    "endpoints",
+    "protocol",
+    "payload",
+    "pcap",
+    "context",
+    "related",
+  ]);
+  return known.has(value) ? value : undefined;
+}
+
 type EventsTranslator = Awaited<ReturnType<typeof getTranslations>>;
 
 function buildLabels(t: EventsTranslator) {
@@ -185,6 +212,7 @@ function buildInvestigationLabels(t: EventsTranslator) {
       endpoints: t("tabs.endpoints"),
       protocol: t("tabs.protocol"),
       payload: t("tabs.payload"),
+      pcap: t("tabs.pcap"),
       context: t("tabs.context"),
       related: t("tabs.related"),
     },
@@ -343,6 +371,17 @@ function buildInvestigationLabels(t: EventsTranslator) {
       bytes: t("payload.bytes", { count: "{count}" }),
       download: t("payload.download"),
       downloadName: t("payload.downloadName"),
+    },
+    pcap: {
+      title: t("pcap.title"),
+      description: t("pcap.description"),
+      loading: t("pcap.loading"),
+      empty: t("pcap.empty"),
+      forbidden: t("pcap.forbidden"),
+      unavailable: t("pcap.unavailable"),
+      error: t("pcap.error"),
+      download: t("pcap.download"),
+      downloadName: t("pcap.downloadName"),
     },
     context: {
       threatName: t("context.threatName"),

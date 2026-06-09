@@ -115,6 +115,12 @@ export default defineConfig({
             // required for the post-fetch state update and the `<time>`
             // attribute assertion.
             "src/__tests__/components/events/related-tab.test.tsx",
+            // Issue #728: the PCAP tab renders parsed text / empty /
+            // error / forbidden states from a lazy server-action fetch,
+            // and the deep-link opens the Investigation view directly on
+            // the PCAP tab. Both need real DOM (effects + tab state).
+            "src/__tests__/components/events/pcap-tab.test.tsx",
+            "src/__tests__/components/events/event-investigation-deeplink.test.tsx",
             // Issue #452 (Reviewer Round 1): real-render coverage of
             // the Triage period-change confirmation flow — pivoting
             // and then changing the period must surface an
@@ -239,6 +245,8 @@ export default defineConfig({
             "src/__tests__/components/events/aimer-banner.test.tsx",
             "src/__tests__/components/events/overview-tab-forwarding.test.tsx",
             "src/__tests__/components/events/related-tab.test.tsx",
+            "src/__tests__/components/events/pcap-tab.test.tsx",
+            "src/__tests__/components/events/event-investigation-deeplink.test.tsx",
             "src/__tests__/components/triage/triage-shell.test.tsx",
             "src/__tests__/components/triage/tab-strip.test.tsx",
             "src/__tests__/components/triage/baseline-content.test.tsx",

@@ -1,0 +1,12 @@
+# Validates against schemas/giganto.graphql.
+#
+# Parsed-PCAP view for a Detection event. `parsedPcap` is the
+# human-readable packet dump Giganto renders from the stored capture;
+# the Investigation PCAP tab shows it verbatim. Raw `packet` bytes are
+# fetched separately via `giganto-packets.graphql` (download only).
+query GigantoPcap($filter: PacketFilter!) {
+  pcap(filter: $filter) {
+    requestTime
+    parsedPcap
+  }
+}

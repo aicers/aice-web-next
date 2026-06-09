@@ -104,6 +104,10 @@ export const GIGANTO_STATUS_QUERY = loadDocument(
 export const GIGANTO_CONFIG_QUERY = loadDocument(
   "external/giganto-config.graphql",
 );
+export const GIGANTO_PCAP_QUERY = loadDocument("external/giganto-pcap.graphql");
+export const GIGANTO_PACKETS_QUERY = loadDocument(
+  "external/giganto-packets.graphql",
+);
 export const GIGANTO_UPDATE_CONFIG_MUTATION = loadDocument(
   "external/giganto-update-config.graphql",
 );

@@ -1882,6 +1882,8 @@
       "booleanFalse": "아니오",
       "openInvestigation": "전체 조사 열기",
       "openInvestigationTooltip": "전체 조사 화면을 현재 탭에서 엽니다(가운데 클릭 또는 Cmd/Ctrl-클릭으로 새 탭에서 열기).",
+      "openPacketDetail": "패킷 상세 열기",
+      "openPacketDetailTooltip": "조사 화면을 PCAP 탭에서 엽니다(가운데 클릭 또는 Cmd/Ctrl-클릭으로 새 탭에서 열기).",
       "pivotSource": "동일한 출발지 IP · 최근 24시간",
       "pivotDestination": "동일한 목적지 IP · 최근 24시간",
       "pivotKind": "동일한 종류 · 최근 7일",
@@ -1944,6 +1946,7 @@
       "endpoints": "엔드포인트",
       "protocol": "프로토콜",
       "payload": "페이로드",
+      "pcap": "PCAP",
       "context": "컨텍스트",
       "related": "관련 이벤트"
     },
@@ -2127,6 +2130,17 @@
       "bytes": "{count} B",
       "download": "페이로드 다운로드",
       "downloadName": "event-payload.bin"
+    },
+    "pcap": {
+      "title": "패킷 캡처",
+      "description": "데이터 저장소에서 읽은 이 이벤트의 파싱된 패킷 캡처입니다. .pcap 파일을 다운로드하면 Wireshark 등 외부 도구에서 원시 패킷을 열 수 있습니다.",
+      "loading": "패킷 캡처를 불러오는 중…",
+      "empty": "이 이벤트에 저장된 패킷 데이터가 없습니다.",
+      "forbidden": "이 이벤트의 패킷 데이터에 접근할 권한이 없습니다.",
+      "unavailable": "데이터 저장소를 사용할 수 없습니다. 잠시 후 다시 시도하세요.",
+      "error": "패킷 캡처를 불러올 수 없습니다.",
+      "download": ".pcap 다운로드",
+      "downloadName": "detection.pcap"
     },
     "context": {
       "threatName": "위협 이름",

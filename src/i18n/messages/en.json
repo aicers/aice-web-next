@@ -1882,6 +1882,8 @@
       "booleanFalse": "No",
       "openInvestigation": "Open full investigation",
       "openInvestigationTooltip": "Open the full investigation view in this tab (middle-click or Cmd/Ctrl-click to open in a new tab).",
+      "openPacketDetail": "Open packet detail",
+      "openPacketDetailTooltip": "Open the investigation view on the PCAP tab (middle-click or Cmd/Ctrl-click to open in a new tab).",
       "pivotSource": "Same source IP · last 24h",
       "pivotDestination": "Same destination IP · last 24h",
       "pivotKind": "Same kind · last 7d",
@@ -1944,6 +1946,7 @@
       "endpoints": "Endpoints",
       "protocol": "Protocol",
       "payload": "Payload",
+      "pcap": "PCAP",
       "context": "Context",
       "related": "Related Events"
     },
@@ -2127,6 +2130,17 @@
       "bytes": "{count} B",
       "download": "Download payload",
       "downloadName": "event-payload.bin"
+    },
+    "pcap": {
+      "title": "Packet capture",
+      "description": "Parsed packet capture for this event, read from the data store. Download the .pcap to open the raw packets in Wireshark or another external tool.",
+      "loading": "Loading packet capture…",
+      "empty": "No packet data is stored for this event.",
+      "forbidden": "You do not have access to packet data for this event.",
+      "unavailable": "The data store is unavailable. Try again later.",
+      "error": "Could not load the packet capture.",
+      "download": "Download .pcap",
+      "downloadName": "detection.pcap"
     },
     "context": {
       "threatName": "Threat Name",

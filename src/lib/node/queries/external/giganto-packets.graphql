@@ -1,0 +1,20 @@
+# Validates against schemas/giganto.graphql.
+#
+# Raw packet bytes for a Detection event, used **only** to assemble the
+# downloadable `.pcap` file server-side (see the download Route Handler).
+# `packet` is base64-encoded raw bytes and is never rendered as text in
+# the UI. The connection is paginated by `hasNextPage` / `endCursor`
+# under a hard packet-count / byte cap.
+query GigantoPackets($filter: PacketFilter!, $first: Int, $after: String) {
+  packets(filter: $filter, first: $first, after: $after) {
+    pageInfo {
+      hasNextPage
+      endCursor
+    }
+    nodes {
+      requestTime
+      packetTime
+      packet
+    }
+  }
+}

@@ -108,6 +108,8 @@ function labels(
     booleanFalse: "No",
     openInvestigation: "Open full investigation",
     openInvestigationTooltip: "Middle-click or Cmd+click to open in new tab",
+    openPacketDetail: "Open packet detail",
+    openPacketDetailTooltip: "Open the PCAP tab",
     pivotSource: "Same source IP",
     pivotDestination: "Same destination IP",
     pivotKind: "Same kind",
@@ -221,6 +223,45 @@ describe("QuickPeekInspector", () => {
     // No "Open full investigation" anchor should appear at all —
     // the affordance is hidden rather than rendered as a dead control.
     expect(html).not.toContain("Open full investigation");
+  });
+
+  it("deep-links Open packet detail to the PCAP tab as a real anchor (#728)", () => {
+    const html = renderToStaticMarkup(
+      <QuickPeekInspector
+        event={httpThreat()}
+        labels={labels()}
+        locale="en"
+        investigateHref="/detection/events/abc123?returnTo=%2Fdetection"
+        onClose={() => {}}
+      />,
+    );
+
+    // The PCAP deep link appends `&tab=pcap` to the same investigate
+    // href and must be a real anchor (middle-click / Cmd+click).
+    // `&` is HTML-escaped to `&amp;` in static markup.
+    expect(html).toMatch(
+      /<a[^>]+href="\/detection\/events\/abc123\?returnTo=%2Fdetection&amp;tab=pcap/,
+    );
+    expect(html).toContain("Open packet detail");
+  });
+
+  it("omits Open packet detail for a sensorless event (no PCAP tab) (#728)", () => {
+    const html = renderToStaticMarkup(
+      <QuickPeekInspector
+        event={httpThreat({ sensor: "" })}
+        labels={labels()}
+        locale="en"
+        investigateHref="/detection/events/abc123?returnTo=%2Fdetection"
+        onClose={() => {}}
+      />,
+    );
+
+    // The PCAP tab is hidden for events with no sensor, so the deep
+    // link would fall back to Overview — the action is omitted instead.
+    expect(html).not.toContain("Open packet detail");
+    expect(html).not.toContain("tab=pcap");
+    // The plain investigation action is unaffected.
+    expect(html).toContain("Open full investigation");
   });
 
   it("renders pivot links as real anchor tags pointing at /detection", () => {
