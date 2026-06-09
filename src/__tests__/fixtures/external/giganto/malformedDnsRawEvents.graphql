@@ -1,0 +1,57 @@
+# Validates against schemas/giganto.graphql.
+#
+# MalformedDnsRawEvent network raw-event query. Relay cursor pagination over
+# Giganto's MalformedDnsConnection (pageInfo + edges, no
+# totalCount), mirroring conn-raw-events.graphql. Field names/types are
+# verified against the 0.27.0 SDL by the schema-validation gate.
+query MalformedDnsRawEvents(
+  $filter: NetworkFilter!
+  $first: Int
+  $after: String
+  $last: Int
+  $before: String
+) {
+  malformedDnsRawEvents(
+    filter: $filter
+    first: $first
+    after: $after
+    last: $last
+    before: $before
+  ) {
+    pageInfo {
+      hasPreviousPage
+      hasNextPage
+      startCursor
+      endCursor
+    }
+    edges {
+      node {
+        time
+        origAddr
+        origPort
+        respAddr
+        respPort
+        proto
+        startTime
+        duration
+        origPkts
+        respPkts
+        origL2Bytes
+        respL2Bytes
+        transId
+        flags
+        questionCount
+        answerCount
+        authorityCount
+        additionalCount
+        queryCount
+        respCount
+        queryBytes
+        respBytes
+        queryBody
+        respBody
+      }
+      cursor
+    }
+  }
+}
