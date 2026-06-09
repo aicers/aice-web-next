@@ -22,6 +22,19 @@ without it is redirected away.
     screenshot is taken from a stack with real data loaded and replaces
     this placeholder in the final documentation sweep.
 
+## Views
+
+A toggle at the top of the page switches between two views of the same
+sensor data:
+
+- **Events** — the record table described below. This is the default.
+- **Statistics** — an aggregation chart of per-protocol metrics over
+  time (see [Statistics](#statistics)).
+
+The active view is kept in the page URL alongside the filter, so a
+chosen view is shareable and survives a reload. Each view keeps its own
+filter, so switching back and forth does not discard either one.
+
 ## Filters
 
 The Filters card at the top of the page builds a query. Nothing is
@@ -91,3 +104,47 @@ there is no total, no "last page", and no go-to-page jump.
   maximum Giganto accepts.
 
 Changing the page size restarts from the first page.
+
+## Statistics
+
+The **Statistics** view aggregates Giganto's per-protocol traffic
+metrics into a time-series chart instead of listing individual records.
+Select it from the [view toggle](#views).
+
+![Event statistics view](../assets/event-statistics-en.svg)
+
+!!! note "Wireframe stand-in"
+
+    The figure above is an SVG wireframe rather than a real capture.
+    The chart shows data received from Giganto, so a real screenshot is
+    taken from a stack with real data loaded and replaces this
+    placeholder in the final documentation sweep.
+
+### Statistics filters
+
+- **Sensors** — a **multi-select** list (one checkbox per sensor). The
+  statistics query aggregates across every selected sensor, so unlike
+  the single-sensor event search you can pick several at once. At least
+  one sensor is required before **Apply** is enabled.
+- **Quick range** and **Time range** — the same relative-window
+  shortcut and explicit start/end bounds as the event search.
+- **Protocols** — an optional subset of the protocols the statistics
+  API tracks (Conn, DNS, Malformed DNS, RADIUS, RDP, HTTP, SMTP, NTLM,
+  Kerberos, SSH, DCE/RPC, FTP, MQTT, LDAP, TLS, SMB, NFS, BOOTP, DHCP,
+  ICMP, and Statistics). Leave every box unchecked to include all of
+  them. The picker only offers these keys because Giganto rejects any
+  other protocol value.
+
+### Chart
+
+A **Metric** selector chooses which value to plot — **bits per second**,
+**packets per second**, **events per second**, **count**, or
+**size** — and the chart draws **one line per protocol** over time.
+Plotting every metric at once would be unreadable, so the metric is a
+display switch over the already-fetched data and does not re-query.
+
+The X-axis is the bucket time. Giganto reports each bucket's timestamp
+as an epoch-nanosecond value, which is converted to a calendar time for
+the axis. The 64-bit `count` and `size` values can exceed what a chart
+coordinate can hold exactly, so the plotted line may round above
+2^53; the tooltip always shows the exact integer Giganto returned.

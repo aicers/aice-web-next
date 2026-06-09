@@ -1359,6 +1359,51 @@
     "recordTypes": {
       "conn": "Connection (Conn)"
     },
+    "views": {
+      "events": "Events",
+      "statistics": "Statistics"
+    },
+    "protocols": {
+      "conn": "Conn",
+      "dns": "DNS",
+      "malformed_dns": "Malformed DNS",
+      "radius": "RADIUS",
+      "rdp": "RDP",
+      "http": "HTTP",
+      "smtp": "SMTP",
+      "ntlm": "NTLM",
+      "kerberos": "Kerberos",
+      "ssh": "SSH",
+      "dce_rpc": "DCE/RPC",
+      "ftp": "FTP",
+      "mqtt": "MQTT",
+      "ldap": "LDAP",
+      "tls": "TLS",
+      "smb": "SMB",
+      "nfs": "NFS",
+      "bootp": "BOOTP",
+      "dhcp": "DHCP",
+      "icmp": "ICMP",
+      "statistics": "Statistics"
+    },
+    "statistics": {
+      "sensors": "Sensors",
+      "noSensorsAvailable": "No sensors are available from Giganto.",
+      "sensorRequired": "Select at least one sensor to view statistics.",
+      "protocols": "Protocols",
+      "protocolsHint": "Leave all unchecked to include every protocol.",
+      "metric": "Metric",
+      "metrics": {
+        "bps": "Bits per second",
+        "pps": "Packets per second",
+        "eps": "Events per second",
+        "count": "Count",
+        "size": "Size (bytes)"
+      },
+      "prequery": "Select sensors and apply filters to view aggregated statistics.",
+      "empty": "No statistics match the current filters.",
+      "noMetricData": "No data for the selected metric."
+    },
     "filters": {
       "heading": "Filters",
       "sensor": "Sensor",

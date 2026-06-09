@@ -68,6 +68,16 @@ test.beforeAll(async ({ workerUsername, workerPrefix }) => {
       fixture: "external/giganto/connRawEvents.page1.json",
     },
   });
+
+  // Statistics view: any statistics query resolves the aggregation
+  // fixture (conn + dns across two timestamp buckets).
+  await session.registerStub({
+    operation: "statistics",
+    response: {
+      kind: "fixture",
+      fixture: "external/giganto/statistics.json",
+    },
+  });
 });
 
 test.beforeEach(async ({ workerUsername }) => {
@@ -166,6 +176,37 @@ test("event page renders filter form, Conn search, pagination, detail", async ({
   // Row detail sheet opens with the full record.
   await page.getByRole("row", { name: "View details" }).first().click();
   await expect(page.getByText("Connection detail")).toBeVisible();
+});
+
+// ── View-mode toggle + Statistics ────────────────────────────────
+
+test("event page switches to Statistics and renders the aggregation chart", async ({
+  page,
+  workerUsername,
+  workerPassword,
+}) => {
+  await signInAndWait(page, workerUsername, workerPassword);
+  await page.goto("/event");
+
+  // The view-mode toggle exposes Events | Statistics.
+  await expect(page.getByRole("tab", { name: "Events" })).toBeVisible({
+    timeout: 10_000,
+  });
+  await page.getByRole("tab", { name: "Statistics" }).click();
+  await expect(page).toHaveURL(/view=statistics/);
+
+  // Multi-select sensor control (checkboxes) populated from the sensors
+  // query; pick one and apply.
+  await page.getByRole("checkbox", { name: "sensor-a" }).check();
+  await page.getByRole("button", { name: "Apply" }).click();
+  await expect(page).toHaveURL(/sensors=sensor-a/);
+
+  // The recharts chart and the metric selector render for the result.
+  // The chart surface carries role="application"; the legend icons share
+  // the recharts-surface class, so scope to the application surface to
+  // avoid a strict-mode multiple-match.
+  await expect(page.getByLabel("Metric")).toBeVisible({ timeout: 10_000 });
+  await expect(page.getByRole("application")).toBeVisible();
 });
 
 // ── Korean locale ────────────────────────────────────────────────

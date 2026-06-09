@@ -103,6 +103,54 @@ export interface ConnRawEvent {
   respL2Bytes: string;
 }
 
+// ── Statistics (aggregation chart) ─────────────────────────────────
+
+/**
+ * `statistics` query variables. `sensors` is required (`[String!]!`);
+ * `time` and `protocols` are optional and emitted only when set.
+ * `requestFromPeer` is left unset (defaults server-side).
+ */
+export interface StatisticsVariables extends Record<string, unknown> {
+  sensors: string[];
+  time?: TimeRangeInput | null;
+  protocols?: string[] | null;
+}
+
+/**
+ * `StatisticsDetail` — per-protocol metrics within one timestamp
+ * bucket. Field types are verified against the 0.27.0 SDL:
+ *
+ *   - `bps` / `pps` / `eps` are `Float` and **nullable**.
+ *   - `count` / `size` are `StringNumberU64` and **nullable**; they can
+ *     exceed `Number.MAX_SAFE_INTEGER`, so they stay strings here and
+ *     are parsed BigInt-safe before charting.
+ */
+export interface StatisticsDetail {
+  protocol: string;
+  bps: number | null;
+  pps: number | null;
+  eps: number | null;
+  count: string | null;
+  size: string | null;
+}
+
+/**
+ * `StatisticsInfo` — one timestamp bucket. `timestamp` is
+ * `StringNumberI64!`: Giganto emits the stored i64 key as-is, in
+ * **epoch nanoseconds** (e.g. `"1709528767000000000"`), so it stays a
+ * string and is converted from nanoseconds before plotting.
+ */
+export interface StatisticsInfo {
+  timestamp: string;
+  detail: StatisticsDetail[];
+}
+
+/** `StatisticsRawEvent` — one sensor's full statistics timeline. */
+export interface StatisticsRawEvent {
+  sensor: string;
+  stats: StatisticsInfo[];
+}
+
 // ── Operation result envelopes (match the `.graphql` operations) ────
 
 export interface ConnRawEventsResult {
@@ -111,4 +159,8 @@ export interface ConnRawEventsResult {
 
 export interface EventSensorsResult {
   sensors: string[];
+}
+
+export interface StatisticsResult {
+  statistics: StatisticsRawEvent[];
 }
