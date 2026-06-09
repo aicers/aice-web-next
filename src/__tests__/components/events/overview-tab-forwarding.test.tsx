@@ -296,6 +296,8 @@ function buildFullLabels(): EventInvestigationLabels {
       unavailable: e,
       error: e,
       download: e,
+      downloading: e,
+      downloadError: e,
       downloadName: e,
     },
     context: {

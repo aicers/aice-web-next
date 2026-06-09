@@ -2400,6 +2400,8 @@
       "unavailable": "The data store is unavailable. Try again later.",
       "error": "Could not load the packet capture.",
       "download": "Download .pcap",
+      "downloading": "Preparing download…",
+      "downloadError": "Could not download the packet capture. Try again later.",
       "downloadName": "detection.pcap"
     },
     "context": {

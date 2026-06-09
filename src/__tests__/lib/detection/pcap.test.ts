@@ -25,6 +25,7 @@ describe("rfc3339ToEpochMicros", () => {
     expect(rfc3339ToEpochMicros("1970-01-01T00:00:01.000002Z")).toEqual({
       seconds: 1,
       micros: 2,
+      parsed: true,
     });
   });
 
@@ -39,17 +40,18 @@ describe("rfc3339ToEpochMicros", () => {
     expect(rfc3339ToEpochMicros("2026-01-02T03:04:05Z").micros).toBe(0);
   });
 
-  it("falls back to the epoch for an unparseable value", () => {
+  it("falls back to the epoch and flags an unparseable value", () => {
     expect(rfc3339ToEpochMicros("not-a-time")).toEqual({
       seconds: 0,
       micros: 0,
+      parsed: false,
     });
   });
 });
 
 describe("assemblePcapFile", () => {
   it("writes a classic global header with the Ethernet link type", () => {
-    const file = assemblePcapFile([
+    const { file } = assemblePcapFile([
       { packetTime: "1970-01-01T00:00:01.000002Z", packet: FRAME_B64 },
     ]);
     const view = viewOf(file);
@@ -61,7 +63,7 @@ describe("assemblePcapFile", () => {
   });
 
   it("frames each packet with a record header and the raw bytes", () => {
-    const file = assemblePcapFile([
+    const { file } = assemblePcapFile([
       { packetTime: "1970-01-01T00:00:01.000002Z", packet: FRAME_B64 },
     ]);
     const view = viewOf(file);
@@ -78,7 +80,7 @@ describe("assemblePcapFile", () => {
   });
 
   it("produces the exact byte length for multiple packets", () => {
-    const file = assemblePcapFile([
+    const { file } = assemblePcapFile([
       { packetTime: "1970-01-01T00:00:01Z", packet: FRAME_B64 },
       { packetTime: "1970-01-01T00:00:02Z", packet: FRAME_B64 },
     ]);
@@ -89,8 +91,32 @@ describe("assemblePcapFile", () => {
   });
 
   it("returns a header-only file for an empty capture", () => {
-    const file = assemblePcapFile([]);
+    const { file } = assemblePcapFile([]);
     expect(file.byteLength).toBe(GLOBAL_HEADER_BYTES);
+  });
+
+  it("reports no epoch fallbacks when every timestamp parses", () => {
+    const { epochFallbackCount } = assemblePcapFile([
+      { packetTime: "1970-01-01T00:00:01Z", packet: FRAME_B64 },
+      { packetTime: "1970-01-01T00:00:02Z", packet: FRAME_B64 },
+    ]);
+    expect(epochFallbackCount).toBe(0);
+  });
+
+  it("counts epoch fallbacks while still emitting the record at epoch", () => {
+    const { file, epochFallbackCount } = assemblePcapFile([
+      { packetTime: "1970-01-01T00:00:01Z", packet: FRAME_B64 },
+      { packetTime: "not-a-time", packet: FRAME_B64 },
+    ]);
+    expect(epochFallbackCount).toBe(1);
+    // Both records are present; the malformed one is stamped at epoch 0.
+    expect(file.byteLength).toBe(
+      GLOBAL_HEADER_BYTES + 2 * (RECORD_HEADER_BYTES + 4),
+    );
+    const view = viewOf(file);
+    const secondRec = GLOBAL_HEADER_BYTES + RECORD_HEADER_BYTES + 4;
+    expect(view.getUint32(secondRec, true)).toBe(0); // ts_sec
+    expect(view.getUint32(secondRec + 4, true)).toBe(0); // ts_usec
   });
 
   it("throws PcapCapExceededError above the packet-count cap", () => {

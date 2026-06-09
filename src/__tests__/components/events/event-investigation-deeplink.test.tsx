@@ -266,6 +266,8 @@ function buildLabels(): EventInvestigationLabels {
       unavailable: e,
       error: e,
       download: "Download .pcap",
+      downloading: e,
+      downloadError: e,
       downloadName: "detection.pcap",
     },
     context: {
