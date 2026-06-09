@@ -163,9 +163,11 @@ test("event page renders filter form, Conn search, pagination, detail", async ({
   await expect(page.getByRole("option", { name: "100" })).toBeVisible();
   await page.keyboard.press("Escape");
 
-  // Row detail sheet opens with the full record.
+  // Row detail sheet opens with the full record, titled by record type.
   await page.getByRole("row", { name: "View details" }).first().click();
-  await expect(page.getByText("Connection detail")).toBeVisible();
+  await expect(
+    page.getByRole("heading", { name: "Connection (Conn)" }),
+  ).toBeVisible();
 });
 
 // ── Korean locale ────────────────────────────────────────────────
