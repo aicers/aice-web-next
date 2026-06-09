@@ -1,0 +1,73 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 760 460" font-family="-apple-system, Segoe UI, Roboto, Helvetica, Arial, sans-serif" role="img" aria-labelledby="title desc">
+  <title id="title">이벤트 페이지 — 통계 보기 (와이어프레임)</title>
+  <desc id="desc">/event 페이지의 통계 보기 와이어프레임. 상단의 보기 전환 토글은 이벤트와 통계를 제공하며 통계가 활성화되어 있습니다. 필터 카드에는 다중 선택 센서 목록(체크박스), 빠른 범위 드롭다운, 시작/종료 시간 입력, 허용된 Giganto 프로토콜 키로 제한된 프로토콜 다중 선택이 있으며 적용과 초기화 버튼이 있습니다. 그 아래 지표 선택기(초당 비트, 초당 패킷, 초당 이벤트, 건수, 크기)가 라인 차트 위에 있고, 차트는 시간에 따라 프로토콜별로 하나의 계열을 범례와 함께 그립니다. X축은 시간, Y축은 선택한 지표를 나타냅니다.</desc>
+  <style>
+    .bg { fill: #fafafa; }
+    .panel { fill: #ffffff; stroke: #e5e7eb; stroke-width: 1; }
+    .field { fill: #ffffff; stroke: #d4d4d8; stroke-width: 1; }
+    .h1 { font-size: 18px; fill: #18181b; font-weight: 700; }
+    .sub { font-size: 11px; fill: #71717a; }
+    .label { font-size: 10px; fill: #52525b; font-weight: 600; }
+    .val { font-size: 11px; fill: #18181b; }
+    .muted { font-size: 10px; fill: #a1a1aa; }
+    .btn { fill: #18181b; }
+    .btn-text { fill: #ffffff; font-size: 11px; font-weight: 600; }
+    .btn-outline { fill: #ffffff; stroke: #d4d4d8; stroke-width: 1; }
+    .btn-outline-text { fill: #18181b; font-size: 11px; font-weight: 600; }
+    .tab-on { fill: #18181b; }
+    .tab-on-text { fill: #ffffff; font-size: 11px; font-weight: 600; }
+    .tab-off { fill: #f4f4f5; stroke: #e5e7eb; stroke-width: 1; }
+    .tab-off-text { fill: #52525b; font-size: 11px; font-weight: 600; }
+    .axis { stroke: #d4d4d8; stroke-width: 1; }
+    .s1 { stroke: #2563eb; stroke-width: 2; fill: none; }
+    .s2 { stroke: #dc2626; stroke-width: 2; fill: none; }
+  </style>
+  <rect class="bg" x="0" y="0" width="760" height="460" />
+
+  <text class="h1" x="24" y="34">이벤트</text>
+  <text class="sub" x="24" y="52">Giganto가 수집한 원본 이벤트를 조회합니다.</text>
+
+  <!-- View-mode toggle -->
+  <rect class="tab-off" x="24" y="66" width="80" height="26" rx="6" />
+  <text class="tab-off-text" x="64" y="83" text-anchor="middle">이벤트</text>
+  <rect class="tab-on" x="106" y="66" width="80" height="26" rx="6" />
+  <text class="tab-on-text" x="146" y="83" text-anchor="middle">통계</text>
+
+  <!-- Filters card -->
+  <rect class="panel" x="24" y="104" width="712" height="120" rx="8" />
+  <text class="label" x="40" y="126">센서</text>
+  <rect class="field" x="40" y="134" width="120" height="20" rx="4" />
+  <text class="val" x="48" y="148">☑ sensor-a</text>
+  <rect class="field" x="168" y="134" width="120" height="20" rx="4" />
+  <text class="val" x="176" y="148">☐ sensor-b</text>
+  <text class="label" x="320" y="126">시간 범위</text>
+  <rect class="field" x="320" y="134" width="180" height="20" rx="4" />
+  <text class="muted" x="328" y="148">시작 — 종료</text>
+  <text class="label" x="40" y="176">프로토콜</text>
+  <rect class="field" x="40" y="184" width="70" height="20" rx="4" />
+  <text class="val" x="48" y="198">☑ Conn</text>
+  <rect class="field" x="118" y="184" width="70" height="20" rx="4" />
+  <text class="val" x="126" y="198">☑ DNS</text>
+  <rect class="field" x="196" y="184" width="70" height="20" rx="4" />
+  <text class="val" x="204" y="198">☐ TLS</text>
+  <rect class="btn" x="600" y="184" width="60" height="24" rx="6" />
+  <text class="btn-text" x="630" y="200" text-anchor="middle">적용</text>
+  <rect class="btn-outline" x="668" y="184" width="60" height="24" rx="6" />
+  <text class="btn-outline-text" x="698" y="200" text-anchor="middle">초기화</text>
+
+  <!-- Metric selector + chart -->
+  <text class="label" x="24" y="252">지표</text>
+  <rect class="field" x="64" y="240" width="160" height="20" rx="4" />
+  <text class="val" x="72" y="254">초당 비트 ▾</text>
+
+  <rect class="panel" x="24" y="272" width="712" height="164" rx="8" />
+  <line class="axis" x1="60" y1="296" x2="60" y2="408" />
+  <line class="axis" x1="60" y1="408" x2="708" y2="408" />
+  <polyline class="s1" points="60,392 180,360 300,372 420,320 540,336 660,300" />
+  <polyline class="s2" points="60,400 180,388 300,396 420,378 540,384 660,372" />
+  <rect x="600" y="284" width="10" height="10" fill="#2563eb" />
+  <text class="muted" x="614" y="293">Conn</text>
+  <rect x="656" y="284" width="10" height="10" fill="#dc2626" />
+  <text class="muted" x="670" y="293">DNS</text>
+</svg>

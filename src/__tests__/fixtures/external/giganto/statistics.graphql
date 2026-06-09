@@ -1,0 +1,20 @@
+query Statistics(
+  $sensors: [String!]!
+  $time: TimeRange
+  $protocols: [String!]
+) {
+  statistics(sensors: $sensors, time: $time, protocols: $protocols) {
+    sensor
+    stats {
+      timestamp
+      detail {
+        protocol
+        bps
+        pps
+        eps
+        count
+        size
+      }
+    }
+  }
+}

@@ -1,10 +1,11 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
 import type { AuthSession } from "@/lib/auth/jwt";
-import type { EventFilter } from "@/lib/event";
+import type { EventFilter, StatisticsFilter } from "@/lib/event";
 
 import connPage1 from "../../fixtures/external/giganto/connRawEvents.page1.json";
 import sensorsFixture from "../../fixtures/external/giganto/sensors.json";
+import statisticsFixture from "../../fixtures/external/giganto/statistics.json";
 
 const mockHasPermission = vi.hoisted(() => vi.fn());
 const mockResolveEffectiveCustomerIds = vi.hoisted(() => vi.fn());
@@ -25,6 +26,7 @@ vi.mock("@/lib/graphql/external-client", () => ({
 
 import {
   EventPermissionError,
+  fetchStatistics,
   listEventSensors,
   searchConnRawEvents,
 } from "@/lib/event/server-actions";
@@ -174,5 +176,66 @@ describe("listEventSensors", () => {
       EventPermissionError,
     );
     expect(mockGigantoClient).not.toHaveBeenCalled();
+  });
+});
+
+const statsFilter: StatisticsFilter = {
+  sensors: ["sensor-a"],
+  start: "2026-06-09T00:00:00Z",
+  end: "2026-06-09T01:00:00Z",
+  protocols: ["conn", "dns"],
+};
+
+describe("fetchStatistics", () => {
+  it("returns null without dispatching when no sensor is selected", async () => {
+    const result = await fetchStatistics(session, {
+      ...statsFilter,
+      sensors: [],
+    });
+    expect(result).toBeNull();
+    expect(mockGigantoClient).not.toHaveBeenCalled();
+  });
+
+  it("maps the filter to query variables and returns the statistics list", async () => {
+    mockGigantoClient.mockResolvedValue(statisticsFixture);
+    const result = await fetchStatistics(session, statsFilter);
+    expect(result).toEqual(statisticsFixture.statistics);
+    const [, variables] = mockGigantoClient.mock.calls[0];
+    expect(variables).toEqual({
+      sensors: ["sensor-a"],
+      time: { start: "2026-06-09T00:00:00Z", end: "2026-06-09T01:00:00Z" },
+      protocols: ["conn", "dns"],
+    });
+  });
+
+  it("sends null time/protocols when no bounds or subset are set", async () => {
+    mockGigantoClient.mockResolvedValue(statisticsFixture);
+    await fetchStatistics(session, {
+      sensors: ["sensor-a"],
+      start: null,
+      end: null,
+      protocols: [],
+    });
+    const [, variables] = mockGigantoClient.mock.calls[0];
+    expect(variables).toMatchObject({
+      sensors: ["sensor-a"],
+      time: null,
+      protocols: null,
+    });
+  });
+
+  it("throws EventPermissionError when the caller lacks event:read", async () => {
+    mockHasPermission.mockResolvedValue(false);
+    await expect(fetchStatistics(session, statsFilter)).rejects.toBeInstanceOf(
+      EventPermissionError,
+    );
+    expect(mockGigantoClient).not.toHaveBeenCalled();
+  });
+
+  it("maps a Giganto connection failure to ExternalServiceUnavailableError", async () => {
+    mockGigantoClient.mockRejectedValue(new TypeError("fetch failed"));
+    await expect(fetchStatistics(session, statsFilter)).rejects.toBeInstanceOf(
+      ExternalServiceUnavailableError,
+    );
   });
 });

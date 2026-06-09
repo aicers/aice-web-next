@@ -1359,6 +1359,51 @@
     "recordTypes": {
       "conn": "연결 (Conn)"
     },
+    "views": {
+      "events": "이벤트",
+      "statistics": "통계"
+    },
+    "protocols": {
+      "conn": "Conn",
+      "dns": "DNS",
+      "malformed_dns": "비정상 DNS",
+      "radius": "RADIUS",
+      "rdp": "RDP",
+      "http": "HTTP",
+      "smtp": "SMTP",
+      "ntlm": "NTLM",
+      "kerberos": "Kerberos",
+      "ssh": "SSH",
+      "dce_rpc": "DCE/RPC",
+      "ftp": "FTP",
+      "mqtt": "MQTT",
+      "ldap": "LDAP",
+      "tls": "TLS",
+      "smb": "SMB",
+      "nfs": "NFS",
+      "bootp": "BOOTP",
+      "dhcp": "DHCP",
+      "icmp": "ICMP",
+      "statistics": "통계"
+    },
+    "statistics": {
+      "sensors": "센서",
+      "noSensorsAvailable": "Giganto에서 사용할 수 있는 센서가 없습니다.",
+      "sensorRequired": "통계를 보려면 센서를 하나 이상 선택하세요.",
+      "protocols": "프로토콜",
+      "protocolsHint": "모두 선택하지 않으면 모든 프로토콜이 포함됩니다.",
+      "metric": "지표",
+      "metrics": {
+        "bps": "초당 비트",
+        "pps": "초당 패킷",
+        "eps": "초당 이벤트",
+        "count": "건수",
+        "size": "크기 (바이트)"
+      },
+      "prequery": "센서를 선택하고 필터를 적용하여 집계 통계를 확인하세요.",
+      "empty": "현재 필터와 일치하는 통계가 없습니다.",
+      "noMetricData": "선택한 지표에 대한 데이터가 없습니다."
+    },
     "filters": {
       "heading": "필터",
       "sensor": "센서",
