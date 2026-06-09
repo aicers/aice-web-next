@@ -381,6 +381,8 @@ function buildInvestigationLabels(t: EventsTranslator) {
       unavailable: t("pcap.unavailable"),
       error: t("pcap.error"),
       download: t("pcap.download"),
+      downloading: t("pcap.downloading"),
+      downloadError: t("pcap.downloadError"),
       downloadName: t("pcap.downloadName"),
     },
     context: {

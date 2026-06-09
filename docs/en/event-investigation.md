@@ -359,10 +359,15 @@ around the event. It has two parts:
   tool. The file is assembled on the server from the same
   capture the parsed view reads — the raw bytes never pass
   through the browser as text — and is served as a binary
-  download. Large captures are bounded: the server pages
-  through the stored packets up to a fixed packet-count and
-  byte ceiling, and a capture beyond that ceiling fails the
-  download loudly rather than saving a silently truncated file.
+  download. When the event has no stored packets the action
+  does not save a file: it shows the same "no packet data"
+  message as the parsed view, so you never download an empty
+  capture that looks like a failure. Any other download problem
+  shows a short error message rather than silently doing
+  nothing. Large captures are bounded: the server pages through
+  the stored packets up to a fixed packet-count and byte
+  ceiling, and a capture beyond that ceiling fails the download
+  loudly rather than saving a silently truncated file.
 
 There is no in-app raw-packet browser: looking at raw bytes
 in the page has no standalone value, so the only path to the

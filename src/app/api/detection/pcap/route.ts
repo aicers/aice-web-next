@@ -1,5 +1,7 @@
 import "server-only";
 
+import { createHash } from "node:crypto";
+
 import { NextResponse } from "next/server";
 
 import { withAuth } from "@/lib/auth/guard";
@@ -28,8 +30,9 @@ import {
  * are handled entirely server-side; they never pass through client
  * state.
  *
- * A GET (not POST) so the PCAP tab can render the action as a plain
- * `<a download>` and the browser save picker handles the response.
+ * A GET (not POST) so the PCAP tab can drive the download with `fetch`
+ * and trigger the browser save from the response blob (a plain
+ * `<a download>` cannot surface the `404` empty-state body below).
  * Mirrors the CSV export route's `withAuth("detection:read")` guard
  * and error → status mapping.
  *
@@ -38,6 +41,9 @@ import {
  * - `400` — missing / malformed `sensor` or `requestTime`.
  * - `403` — missing permission / customer scope, or a review/BFF
  *   denial.
+ * - `404 { code: "no-packet-data" }` — the data store has no packets
+ *   stored for this event; no header-only file is served so the tab
+ *   can show its empty state instead of saving a useless capture.
  * - `413` — capture exceeds the hard packet / byte cap.
  * - `503` — Giganto unreachable.
  * - `500` — any other failure.
@@ -68,7 +74,27 @@ export const GET = withAuth(
         requestTime,
         request.signal,
       );
-      const file = assemblePcapFile(packets);
+      if (packets.length === 0) {
+        // No stored capture for this event. Serving a 24-byte
+        // header-only `.pcap` would download a file that opens empty in
+        // Wireshark and looks indistinguishable from a failure, so
+        // return a distinct 404 the (fetch-driven) tab maps to its
+        // empty state instead.
+        return NextResponse.json(
+          { error: "No packet data", code: "no-packet-data" },
+          { status: 404 },
+        );
+      }
+      const { file, epochFallbackCount } = assemblePcapFile(packets);
+      if (epochFallbackCount > 0) {
+        // `rfc3339ToEpochMicros` stamps unparseable timestamps at the
+        // epoch rather than aborting the download; log once here (the
+        // only layer holding sensor / event context) so a 1970-stamped
+        // packet is diagnosable instead of silent.
+        console.warn(
+          `[detection/pcap] ${epochFallbackCount} packet(s) had an unparseable packetTime and were stamped at the epoch (sensor=${sensor}, requestTime=${requestTime})`,
+        );
+      }
       const filename = buildPcapFilename(sensor, requestTime);
       // Wrap the bytes in a Blob for a well-typed `BodyInit`. The
       // Uint8Array is a view over a freshly-allocated, exactly-sized
@@ -124,15 +150,33 @@ export const GET = withAuth(
 
 /**
  * Build the download filename, e.g.
- * `detection-pcap_sensor-01_2026-04-20T15-32-04.pcap`. The sensor id
- * and timestamp are reduced to the filename-safe alphabet
+ * `detection-pcap_sensor-01-1a2b3c4d_2026-04-20T15-32-04.pcap`. The
+ * sensor id and timestamp are reduced to the filename-safe alphabet
  * (alphanumerics, `.`, `_`, `-`) so neither can inject quotes, path
  * separators, or CR/LF into the Content-Disposition header.
+ *
+ * `sanitizeSegment` truncates the readable sensor prefix to 120 chars,
+ * so two distinct long sensor ids sharing that prefix would otherwise
+ * collide to one filename. A short hex suffix derived from the **full**
+ * (untruncated) sensor id is appended to keep filenames collision-
+ * resistant; the suffix is hex, so it too stays within the safe
+ * alphabet. Exported so the collision behavior is unit-testable.
  */
-function buildPcapFilename(sensor: string, requestTime: string): string {
+export function buildPcapFilename(sensor: string, requestTime: string): string {
   const safeSensor = sanitizeSegment(sensor) || "sensor";
+  const suffix = sensorHashSuffix(sensor);
   const safeTime = sanitizeSegment(requestTime.replace(/[:.]/g, "-"));
-  return `detection-pcap_${safeSensor}_${safeTime}.pcap`;
+  return `detection-pcap_${safeSensor}-${suffix}_${safeTime}.pcap`;
+}
+
+/**
+ * First 8 hex chars of the SHA-256 of the full sensor id. Computed
+ * before truncation so two sensor ids that sanitize to the same 120-
+ * char prefix still produce distinct filenames. Hex stays within the
+ * `[A-Za-z0-9._-]` alphabet, preserving the header-injection guard.
+ */
+function sensorHashSuffix(sensor: string): string {
+  return createHash("sha256").update(sensor, "utf8").digest("hex").slice(0, 8);
 }
 
 function sanitizeSegment(value: string): string {

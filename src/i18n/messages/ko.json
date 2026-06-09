@@ -2400,6 +2400,8 @@
       "unavailable": "데이터 저장소를 사용할 수 없습니다. 잠시 후 다시 시도하세요.",
       "error": "패킷 캡처를 불러올 수 없습니다.",
       "download": ".pcap 다운로드",
+      "downloading": "다운로드를 준비하는 중…",
+      "downloadError": "패킷 캡처를 다운로드할 수 없습니다. 잠시 후 다시 시도하세요.",
       "downloadName": "detection.pcap"
     },
     "context": {

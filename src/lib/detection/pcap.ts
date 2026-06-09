@@ -33,7 +33,10 @@ import "server-only";
  * `time` (see `fetchDetectionPackets`). Each pcap record header stamps
  * the on-wire capture time from `Packet.packetTime` (not the event /
  * request time), so frame timestamps in Wireshark reflect when the
- * packet was actually seen.
+ * packet was actually seen. An unparseable `packetTime` maps to the
+ * epoch rather than aborting the whole download; the assembler counts
+ * those fallbacks so the route can emit a single diagnostic warning
+ * (the pure helpers here have no sensor / event context to log with).
  */
 
 /** libpcap datalink type for full Ethernet frames (DLT_EN10MB). */
@@ -106,13 +109,16 @@ export interface PcapPacketInput {
  * straight from the string to recover sub-millisecond digits Giganto
  * may carry. Unparseable input maps to the epoch (0, 0) rather than
  * throwing — a single bad timestamp must not abort a whole download.
+ * `parsed` is `false` for that epoch fallback so the assembler can
+ * count fallbacks without re-parsing the string.
  */
 export function rfc3339ToEpochMicros(value: string): {
   seconds: number;
   micros: number;
+  parsed: boolean;
 } {
   const ms = Date.parse(value);
-  if (Number.isNaN(ms)) return { seconds: 0, micros: 0 };
+  if (Number.isNaN(ms)) return { seconds: 0, micros: 0, parsed: false };
   let seconds = Math.floor(ms / 1000);
   let micros = (ms - seconds * 1000) * 1000;
   const fraction = /[.,](\d+)/.exec(value);
@@ -124,7 +130,7 @@ export function rfc3339ToEpochMicros(value: string): {
     seconds += Math.floor(micros / MICROS_PER_SECOND);
     micros %= MICROS_PER_SECOND;
   }
-  return { seconds, micros };
+  return { seconds, micros, parsed: true };
 }
 
 function writeGlobalHeader(view: DataView): void {
@@ -135,6 +141,19 @@ function writeGlobalHeader(view: DataView): void {
   view.setUint32(12, 0, true); // sigfigs (timestamp accuracy)
   view.setUint32(16, PCAP_SNAPLEN, true); // snaplen
   view.setUint32(20, LINKTYPE_ETHERNET, true); // network (datalink type)
+}
+
+/** Result of {@link assemblePcapFile}. */
+export interface AssembledPcap {
+  /** The framed libpcap bytes. */
+  file: Uint8Array<ArrayBuffer>;
+  /**
+   * How many records had an unparseable `packetTime` and were stamped
+   * at the epoch (see {@link rfc3339ToEpochMicros}). The route logs a
+   * single warning with sensor / event context when this is non-zero;
+   * the pure assembler has no such context of its own.
+   */
+  epochFallbackCount: number;
 }
 
 /**
@@ -149,10 +168,14 @@ function writeGlobalHeader(view: DataView): void {
  * bounds the connection, but a caller that hands in an oversized array
  * still trips {@link PcapCapExceededError} here rather than allocating
  * an unbounded buffer.
+ *
+ * Returns the bytes alongside `epochFallbackCount` — the number of
+ * records whose `packetTime` could not be parsed and were stamped at
+ * the epoch — so the route can surface an otherwise-silent fallback.
  */
 export function assemblePcapFile(
   packets: readonly PcapPacketInput[],
-): Uint8Array<ArrayBuffer> {
+): AssembledPcap {
   if (packets.length > PCAP_MAX_PACKETS) {
     throw new PcapCapExceededError("packets");
   }
@@ -177,9 +200,13 @@ export function assemblePcapFile(
   writeGlobalHeader(view);
 
   let offset = GLOBAL_HEADER_BYTES;
+  let epochFallbackCount = 0;
   for (let i = 0; i < frames.length; i += 1) {
     const frame = frames[i];
-    const { seconds, micros } = rfc3339ToEpochMicros(packets[i].packetTime);
+    const { seconds, micros, parsed } = rfc3339ToEpochMicros(
+      packets[i].packetTime,
+    );
+    if (!parsed) epochFallbackCount += 1;
     view.setUint32(offset, seconds >>> 0, true); // ts_sec
     view.setUint32(offset + 4, micros >>> 0, true); // ts_usec
     view.setUint32(offset + 8, frame.length, true); // incl_len
@@ -189,7 +216,7 @@ export function assemblePcapFile(
     offset += frame.length;
   }
 
-  return out;
+  return { file: out, epochFallbackCount };
 }
 
 /**

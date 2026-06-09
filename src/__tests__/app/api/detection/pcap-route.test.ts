@@ -42,7 +42,7 @@ vi.mock("@/lib/detection/server-actions", () => ({
   fetchDetectionPackets: mockFetchDetectionPackets,
 }));
 
-import { GET } from "@/app/api/detection/pcap/route";
+import { buildPcapFilename, GET } from "@/app/api/detection/pcap/route";
 
 const SENSOR = "sensor-a";
 const REQUEST_TIME = "2026-06-09T00:00:00.000Z";
@@ -91,6 +91,52 @@ describe("GET /api/detection/pcap", () => {
     );
   });
 
+  it("returns 404 no-packet-data (not a 200 file) for an empty capture", async () => {
+    mockFetchDetectionPackets.mockResolvedValue([]);
+    const res = await GET(
+      makeRequest({ sensor: SENSOR, requestTime: REQUEST_TIME }),
+      { params: Promise.resolve({}) },
+    );
+    expect(res.status).toBe(404);
+    expect(await res.json()).toMatchObject({ code: "no-packet-data" });
+    // No header-only file is served.
+    expect(res.headers.get("Content-Disposition")).toBeNull();
+  });
+
+  it("logs once when a packet has an unparseable packetTime", async () => {
+    mockFetchDetectionPackets.mockResolvedValue([
+      { packetTime: REQUEST_TIME, packet: FRAME_B64 },
+      { packetTime: "not-a-time", packet: FRAME_B64 },
+    ]);
+    const warn = vi.spyOn(console, "warn").mockImplementation(() => {});
+    try {
+      const res = await GET(
+        makeRequest({ sensor: SENSOR, requestTime: REQUEST_TIME }),
+        { params: Promise.resolve({}) },
+      );
+      expect(res.status).toBe(200);
+      expect(warn).toHaveBeenCalledTimes(1);
+      expect(warn.mock.calls[0][0]).toContain(SENSOR);
+    } finally {
+      warn.mockRestore();
+    }
+  });
+
+  it("does not log when every packetTime parses", async () => {
+    mockFetchDetectionPackets.mockResolvedValue([
+      { packetTime: REQUEST_TIME, packet: FRAME_B64 },
+    ]);
+    const warn = vi.spyOn(console, "warn").mockImplementation(() => {});
+    try {
+      await GET(makeRequest({ sensor: SENSOR, requestTime: REQUEST_TIME }), {
+        params: Promise.resolve({}),
+      });
+      expect(warn).not.toHaveBeenCalled();
+    } finally {
+      warn.mockRestore();
+    }
+  });
+
   it("rejects a missing sensor with 400 and never fetches", async () => {
     const res = await GET(makeRequest({ requestTime: REQUEST_TIME }), {
       params: Promise.resolve({}),
@@ -128,5 +174,35 @@ describe("GET /api/detection/pcap", () => {
     );
     expect(res.status).toBe(403);
     expect(mockFetchDetectionPackets).not.toHaveBeenCalled();
+  });
+});
+
+describe("buildPcapFilename", () => {
+  it("produces distinct names for long sensor ids sharing a 120-char prefix", () => {
+    const prefix = "s".repeat(120);
+    const a = buildPcapFilename(`${prefix}-alpha`, REQUEST_TIME);
+    const b = buildPcapFilename(`${prefix}-bravo`, REQUEST_TIME);
+    expect(a).not.toBe(b);
+    expect(a.endsWith(".pcap")).toBe(true);
+    expect(b.endsWith(".pcap")).toBe(true);
+  });
+
+  it("is deterministic for the same sensor id", () => {
+    expect(buildPcapFilename(SENSOR, REQUEST_TIME)).toBe(
+      buildPcapFilename(SENSOR, REQUEST_TIME),
+    );
+  });
+
+  it("keeps CR/LF, quotes, and path separators out of the filename", () => {
+    const hostile = 'evil"\r\nSet-Cookie: x=y/../../etc/passwd';
+    const filename = buildPcapFilename(hostile, REQUEST_TIME);
+    expect(filename).not.toMatch(/[\r\n"/\\]/);
+    // Only the filename-safe alphabet survives.
+    expect(filename).toMatch(/^[A-Za-z0-9._-]+$/);
+  });
+
+  it("stays within the safe alphabet even with a hostile timestamp", () => {
+    const filename = buildPcapFilename(SENSOR, '2026-01-01"\r\nX: y');
+    expect(filename).toMatch(/^[A-Za-z0-9._-]+$/);
   });
 });
