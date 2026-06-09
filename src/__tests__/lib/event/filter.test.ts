@@ -5,6 +5,7 @@ import {
   type EventFilter,
   filterToSearchEntries,
   isPortInRange,
+  isPortString,
   MAX_PORT,
   MIN_PORT,
   parseFilterFromSearchParams,
@@ -24,6 +25,37 @@ describe("isPortInRange", () => {
     expect(isPortInRange(70000)).toBe(false);
     expect(isPortInRange(443.5)).toBe(false);
     expect(isPortInRange(Number.NaN)).toBe(false);
+  });
+});
+
+describe("isPortString", () => {
+  it("accepts base-10 integer literals within range", () => {
+    expect(isPortString("0")).toBe(true);
+    expect(isPortString("443")).toBe(true);
+    expect(isPortString(String(MAX_PORT))).toBe(true);
+    // Leading zeros are still all-digit and parse in range.
+    expect(isPortString("08")).toBe(true);
+  });
+
+  it("rejects out-of-range integers", () => {
+    expect(isPortString("65536")).toBe(false);
+    expect(isPortString("70000")).toBe(false);
+  });
+
+  // Regression for the form parser: `Number.parseInt` would truncate
+  // these to a different, valid-looking port (`443.5` -> 443, `1e3`
+  // -> 1). The integer-literal contract rejects them outright so the
+  // form blocks Apply instead of querying a port the operator never
+  // typed.
+  it("rejects decimal, exponent, hex, signed, and blank input", () => {
+    expect(isPortString("443.5")).toBe(false);
+    expect(isPortString("1e3")).toBe(false);
+    expect(isPortString("0x10")).toBe(false);
+    expect(isPortString("-1")).toBe(false);
+    expect(isPortString("+443")).toBe(false);
+    expect(isPortString("")).toBe(false);
+    expect(isPortString("443 ")).toBe(false);
+    expect(isPortString("abc")).toBe(false);
   });
 });
 
@@ -80,11 +112,14 @@ describe("parseFilterFromSearchParams", () => {
       origPortStart: "443",
       origPortEnd: "70000",
       respPortStart: "abc",
+      // Decimal/exponent must not be coerced to a different port.
+      respPortEnd: "443.5",
     });
     expect(filter.sensor).toBe("s1");
     expect(filter.origPortStart).toBe(443);
     expect(filter.origPortEnd).toBeNull();
     expect(filter.respPortStart).toBeNull();
+    expect(filter.respPortEnd).toBeNull();
   });
 
   it("round-trips through filterToSearchEntries", () => {

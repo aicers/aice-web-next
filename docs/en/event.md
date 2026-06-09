@@ -42,8 +42,9 @@ sensor.
   the originating and responding addresses.
 - **Source / destination port range** — optional start/end port bounds
   for the originating and responding ports. Ports must be whole numbers
-  between 0 and 65535; **Apply** is blocked while a port is out of
-  range.
+  between 0 and 65535; **Apply** is blocked while a port entry is not a
+  whole number in that range (decimal or exponent input is rejected
+  rather than rounded to a different port).
 
 There is no separate protocol filter: Giganto's network filter has no
 protocol field, so the IP protocol cannot be used as a query input. It

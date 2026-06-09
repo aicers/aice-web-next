@@ -5,6 +5,7 @@ export {
   FILTER_PARAM_KEYS,
   filterToSearchEntries,
   isPortInRange,
+  isPortString,
   MAX_PORT,
   MIN_PORT,
   parseFilterFromSearchParams,

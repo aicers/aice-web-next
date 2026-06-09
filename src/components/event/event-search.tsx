@@ -63,6 +63,10 @@ export function EventSearch({
   const [pending, startTransition] = useTransition();
   const [draft, setDraft] = useState<EventFilter>(committedFilter);
   const [detail, setDetail] = useState<ConnRawEvent | null>(null);
+  // Bumped on Reset to remount the filter form so its locally-held raw
+  // port text re-seeds from the cleared draft (otherwise stale invalid
+  // input would linger in the inputs).
+  const [formKey, setFormKey] = useState(0);
 
   const navigate = (
     filter: EventFilter,
@@ -83,6 +87,7 @@ export function EventSearch({
   const onApply = (): void => navigate(draft, pageSize, { kind: "head" });
   const onReset = (): void => {
     setDraft(EMPTY_EVENT_FILTER);
+    setFormKey((key) => key + 1);
     navigate(EMPTY_EVENT_FILTER, pageSize, { kind: "head" });
   };
 
@@ -101,6 +106,7 @@ export function EventSearch({
         <CardContent>
           {sensors === null ? <SensorsUnavailableNotice /> : null}
           <EventFilterForm
+            key={formKey}
             draft={draft}
             sensors={sensors}
             pending={pending}

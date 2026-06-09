@@ -1,6 +1,7 @@
 "use client";
 
 import { useTranslations } from "next-intl";
+import { useState } from "react";
 
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -13,9 +14,21 @@ import {
   SelectValue,
 } from "@/components/ui/select";
 import { computePeriodRange, PERIOD_KEYS } from "@/lib/detection/period";
-import { type EventFilter, isPortInRange, RECORD_TYPE_IDS } from "@/lib/event";
+import { type EventFilter, isPortString, RECORD_TYPE_IDS } from "@/lib/event";
 
 const QUICK_RANGE_NONE = "none";
+
+/** The four `EventFilter` keys backed by a port `<input>`. */
+type PortKey =
+  | "origPortStart"
+  | "origPortEnd"
+  | "respPortStart"
+  | "respPortEnd";
+
+/** Render a committed port number as its `<input>` text. */
+function portToRaw(value: number | null): string {
+  return value === null ? "" : String(value);
+}
 
 /** Convert an ISO-8601 UTC string to a `datetime-local` input value. */
 function isoToLocalInput(iso: string | null): string {
@@ -74,24 +87,38 @@ export function EventFilterForm({
     set({ start: range.start, end: range.end });
   };
 
-  const parsePort = (raw: string): number | null => {
-    if (raw.trim() === "") return null;
-    const n = Number.parseInt(raw, 10);
-    return Number.isInteger(n) ? n : null;
+  // Port inputs keep their raw text locally so an invalid entry
+  // (decimal, exponent, or out-of-range) stays on screen and blocks
+  // Apply, instead of being coerced into a different port. The
+  // committed numeric draft only ever holds a valid port or null.
+  // `key` on this component (bumped by the parent on Reset) re-seeds
+  // this state from the cleared draft.
+  const [rawPorts, setRawPorts] = useState<Record<PortKey, string>>(() => ({
+    origPortStart: portToRaw(draft.origPortStart),
+    origPortEnd: portToRaw(draft.origPortEnd),
+    respPortStart: portToRaw(draft.respPortStart),
+    respPortEnd: portToRaw(draft.respPortEnd),
+  }));
+
+  const setPort = (key: PortKey, raw: string): void => {
+    setRawPorts((prev) => ({ ...prev, [key]: raw }));
+    const trimmed = raw.trim();
+    const value = isPortString(trimmed) ? Number.parseInt(trimmed, 10) : null;
+    set({ [key]: value } as Partial<EventFilter>);
   };
 
-  // A port is valid when empty or a whole number in `0..65535`. The
-  // server drops out-of-range values when parsing the URL, so the form
-  // must block Apply rather than let the query silently widen past what
-  // the operator sees (e.g. `70000` would otherwise vanish server-side).
-  // Shares {@link isPortInRange} with the URL parser so the two agree.
-  const portInvalid = (value: number | null): boolean =>
-    value !== null && !isPortInRange(value);
+  // A port input is invalid when non-empty but not an accepted port
+  // string. The server drops such values when parsing the URL, so the
+  // form blocks Apply rather than let the query silently widen past
+  // what the operator sees (`70000` and `443.5` alike). Shares
+  // {@link isPortString} with the URL parser so the two agree.
+  const portRawInvalid = (raw: string): boolean =>
+    raw.trim() !== "" && !isPortString(raw.trim());
   const anyPortInvalid =
-    portInvalid(draft.origPortStart) ||
-    portInvalid(draft.origPortEnd) ||
-    portInvalid(draft.respPortStart) ||
-    portInvalid(draft.respPortEnd);
+    portRawInvalid(rawPorts.origPortStart) ||
+    portRawInvalid(rawPorts.origPortEnd) ||
+    portRawInvalid(rawPorts.respPortStart) ||
+    portRawInvalid(rawPorts.respPortEnd);
 
   return (
     <form
@@ -220,14 +247,12 @@ export function EventFilterForm({
           endLabel={tf("rangeEnd")}
           idPrefix="event-orig-port"
           type="number"
-          startValue={
-            draft.origPortStart === null ? "" : String(draft.origPortStart)
-          }
-          endValue={draft.origPortEnd === null ? "" : String(draft.origPortEnd)}
-          startInvalid={portInvalid(draft.origPortStart)}
-          endInvalid={portInvalid(draft.origPortEnd)}
-          onStart={(v) => set({ origPortStart: parsePort(v) })}
-          onEnd={(v) => set({ origPortEnd: parsePort(v) })}
+          startValue={rawPorts.origPortStart}
+          endValue={rawPorts.origPortEnd}
+          startInvalid={portRawInvalid(rawPorts.origPortStart)}
+          endInvalid={portRawInvalid(rawPorts.origPortEnd)}
+          onStart={(v) => setPort("origPortStart", v)}
+          onEnd={(v) => setPort("origPortEnd", v)}
         />
         <RangeField
           label={tf("respPort")}
@@ -235,14 +260,12 @@ export function EventFilterForm({
           endLabel={tf("rangeEnd")}
           idPrefix="event-resp-port"
           type="number"
-          startValue={
-            draft.respPortStart === null ? "" : String(draft.respPortStart)
-          }
-          endValue={draft.respPortEnd === null ? "" : String(draft.respPortEnd)}
-          startInvalid={portInvalid(draft.respPortStart)}
-          endInvalid={portInvalid(draft.respPortEnd)}
-          onStart={(v) => set({ respPortStart: parsePort(v) })}
-          onEnd={(v) => set({ respPortEnd: parsePort(v) })}
+          startValue={rawPorts.respPortStart}
+          endValue={rawPorts.respPortEnd}
+          startInvalid={portRawInvalid(rawPorts.respPortStart)}
+          endInvalid={portRawInvalid(rawPorts.respPortEnd)}
+          onStart={(v) => setPort("respPortStart", v)}
+          onEnd={(v) => setPort("respPortEnd", v)}
         />
       </div>
 

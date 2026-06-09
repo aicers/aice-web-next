@@ -65,6 +65,21 @@ export function isPortInRange(value: number): boolean {
   return Number.isInteger(value) && value >= MIN_PORT && value <= MAX_PORT;
 }
 
+/**
+ * Whether a raw port string is an acceptable port: a base-10 integer
+ * literal (no sign, decimal point, or exponent) that lands in range.
+ *
+ * This is the single integer-literal contract shared by the URL parser
+ * ({@link readPort}) and the filter form. The form must not parse with
+ * `Number.parseInt`, which truncates `"443.5"` to `443` and `"1e3"` to
+ * `1` — values that look valid but silently differ from what the
+ * operator typed. Requiring all-digit input rejects those outright so
+ * the form can block Apply instead of querying a different port.
+ */
+export function isPortString(raw: string): boolean {
+  return /^\d+$/.test(raw) && isPortInRange(Number.parseInt(raw, 10));
+}
+
 /** URL query-string names that persist the filter. */
 export const FILTER_PARAM_KEYS = {
   recordType: "type",
@@ -134,9 +149,7 @@ function readPort(
 ): number | null {
   const raw = readString(source, key);
   if (raw === null) return null;
-  if (!/^\d+$/.test(raw)) return null;
-  const n = Number.parseInt(raw, 10);
-  return isPortInRange(n) ? n : null;
+  return isPortString(raw) ? Number.parseInt(raw, 10) : null;
 }
 
 /**
