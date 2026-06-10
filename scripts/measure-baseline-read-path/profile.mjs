@@ -321,10 +321,21 @@ export async function assertRepresentativeProfile(pool, opts) {
  *     the `story_finalized_through` precondition.
  *   * a structured object `{ nowMs?, memberScan? }` — enables every
  *     Story-shape check the `memberScan` range allows (issue #601).
+ *
+ * Anything else throws. Property reads on a primitive (e.g. a bare
+ * number) evaluate to `undefined`, which would silently run the
+ * profile with `Date.now()` and no `memberScan` — skipping the
+ * slop-replay probe and weakening the gate instead of failing it.
  */
 function normalizeAssertOpts(opts) {
   if (opts === undefined || opts === null) {
     return { nowMs: Date.now(), memberScan: null };
+  }
+  if (typeof opts !== "object" || Array.isArray(opts)) {
+    throw new TypeError(
+      `assertRepresentativeProfile expects an options object as its ` +
+        `second argument, got ${Array.isArray(opts) ? "array" : typeof opts}`,
+    );
   }
   return {
     nowMs: typeof opts.nowMs === "number" ? opts.nowMs : Date.now(),

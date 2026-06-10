@@ -122,6 +122,17 @@ describe("assertRepresentativeProfile", () => {
     expect(results.corpusState?.lastRunStatus).toBe("ok");
   });
 
+  it("rejects a bare-number second argument (the removed pre-#601 call shape) instead of silently skipping the slop-replay probe", async () => {
+    const pool = makePool(passingResponses());
+    const call = assertRepresentativeProfile(
+      pool,
+      // @ts-expect-error — exercising the removed runtime call shape
+      NOW_MS,
+    );
+    await expect(call).rejects.toBeInstanceOf(TypeError);
+    await expect(call).rejects.toThrow(/options object/);
+  });
+
   it("rejects a tenant whose baseline_triaged_event is under the row floor", async () => {
     const responses = passingResponses();
     responses.set(PROFILE_PROBE_SQL.baselineRowCount, {
