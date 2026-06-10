@@ -4,7 +4,7 @@ This project uses a custom migration runner (`src/lib/db/migrate.ts`) to manage 
 
 ## Directory layout
 
-```
+```text
 migrations/
   auth/        # Auth database (shared, single instance)
   audit/       # Audit database (shared, single instance)
@@ -13,7 +13,7 @@ migrations/
 
 ## File naming
 
-```
+```text
 <version>_<description>.sql
 ```
 
