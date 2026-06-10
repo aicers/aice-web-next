@@ -329,7 +329,7 @@ async function selectCursorSlice(
   // and the ack β-update (see {@link commitOnAck}) would overwrite the
   // analyst's `last_sent_by` with the system actor. Lines up with the
   // partial-index predicate
-  // (`event_group_auto_unsent_created_at_idx`, migration `0021`).
+  // (`event_group_auto_unsent_created_at_idx` in the tenant schema).
   const { rows } = await client.query<StoryCursorRowSql>(
     `SELECT id::text                                AS story_id,
             story_version,
