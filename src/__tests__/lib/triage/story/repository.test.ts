@@ -569,7 +569,7 @@ describe("insertAutoStory — correlation_key dedup branch (issue #694)", () => 
     expect(ins?.sql).toMatch(/correlation_key IS NOT NULL/);
   });
 
-  it("R1/R3 (correlation_key NULL) keep the legacy primary_asset index target", async () => {
+  it("R1/R3 (correlation_key NULL) keep the primary_asset index target", async () => {
     const h = makeClient();
     await insertAutoStory(
       // biome-ignore lint/suspicious/noExplicitAny: fake test client

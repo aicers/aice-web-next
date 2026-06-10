@@ -4,7 +4,7 @@ This project uses a custom migration runner (`src/lib/db/migrate.ts`) to manage 
 
 ## Directory layout
 
-```
+```text
 migrations/
   auth/        # Auth database (shared, single instance)
   audit/       # Audit database (shared, single instance)
@@ -13,20 +13,20 @@ migrations/
 
 ## File naming
 
-```
+```text
 <version>_<description>.sql
 ```
 
 - `version` is a zero-padded numeric prefix (e.g., `0001`, `0002`).
 - Files are applied in lexicographic order of their filename.
 
+The pre-release migration history was squashed before the first release, so each stream starts from a single `0001` file that creates the complete v1 schema.
+
 ## Safety features
 
 ### Checksum validation
 
 Every applied migration is stored with a SHA-256 checksum. On subsequent runs the runner verifies that the file on disk still matches the recorded checksum. A mismatch aborts the run immediately — never silently re-apply or skip a modified migration.
-
-Existing rows without a checksum (from before this feature) are backfilled on the first run after upgrade.
 
 ### Advisory locking
 

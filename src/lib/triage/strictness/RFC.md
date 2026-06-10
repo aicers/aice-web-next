@@ -25,9 +25,10 @@ multi-tenant dual-cap merge, the protected-event row marker, the
 funnel "Shown" segment with `passThroughRate` redefined to
 `shown / detected`, the per-stop `eligible_top_n` preview, option (b)
 for the slider × quota interaction (`defaultN` multiplier + "All"-stop
-quota lift), and the migration that drops the degenerate
-`baseline_triaged_event_event_time_score_idx`. Corpus B ("With my
-policies") slider activation is split to a separate follow-up.
+quota lift), and the removal of the degenerate
+`baseline_triaged_event_event_time_score_idx` (§7a; the index no
+longer exists in the v1 schema). Corpus B ("With my policies")
+slider activation is split to a separate follow-up.
 
 ## 1. Stop count and labels
 
@@ -170,23 +171,23 @@ Per-customer or per-user-account preference storage is out of scope.
 
 ## 7a. Degenerate index (`baseline_triaged_event_event_time_score_idx`)
 
-The composite index added in
-`migrations/customer/0003_baseline_corpus_a.sql:62-63`
-(`event_time DESC, baseline_score DESC`) does NOT serve the slider:
-`baseline_score` is NULL on every Phase 1.B row (computed at read
-time via `cume_dist()` over `raw_score`), so the second column
-collapses and the index degenerates to an `event_time` btree the
-existing `baseline_triaged_event_event_time_idx` already covers.
+Historical note: an early pre-release schema carried a composite
+index `(event_time DESC, baseline_score DESC)` on the assumption the
+slider would filter on a stored score column. It did NOT serve the
+slider: the baseline score is computed at read time via `cume_dist()`
+over `raw_score` (no stored column), so the second column collapsed
+and the index degenerated to an `event_time` btree that
+`baseline_triaged_event_event_time_idx` already covers.
 
-**Resolution: dropped** in
-`migrations/customer/0013_drop_degenerate_baseline_score_idx.sql`.
-The alternative — rebuilding as `(event_time DESC, raw_score DESC)`
-— would not serve the production sort either: the menu cohort SQL
-partitions `cume_dist()` by `(kind, baseline_version)`, not by
-`event_time`, so the planner cannot use `raw_score` co-locality
-without a separate `(kind, baseline_version, raw_score DESC)`
-index. Adding that index is out of scope here; the read-time sort
-is the dominant cost regardless and is unchanged by this RFC.
+**Resolution: dropped** — the index no longer exists in any migration
+file. The alternative — rebuilding as `(event_time DESC,
+raw_score DESC)` — would not serve the production sort either: the
+menu cohort SQL partitions `cume_dist()` by `(kind,
+baseline_version)`, not by `event_time`, so the planner cannot use
+`raw_score` co-locality without a separate
+`(kind, baseline_version, raw_score DESC)` index. That index exists
+in the tenant schema; the read-time sort is the dominant cost
+regardless and is unchanged by this RFC.
 
 ## 8. Story-protected hard caps
 
@@ -286,8 +287,10 @@ the design but is not a substitute for the measurement.
 The drop-or-rebuild decision for
 `baseline_triaged_event_event_time_score_idx` (§7a) is a
 **structural resolution**, not an outcome of the measurement gate:
-because `baseline_score` is uniformly NULL on Phase 1.B rows the
-index degenerates to an `event_time` btree already covered by
+the index assumed a stored score column that does not exist in the
+v1 schema (the baseline score is read-time `cume_dist()` over
+`raw_score`), so its second column could never discriminate and the
+index degenerated to an `event_time` btree already covered by
 `baseline_triaged_event_event_time_idx` regardless of plan choice.
 That conclusion holds without numbers; the measurement gate would
 only have been load-bearing on this decision if the rebuild option

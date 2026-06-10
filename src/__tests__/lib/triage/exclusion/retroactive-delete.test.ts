@@ -591,7 +591,7 @@ describe("retroactive-delete planner", () => {
         expect(enqueueNoticeSpy).not.toHaveBeenCalled();
       });
 
-      it("skips enqueue entirely when customerId is omitted (back-compat)", async () => {
+      it("skips enqueue entirely when customerId is omitted (delete-only callers)", async () => {
         enqueueNoticeSpy.mockClear();
         const client = makeClient((call) => {
           if (call.sql.includes("to_regclass")) {

@@ -19,7 +19,7 @@
  * the stringified `event_group.id`. The cursor key is `(created_at,
  * id)` (not `(time_window_end, id)`) — but `created_at` defaults to
  * `now()` (= TRANSACTION-START time in PostgreSQL, not statement or
- * commit time, see `migrations/customer/0008_event_group_story.sql`).
+ * commit time).
  * A correlator transaction can therefore commit AFTER a drain advances
  * the cursor while persisting a row whose `created_at` is BEHIND the
  * just-advanced cursor; the cursor-ordered forward slice
@@ -56,9 +56,8 @@
  *      put). Once delivered they get `last_sent_at = NOW()` on ack and
  *      drop out of the scan permanently.
  *
- * The `streaming_activated_at` watermark
- * (`migrations/customer/0020_aimer_push_state_streaming_activated_at.sql`)
- * is stamped at the same instant as the NULL-cursor seed in
+ * The `aimer_push_state.streaming_activated_at` watermark is stamped
+ * at the same instant as the NULL-cursor seed in
  * `seedNullCursor`. Rows whose `created_at` is older than activation
  * are pre-existing history; they are NOT eligible for the straggler
  * scan and the drain therefore does not back-flood aimer-web with the
@@ -552,9 +551,8 @@ export interface StoryStragglerSlice {
  *     orthogonal "committed late, ended up behind cursor" case the
  *     forward slice cannot recover on its own.
  *
- * Backed by partial index
- * `event_group_auto_unsent_created_at_idx` (migration
- * `0021_event_group_unsent_idx.sql`).
+ * Backed by the partial index
+ * `event_group_auto_unsent_created_at_idx` in the tenant schema.
  */
 export async function loadStoryStragglerSlice(
   input: LoadStoryStragglerSliceInput,

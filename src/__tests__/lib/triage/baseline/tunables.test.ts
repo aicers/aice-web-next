@@ -18,9 +18,10 @@ import {
 
 describe("§9 tunables (PR 2 / #513)", () => {
   it("freezes the Phase 1.B baseline-version marker", () => {
-    // Bumping this value here without also bumping the migration that
-    // backfills `raw_score` and `selector_tags` would mark fresh rows
-    // under a version the corpus has not yet stabilised on.
+    // The read path partitions `cume_dist()` cohorts by
+    // `(kind, baseline_version)`, so bumping this value is a corpus
+    // re-partition — RFC 0001 §10 requires a deliberate version bump,
+    // never a drive-by edit here.
     expect(PHASE_1B_BASELINE_VERSION).toBe("phase1b-four-selector");
   });
 

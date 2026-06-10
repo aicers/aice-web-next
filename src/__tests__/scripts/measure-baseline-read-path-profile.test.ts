@@ -114,12 +114,23 @@ function passingResponses(): Map<string, StubResult> {
 describe("assertRepresentativeProfile", () => {
   it("accepts a representative tenant", async () => {
     const pool = makePool(passingResponses());
-    const results = await assertRepresentativeProfile(pool, NOW_MS);
+    const results = await assertRepresentativeProfile(pool, { nowMs: NOW_MS });
     expect(results.baselineRowCount).toBe(250_000);
     expect(results.observedRowCount).toBe(1_200_000);
     expect(results.distinctPartitions).toBe(6);
     expect(results.distinctOrigAddr).toBe(750);
     expect(results.corpusState?.lastRunStatus).toBe("ok");
+  });
+
+  it("rejects a bare-number second argument (the removed pre-#601 call shape) instead of silently skipping the slop-replay probe", async () => {
+    const pool = makePool(passingResponses());
+    const call = assertRepresentativeProfile(
+      pool,
+      // @ts-expect-error — exercising the removed runtime call shape
+      NOW_MS,
+    );
+    await expect(call).rejects.toBeInstanceOf(TypeError);
+    await expect(call).rejects.toThrow(/options object/);
   });
 
   it("rejects a tenant whose baseline_triaged_event is under the row floor", async () => {
@@ -129,7 +140,7 @@ describe("assertRepresentativeProfile", () => {
     });
     const pool = makePool(responses);
     await expect(
-      assertRepresentativeProfile(pool, NOW_MS),
+      assertRepresentativeProfile(pool, { nowMs: NOW_MS }),
     ).rejects.toBeInstanceOf(ProfileAssertionError);
   });
 
@@ -140,7 +151,7 @@ describe("assertRepresentativeProfile", () => {
     });
     const pool = makePool(responses);
     await expect(
-      assertRepresentativeProfile(pool, NOW_MS),
+      assertRepresentativeProfile(pool, { nowMs: NOW_MS }),
     ).rejects.toBeInstanceOf(ProfileAssertionError);
   });
 
@@ -151,7 +162,7 @@ describe("assertRepresentativeProfile", () => {
     });
     const pool = makePool(responses);
     await expect(
-      assertRepresentativeProfile(pool, NOW_MS),
+      assertRepresentativeProfile(pool, { nowMs: NOW_MS }),
     ).rejects.toBeInstanceOf(ProfileAssertionError);
   });
 
@@ -167,7 +178,7 @@ describe("assertRepresentativeProfile", () => {
     });
     const pool = makePool(responses);
     await expect(
-      assertRepresentativeProfile(pool, NOW_MS),
+      assertRepresentativeProfile(pool, { nowMs: NOW_MS }),
     ).rejects.toBeInstanceOf(ProfileAssertionError);
   });
 
@@ -188,7 +199,7 @@ describe("assertRepresentativeProfile", () => {
     });
     const pool = makePool(responses);
     try {
-      await assertRepresentativeProfile(pool, NOW_MS);
+      await assertRepresentativeProfile(pool, { nowMs: NOW_MS });
       throw new Error("assertion should have thrown");
     } catch (err) {
       if (!(err instanceof ProfileAssertionError)) throw err;
@@ -210,7 +221,7 @@ describe("assertRepresentativeProfile", () => {
     });
     const pool = makePool(responses);
     try {
-      await assertRepresentativeProfile(pool, NOW_MS);
+      await assertRepresentativeProfile(pool, { nowMs: NOW_MS });
       throw new Error("assertion should have thrown");
     } catch (err) {
       if (!(err instanceof ProfileAssertionError)) throw err;
@@ -227,7 +238,7 @@ describe("assertRepresentativeProfile", () => {
     });
     const pool = makePool(responses);
     await expect(
-      assertRepresentativeProfile(pool, NOW_MS),
+      assertRepresentativeProfile(pool, { nowMs: NOW_MS }),
     ).rejects.toBeInstanceOf(ProfileAssertionError);
   });
 
@@ -243,7 +254,7 @@ describe("assertRepresentativeProfile", () => {
     });
     const pool = makePool(responses);
     await expect(
-      assertRepresentativeProfile(pool, NOW_MS),
+      assertRepresentativeProfile(pool, { nowMs: NOW_MS }),
     ).rejects.toBeInstanceOf(ProfileAssertionError);
   });
 
@@ -259,7 +270,7 @@ describe("assertRepresentativeProfile", () => {
     });
     const pool = makePool(responses);
     await expect(
-      assertRepresentativeProfile(pool, NOW_MS),
+      assertRepresentativeProfile(pool, { nowMs: NOW_MS }),
     ).rejects.toBeInstanceOf(ProfileAssertionError);
   });
 
@@ -268,7 +279,7 @@ describe("assertRepresentativeProfile", () => {
     responses.set(PROFILE_PROBE_SQL.corpusState, { rows: [] });
     const pool = makePool(responses);
     await expect(
-      assertRepresentativeProfile(pool, NOW_MS),
+      assertRepresentativeProfile(pool, { nowMs: NOW_MS }),
     ).rejects.toBeInstanceOf(ProfileAssertionError);
   });
 
@@ -285,7 +296,7 @@ describe("assertRepresentativeProfile", () => {
     });
     const pool = makePool(responses);
     try {
-      await assertRepresentativeProfile(pool, NOW_MS);
+      await assertRepresentativeProfile(pool, { nowMs: NOW_MS });
       throw new Error("assertion should have thrown");
     } catch (err) {
       if (!(err instanceof ProfileAssertionError)) throw err;
@@ -379,19 +390,19 @@ describe("assertRepresentativeProfile — Story-shape checks (issue #601)", () =
     }
   });
 
-  it("does NOT run the phase-1 count probe when `memberScan` is absent (legacy bare-number callers)", async () => {
+  it("does NOT run the phase-1 count probe when `memberScan` is absent", async () => {
     const responses = passingResponses();
     // Removing the phase-1 SQL response would throw on lookup if the
-    // assertion still tried to run it — bare-number form must skip
-    // the probe entirely.
+    // assertion still tried to run it — a memberScan-less call must
+    // skip the probe entirely.
     responses.delete(PROFILE_SLOP_REPLAY_PHASE1_SQL);
     const pool = makePool(responses);
     await expect(
-      assertRepresentativeProfile(pool, NOW_MS),
+      assertRepresentativeProfile(pool, { nowMs: NOW_MS }),
     ).resolves.toBeDefined();
   });
 
-  it("still enforces the storyFinalizedThrough precondition even on the bare-number form (issue #601: cadence-side gate requirement)", async () => {
+  it("still enforces the storyFinalizedThrough precondition without a memberScan range (issue #601: cadence-side gate requirement)", async () => {
     const responses = passingResponses();
     responses.delete(PROFILE_SLOP_REPLAY_PHASE1_SQL);
     responses.set(PROFILE_PROBE_SQL.storyFinalizedThrough, {
@@ -399,7 +410,7 @@ describe("assertRepresentativeProfile — Story-shape checks (issue #601)", () =
     });
     const pool = makePool(responses);
     await expect(
-      assertRepresentativeProfile(pool, NOW_MS),
+      assertRepresentativeProfile(pool, { nowMs: NOW_MS }),
     ).rejects.toBeInstanceOf(ProfileAssertionError);
   });
 });

@@ -904,9 +904,8 @@ export type RawEventFieldValue =
   | FtpCommandRawEvent[]
   | DhcpOptionRawEvent[];
 
-// ── Conn back-compat aliases (E0 call sites) ───────────────────────
+// ── Conn connection alias ──────────────────────────────────────────
 
-export type ConnRawEventEdge = RawEventEdge<ConnRawEvent>;
 export type ConnRawEventConnection = RawEventConnection<ConnRawEvent>;
 
 // ── Statistics (aggregation chart) ─────────────────────────────────

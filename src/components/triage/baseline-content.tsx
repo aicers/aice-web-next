@@ -61,7 +61,6 @@ import {
   replaceTriagePivotHash,
   replaceTriageStoriesHash,
   type TriagePivotMode,
-  type TriageStoryHashFocus,
 } from "@/lib/triage/url-hash";
 import type { Tier2CorpusSeed } from "@/lib/triage/use-tier2-pivot";
 import {
@@ -474,10 +473,8 @@ export function TriageBaselineContent({
     const parsed = parseTriageStoriesHash(window.location.hash);
     if (parsed.tab !== null) setTab(parsed.tab);
     if (parsed.storyStaleHash) setShowStaleStoryHash(true);
-    if (parsed.story && parsed.story.customerId !== null) {
-      const focus = parsed.story as TriageStoryHashFocus & {
-        customerId: number;
-      };
+    if (parsed.story) {
+      const focus = parsed.story;
       const found = stories.find(
         (s) => s.customerId === focus.customerId && s.storyId === focus.storyId,
       );
@@ -1615,17 +1612,10 @@ export function TriageBaselineContent({
       return;
     }
     // Resolve the asset against the freshly-loaded corpus. The hash
-    // carries a composite `customerId/address`; a legacy URL with the
-    // bare address (`customerId === null`) is treated as stale rather
-    // than mis-resolving against the first customer's matching
-    // address. If `customerId` is present, the lookup must match
+    // carries a composite `customerId/address`; the lookup must match
     // BOTH parts of the composite key.
     let restoredAsset: { customerId: number; address: string } | null = null;
     if (parsed.asset !== null) {
-      if (parsed.asset.customerId === null) {
-        setFallbackNotice("stale-hash");
-        return;
-      }
       const found = result.assets.find(
         (a) =>
           a.customerId === parsed.asset?.customerId &&

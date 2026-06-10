@@ -127,10 +127,3 @@ export async function graphqlRequest<
     signal,
   );
 }
-
-/**
- * No-op kept for callers that previously cleared a per-endpoint
- * `GraphQLClient` cache. The new per-request snapshot model has no
- * client cache to clear.
- */
-export function resetClient(): void {}

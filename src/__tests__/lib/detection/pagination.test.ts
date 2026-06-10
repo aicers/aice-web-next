@@ -20,9 +20,9 @@ import {
 
 describe("page-size guardrails", () => {
   it("exposes the Gmail-spec steps in order capped at review's hard limit, with 50 as the default", () => {
-    // `200` was removed from the menu in #405: review 0.47.0 rejects
-    // `first` / `last` above 100, so the previous `200` step
-    // produced a guaranteed 500 from the result page once selected.
+    // The menu stops at 100 (#405): review 0.47.0 rejects `first` /
+    // `last` above 100, so any larger step would produce a guaranteed
+    // 500 from the result page once selected.
     expect(PAGE_SIZE_OPTIONS).toEqual([25, 50, 100]);
     expect(DEFAULT_PAGE_SIZE).toBe(50);
   });
@@ -36,10 +36,10 @@ describe("page-size guardrails", () => {
   });
 
   it("coercePageSize snaps off-menu values that exceed review's cap to that cap", () => {
-    // Stale bookmarks from before #405 may still carry `?pageSize=200`.
-    // Coercing those down to 100 (review's hard upper bound) preserves
-    // the operator's intent (a larger page) instead of collapsing back
-    // to the default.
+    // A hand-edited URL may carry `?pageSize=200`. Coercing it down
+    // to 100 (review's hard upper bound) preserves the operator's
+    // intent (a larger page) instead of collapsing back to the
+    // default.
     expect(coercePageSize(200)).toBe(100);
     expect(coercePageSize(999)).toBe(100);
   });

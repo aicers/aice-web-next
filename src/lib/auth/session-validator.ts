@@ -33,9 +33,6 @@ export interface SessionCheckResult {
  * | UA minor version change    | Low    | Log ua_mismatch, proceed   |
  * | UA major change (IP same)  | Medium | Log ua_mismatch, re-auth   |
  * | IP + UA both changed       | High   | Log both, re-auth          |
- *
- * If `storedBrowserFingerprint` is empty (legacy session created before
- * the migration), UA comparison is skipped entirely.
  */
 export function assessIpUaRisk(params: {
   storedIp: string;
@@ -53,14 +50,10 @@ export function assessIpUaRisk(params: {
   const ipChanged =
     storedIp !== "unknown" && currentIp !== "unknown" && storedIp !== currentIp;
 
-  // Skip UA comparison for legacy sessions (empty fingerprint)
-  const uaChange =
-    storedBrowserFingerprint === ""
-      ? ("same" as const)
-      : compareBrowserFingerprints(
-          storedBrowserFingerprint,
-          currentBrowserFingerprint,
-        );
+  const uaChange = compareBrowserFingerprints(
+    storedBrowserFingerprint,
+    currentBrowserFingerprint,
+  );
 
   const uaMajorChange = uaChange === "major";
   const uaMinorChange = uaChange === "minor";

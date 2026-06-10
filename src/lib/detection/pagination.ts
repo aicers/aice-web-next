@@ -40,13 +40,13 @@ export function isPageSize(value: number): value is PageSize {
 }
 
 /**
- * Coerce a caller-supplied number into a supported page size. Stale
- * URLs (e.g. a bookmark from before #405 dropped `200` from the
- * options list) coerce DOWN to {@link REVIEW_MAX_PAGE_SIZE} rather
- * than collapsing to the default — the operator's intent was a
- * larger page, and capping preserves the closest legal step. Other
- * unsupported values (negative, non-finite, or below the smallest
- * option) fall back to {@link DEFAULT_PAGE_SIZE}.
+ * Coerce a caller-supplied number into a supported page size. Values
+ * above the cap (e.g. a hand-edited `?pageSize=200` URL) coerce DOWN
+ * to {@link REVIEW_MAX_PAGE_SIZE} rather than collapsing to the
+ * default — the operator's intent was a larger page, and capping
+ * preserves the closest legal step. Other unsupported values
+ * (negative, non-finite, or below the smallest option) fall back to
+ * {@link DEFAULT_PAGE_SIZE}.
  */
 export function coercePageSize(value: number | undefined): PageSize {
   if (value === undefined) return DEFAULT_PAGE_SIZE;

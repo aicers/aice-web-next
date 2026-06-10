@@ -112,9 +112,8 @@ const EMPTY_PER_WINDOW: PerWindowValues = {
  * `false` so the per-window MAX step zeroes their contribution.
  *
  * The activation anchor is `baseline_corpus_state.corpus_activated_at`,
- * set by {@link markOk} on the first successful page commit and
- * backfilled by migration 0007 for tenants carrying a Phase 1.A corpus
- * across the upgrade. Reading the singleton row is O(1) (PK lookup) and
+ * set by {@link markOk} on the first successful page commit. Reading
+ * the singleton row is O(1) (PK lookup) and
  * — crucially — measures elapsed wall-clock time since ingestion began,
  * not the age of the oldest event in the page. The latter would
  * misfire on an initial catch-up page of historical events: the oldest

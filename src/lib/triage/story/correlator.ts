@@ -32,11 +32,11 @@ import "server-only";
  *     active-window age, not an event-time marker; using it here
  *     would mis-bound a historical catch-up). The page's own
  *     `event_time.min` is also not used as a floor, because a
- *     tenant that already has `baseline_triaged_event` rows when
- *     migration 0008 lands carries rows that sit before this
- *     page's min — those rows must be candidates on the first
- *     tick or they would never be considered for finalization
- *     again after the watermark advances past them.
+ *     tenant can hold `baseline_triaged_event` rows older than
+ *     this page's min (historical catch-up pages ingested before
+ *     the first step-(f) tick) — those rows must be candidates on
+ *     the first tick or they would never be considered for
+ *     finalization again after the watermark advances past them.
  *   - Empty page (zero `baseline_triaged_event` survivors) is a
  *     no-op: `story_finalized_through` is NOT advanced. Advancing
  *     on an empty page would push the finalization horizon past
@@ -251,11 +251,12 @@ export async function runStepF(args: RunStepFArgs): Promise<StepFResult> {
   //     `corpus_activated_at` is intentionally NOT used as an
   //     event-time floor (wall-clock anchor, not event-time
   //     marker). Clamping to `pageEventTimeRange.min` would also
-  //     mis-bound a tenant that already had `baseline_triaged_event`
-  //     rows when migration 0008 landed: those rows sit before the
-  //     current page, the watermark would advance past them on
-  //     this commit, and they would never be considered for
-  //     finalization again. Use `null` to mean "no lower bound".
+  //     mis-bound a tenant holding `baseline_triaged_event` rows
+  //     older than the current page (historical catch-up pages
+  //     ingested before the first step-(f) tick): the watermark
+  //     would advance past them on this commit, and they would
+  //     never be considered for finalization again. Use `null` to
+  //     mean "no lower bound".
   //   - second+ tick: `previous_watermark − MAX_RULE_WINDOW_MS` so
   //     cross-page clusters whose `time_window_end` falls just past
   //     the previous watermark can pick up earlier members.

@@ -130,10 +130,9 @@ export interface EngagementPivotClick {
    * load whose impression it engaged with. The pair
    * `(menu_load_id, event_key)` is `engagement_impression`'s PK, so
    * the §7 aggregate's numerator JOIN uses this column to recover
-   * the impression's `slot_bucket`. Required for any new row-bound
+   * the impression's `slot_bucket`. Required for any row-bound
    * action — the schema-level `engagement_action_shape` CHECK
-   * rejects writes without it (pre-expand legacy rows are
-   * grandfathered separately).
+   * rejects writes without it.
    */
   menuLoadId: string;
   dimension: EngagementPivotDimension;

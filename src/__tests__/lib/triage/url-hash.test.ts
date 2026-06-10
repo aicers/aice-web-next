@@ -64,16 +64,12 @@ describe("parseTriagePivotHash", () => {
     expect(state.rejectedStepCount).toBe(0);
   });
 
-  it("treats a legacy single-component asset focus as customerId-null", () => {
-    // URLs produced before 1B-3 wrote the bare address. Surface them
-    // as `customerId: null` so the caller can render the stale-hash
-    // toast rather than mis-resolving against the first customer's
-    // matching address.
-    const state = parseTriagePivotHash("#triage.pivot.asset=10.0.0.1");
-    expect(state.asset).toEqual({ customerId: null, address: "10.0.0.1" });
-  });
-
   it("rejects malformed asset focus encodings", () => {
+    // Bare address with no `customerId/` prefix → stale, rather than
+    // mis-resolving against the first customer's matching address.
+    expect(
+      parseTriagePivotHash("#triage.pivot.asset=10.0.0.1").asset,
+    ).toBeNull();
     // Non-numeric customer prefix → stale.
     expect(
       parseTriagePivotHash("#triage.pivot.asset=foo%2F10.0.0.1").asset,
@@ -428,7 +424,7 @@ describe("replaceTriagePivotHash", () => {
 /**
  * #490 acceptance: "URL hash carries `(customerId, storyId)` in both
  * cases; reloading the page restores the focused Story by composite
- * key (single-id legacy hash falls back to the list root with the
+ * key (a bare single-id hash falls back to the list root with the
  * documented toast)."
  */
 describe("parseTriageStoriesHash", () => {
@@ -442,7 +438,7 @@ describe("parseTriageStoriesHash", () => {
     });
   });
 
-  it("flags a bare storyId (legacy single-id form) as stale", () => {
+  it("flags a bare storyId (no customerId/ prefix) as stale", () => {
     // `event_group.id` is BIGSERIAL per tenant DB — without
     // `customerId/` the focus cannot resolve unambiguously.
     const parsed = parseTriageStoriesHash("#triage.story=7");
@@ -495,16 +491,6 @@ describe("serializeTriageStoriesHash", () => {
       serializeTriageStoriesHash({
         tab: "stories",
         story: null,
-        storyStaleHash: false,
-      }),
-    ).toBe("triage.tab=stories");
-  });
-
-  it("omits the story key when customerId is null (never serializes legacy bare-id)", () => {
-    expect(
-      serializeTriageStoriesHash({
-        tab: "stories",
-        story: { customerId: null, storyId: "7" },
         storyStaleHash: false,
       }),
     ).toBe("triage.tab=stories");

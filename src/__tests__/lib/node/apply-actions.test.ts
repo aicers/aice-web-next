@@ -731,8 +731,8 @@ describe("audit emission recovery — clear-on-failure (round 2)", () => {
 
 describe("audit emission idempotency — schema unique-violation handoff (round 3)", () => {
   // Round-3 acceptance: the slot machinery is best-effort coordination
-  // on top of the schema-level guarantee added in
-  // `migrations/audit/0003_node_apply_correlation_unique.sql`. A
+  // on top of the schema-level guarantee
+  // (`audit_logs_node_apply_correlation_unique`). A
   // `unique_violation` (PG SQLSTATE 23505) on the audit insert means
   // the row already landed (recovery sweep, a partially-failed prior
   // call, etc.) — the wrapper MUST NOT release the slot in that case

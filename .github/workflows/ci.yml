@@ -108,6 +108,23 @@ jobs:
             -days 1 -subj '/CN=localhost'
           cp infra/certs/dev.key infra/certs/prod.key
           cp infra/certs/dev.crt infra/certs/prod.crt
+      # Shared runners intermittently cannot reach Docker Hub; an
+      # implicit pull inside `docker run` then fails the whole job.
+      # Pull explicitly with retries so the validate steps below run
+      # against the locally cached image.
+      - name: Pull nginx image
+        run: |
+          for attempt in 1 2 3 4 5; do
+            if docker pull nginx:alpine; then
+              exit 0
+            fi
+            if [ "$attempt" -lt 5 ]; then
+              echo "docker pull attempt ${attempt}/5 failed; retrying in $((attempt * 15))s"
+              sleep $((attempt * 15))
+            fi
+          done
+          echo "could not pull nginx:alpine after 5 attempts" >&2
+          exit 1
       - name: Validate dev config
         run: |
           docker run --rm \

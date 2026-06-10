@@ -208,18 +208,3 @@ export interface SaveCuratedStoryInput {
   primaryAsset: string;
   title?: string;
 }
-
-/**
- * Composite key encoded in the Stories tab URL hash
- * (`#triage.story=<customerId>/<storyId>`). The `customerId` half is
- * mandatory because `event_group.id` is `BIGSERIAL` per tenant DB and
- * a bare `storyId` cannot be resolved unambiguously across the
- * caller's customer scope. A hash carrying a bare `storyId` (from an
- * older URL shape) parses with `customerId = null`; the consumer
- * surfaces the stale-hash toast and falls back to the Stories list
- * root.
- */
-export interface TriageStoryFocus {
-  customerId: number | null;
-  storyId: string;
-}

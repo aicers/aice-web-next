@@ -98,7 +98,6 @@ export {
 export type {
   ConnRawEvent,
   ConnRawEventConnection,
-  ConnRawEventEdge,
   DceRpcContextRawEvent,
   DhcpOptionRawEvent,
   FtpCommandRawEvent,

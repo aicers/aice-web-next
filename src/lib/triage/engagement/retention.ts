@@ -23,8 +23,7 @@ import {
  *
  * Both tables are append-only and the retention edge is
  * `created_at`, indexed by `engagement_impression_created_at_idx`
- * and `engagement_action_created_at_idx` (see
- * `migrations/customer/0014_engagement_signals.sql`). Floors
+ * and `engagement_action_created_at_idx`. Floors
  * mirror {@link ENGAGEMENT_IMPRESSION_RETENTION_DAYS} and
  * {@link ENGAGEMENT_ACTION_RETENTION_DAYS} from
  * `src/lib/triage/engagement/types.ts` so the source of truth

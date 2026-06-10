@@ -1553,10 +1553,9 @@ Tier 1 / Tier 2 toggle state are encoded in the URL hash under the
 
 The asset focus is the composite `customerId/address`, so two
 customers that share an RFC1918 address remain distinct on restore.
-URLs produced before the composite key landed encoded only the
-address; the page treats those as stale and falls back to the asset
-root with the non-blocking notice rather than guessing which
-customer's row to focus.
+A hash value that encodes only a bare address (no `customerId/`
+prefix) is rejected like any other malformed segment — the page lands
+on the asset root rather than guessing which customer's row to focus.
 
 Loading the page with a populated hash restores the breadcrumb to
 that step against the freshly loaded candidates. If a step's value is

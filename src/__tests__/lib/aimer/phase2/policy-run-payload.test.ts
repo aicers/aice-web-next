@@ -93,11 +93,6 @@ describe("unwrapPolicyTriageSnapshot", () => {
     expect(out).toEqual([{ policyId: 7, score: 0.5 }]);
   });
 
-  it("passes through a legacy flat array", () => {
-    const arr = [{ policyId: 8, score: 0.1 }];
-    expect(unwrapPolicyTriageSnapshot(arr)).toEqual(arr);
-  });
-
   it("an empty scores list becomes an empty array (not an empty object)", () => {
     expect(unwrapPolicyTriageSnapshot({ scores: [] })).toEqual([]);
   });
@@ -106,6 +101,9 @@ describe("unwrapPolicyTriageSnapshot", () => {
     expect(unwrapPolicyTriageSnapshot({})).toEqual([]);
     expect(unwrapPolicyTriageSnapshot(null)).toEqual([]);
     expect(unwrapPolicyTriageSnapshot("nope")).toEqual([]);
+    expect(unwrapPolicyTriageSnapshot([{ policyId: 8, score: 0.1 }])).toEqual(
+      [],
+    );
   });
 });
 

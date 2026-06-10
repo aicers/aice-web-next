@@ -61,7 +61,7 @@ export async function signContextToken(
   options: {
     /**
      * Pre-loaded signing key material. When omitted the helper loads
-     * the active key itself — kept so legacy single-token callers and
+     * the active key itself — kept so single-token call sites and
      * tests stay terse. The analyze-envelope route in
      * `/api/aimer/analyze-envelope` always passes this so its three
      * sibling JWSes share one `kid` even across a mid-mint key

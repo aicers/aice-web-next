@@ -8,9 +8,9 @@
  * so a test can swap in a fake or pre-populated set.
  *
  * Two resolvers ship in this module:
- *   - {@link EMPTY_EXCLUSION_SET_RESOLVER} — the empty-set default
- *     (kept for backward compatibility and for tests that want to
- *     bypass storage entirely).
+ *   - {@link EMPTY_EXCLUSION_SET_RESOLVER} — the empty-set default,
+ *     a convenience for tests and callers that want to bypass
+ *     storage entirely.
  *   - {@link STORAGE_EXCLUSION_SET_RESOLVER} — reads the real union
  *     from `auth_db.global_triage_exclusion` and the tenant DB's
  *     `triage_exclusion`, then compiles each row into a single-field

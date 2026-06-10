@@ -319,9 +319,10 @@ async function maybeEmitNodeApplyAudit(
   //
   //   Layer A (schema, round 3): `audit_logs` carries a partial unique
   //     index on `(correlation_id) WHERE action = 'node.apply' AND
-  //     correlation_id IS NOT NULL` (migration
-  //     `migrations/audit/0003_node_apply_correlation_unique.sql`).
-  //     Both this wrapper and `recoverPendingNodeApplyAudits` pass the
+  //     correlation_id IS NOT NULL`
+  //     (`audit_logs_node_apply_correlation_unique` in the audit
+  //     schema). Both this wrapper and
+  //     `recoverPendingNodeApplyAudits` pass the
   //     attempt UUID as `correlationId`, so a duplicate emission — from
   //     any source, in any order — is rejected by the database with a
   //     `unique_violation` (PG error code 23505). This is the

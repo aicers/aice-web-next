@@ -111,8 +111,8 @@ export function compareAssets(a: TriageAsset, b: TriageAsset): number {
  * key is a single originator address and the issue is explicit that
  * the asset list is sorted by score.
  *
- * `customerId` defaults to `0` for callers that do not yet thread the
- * value through (e.g. legacy unit tests). Production callers pass the
+ * `customerId` defaults to `0` as a convenience for unit tests that
+ * do not thread the value through. Production callers pass the
  * resolved tenant id so the composite asset key (`customerId, address`)
  * stays distinct end-to-end across multi-tenant scopes.
  */

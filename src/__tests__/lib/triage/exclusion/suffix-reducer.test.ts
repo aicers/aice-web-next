@@ -8,7 +8,6 @@ describe("reduceDomainPatternToSuffix", () => {
     expect(r).toEqual({
       value: "foo.example.com",
       subset: "exact",
-      exact: true,
     });
   });
 
@@ -21,7 +20,6 @@ describe("reduceDomainPatternToSuffix", () => {
     expect(r).toEqual({
       value: ".example.com",
       subset: "suffix",
-      exact: false,
     });
   });
 
@@ -30,7 +28,6 @@ describe("reduceDomainPatternToSuffix", () => {
     expect(r).toEqual({
       value: ".example.com",
       subset: "suffix",
-      exact: false,
     });
   });
 
@@ -50,7 +47,6 @@ describe("reduceDomainPatternToSuffix", () => {
     expect(r).toEqual({
       value: ".example.com",
       subset: "exactOrSuffix",
-      exact: false,
     });
   });
 

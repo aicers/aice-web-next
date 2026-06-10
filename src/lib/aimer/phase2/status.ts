@@ -408,10 +408,10 @@ async function loadPolicyRunSummary(
       totalRunsSent: Number(total[0]?.count ?? "0"),
     };
   } catch {
-    // Either the migration hasn't applied yet on a fresh tenant, or a
-    // planner timeout — the Settings indicator should still render the
-    // bucket label / pending counts for the other tracks instead of
-    // 500-ing the whole route.
+    // A run-tracking read error (e.g. a planner timeout) must not take
+    // down the whole status route — the Settings indicator should
+    // still render the bucket label / pending counts for the other
+    // tracks instead of 500-ing.
     return {
       lastSentRunId: null,
       lastSentAt: null,

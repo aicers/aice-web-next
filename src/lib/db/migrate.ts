@@ -103,63 +103,34 @@ async function ensureMigrationsTable(client: pg.PoolClient): Promise<void> {
       version    TEXT PRIMARY KEY,
       name       TEXT NOT NULL,
       applied_at TIMESTAMPTZ DEFAULT NOW(),
-      checksum   TEXT
+      checksum   TEXT NOT NULL
     )
-  `);
-
-  // Add checksum column if upgrading from an older schema
-  await client.query(`
-    ALTER TABLE ${MIGRATIONS_TABLE}
-      ADD COLUMN IF NOT EXISTS checksum TEXT
   `);
 }
 
 interface AppliedMigration {
   version: string;
-  checksum: string | null;
+  checksum: string;
 }
 
 async function getAppliedMigrations(
   client: pg.PoolClient,
-): Promise<Map<string, string | null>> {
+): Promise<Map<string, string>> {
   const result = await client.query<AppliedMigration>(
     `SELECT version, checksum FROM ${MIGRATIONS_TABLE} ORDER BY version`,
   );
   return new Map(result.rows.map((r) => [r.version, r.checksum]));
 }
 
-async function backfillChecksums(
-  client: pg.PoolClient,
-  applied: Map<string, string | null>,
-  migrations: MigrationFile[],
-): Promise<void> {
-  const filesByVersion = new Map(migrations.map((m) => [m.version, m]));
-
-  for (const [version, checksum] of applied) {
-    if (checksum !== null) continue;
-    const file = filesByVersion.get(version);
-    if (!file) {
-      throw new Error(
-        `Cannot backfill checksum for migration ${version}: file not found on disk`,
-      );
-    }
-    const sql = readFileSync(file.filePath, "utf8");
-    const hash = computeChecksum(sql);
-    await client.query(
-      `UPDATE ${MIGRATIONS_TABLE} SET checksum = $1 WHERE version = $2`,
-      [hash, version],
-    );
-    applied.set(version, hash);
-  }
-}
-
 function validateChecksums(
-  applied: Map<string, string | null>,
+  applied: Map<string, string>,
   migrations: MigrationFile[],
 ): void {
   for (const migration of migrations) {
     const storedChecksum = applied.get(migration.version);
-    if (storedChecksum === undefined || storedChecksum === null) continue;
+    // Pending (not-yet-applied) migrations have no stored checksum to
+    // validate against.
+    if (storedChecksum === undefined) continue;
     const sql = readFileSync(migration.filePath, "utf8");
     const currentChecksum = computeChecksum(sql);
     if (currentChecksum !== storedChecksum) {
@@ -183,7 +154,6 @@ async function applyMigrations(
       await ensureMigrationsTable(client);
       const applied = await getAppliedMigrations(client);
 
-      await backfillChecksums(client, applied, migrations);
       validateChecksums(applied, migrations);
 
       const pending = migrations.filter((m) => !applied.has(m.version));

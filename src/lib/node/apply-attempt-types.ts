@@ -96,8 +96,8 @@ export interface ExternalPlannedDispatch {
 export type PlannedDispatch = ManagerPlannedDispatch | ExternalPlannedDispatch;
 
 /**
- * Database row shape for `apply_attempts`. Matches the migration
- * 0023_apply_attempts.sql columns one-to-one.
+ * Database row shape for `apply_attempts`. Matches the table's
+ * auth-schema columns one-to-one.
  */
 export interface ApplyAttemptRow {
   attemptId: string;
@@ -228,14 +228,6 @@ export interface ManagerNotifyDispatchInput {
    */
   agentKeys: string[] | null;
 }
-
-/**
- * @deprecated Retained as an alias for source-compat with code paths that
- * have not yet migrated off the v1 single-stage manager dispatcher.
- * New code should use `ManagerDbDispatchInput` or
- * `ManagerNotifyDispatchInput` directly.
- */
-export type ManagerDispatchInput = ManagerDbDispatchInput;
 
 export interface ExternalDispatchInput {
   attemptId: string;

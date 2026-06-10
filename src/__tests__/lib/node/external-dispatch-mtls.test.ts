@@ -253,8 +253,6 @@ describe("external GraphQL dispatch over mTLS", () => {
 
     const { reload } = await import("@/lib/mtls");
     await reload();
-    const { resetClient } = await import("@/lib/graphql/client");
-    resetClient();
   });
 
   afterAll(async () => {

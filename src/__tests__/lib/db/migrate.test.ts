@@ -234,7 +234,6 @@ describe("migrate", () => {
       mockClientQuery
         .mockResolvedValueOnce({ rows: [], rowCount: 0 }) // pg_advisory_lock
         .mockResolvedValueOnce({ rows: [], rowCount: 0 }) // CREATE TABLE _migrations
-        .mockResolvedValueOnce({ rows: [], rowCount: 0 }) // ALTER TABLE ADD COLUMN
         .mockResolvedValueOnce({
           rows: [{ version: "0001", checksum: sha256(sql1) }],
           rowCount: 1,
@@ -260,7 +259,6 @@ describe("migrate", () => {
       mockClientQuery
         .mockResolvedValueOnce({ rows: [], rowCount: 0 }) // pg_advisory_lock
         .mockResolvedValueOnce({ rows: [], rowCount: 0 }) // CREATE TABLE _migrations
-        .mockResolvedValueOnce({ rows: [], rowCount: 0 }) // ALTER TABLE ADD COLUMN
         .mockResolvedValueOnce({ rows: [], rowCount: 0 }) // SELECT version, checksum
         .mockResolvedValueOnce({ rows: [], rowCount: 0 }) // BEGIN
         .mockRejectedValueOnce(new Error("syntax error")); // migration SQL
@@ -297,7 +295,6 @@ describe("migrate", () => {
       mockClientQuery
         .mockResolvedValueOnce({ rows: [], rowCount: 0 }) // pg_advisory_lock
         .mockResolvedValueOnce({ rows: [], rowCount: 0 }) // CREATE TABLE _migrations
-        .mockResolvedValueOnce({ rows: [], rowCount: 0 }) // ALTER TABLE ADD COLUMN
         .mockResolvedValueOnce({ rows: [], rowCount: 0 }) // SELECT version, checksum
         .mockResolvedValueOnce({ rows: [], rowCount: 0 }) // BEGIN
         .mockRejectedValueOnce(new Error("syntax error")); // migration SQL
@@ -335,7 +332,6 @@ describe("migrate", () => {
       mockClientQuery
         .mockResolvedValueOnce({ rows: [], rowCount: 0 }) // pg_advisory_lock
         .mockResolvedValueOnce({ rows: [], rowCount: 0 }) // CREATE TABLE _migrations
-        .mockResolvedValueOnce({ rows: [], rowCount: 0 }) // ALTER TABLE ADD COLUMN
         .mockResolvedValueOnce({
           rows: [{ version: "0001", checksum: sha256(originalSql) }],
           rowCount: 1,
@@ -343,51 +339,6 @@ describe("migrate", () => {
 
       await expect(migrate.migrateAuthDb()).rejects.toThrow(
         "Checksum mismatch",
-      );
-    });
-
-    it("backfills NULL checksums from current file on disk", async () => {
-      const sql = "CREATE TABLE a (id INT)";
-      writeMigration("auth", "0001_init.sql", sql);
-
-      mockClientQuery
-        .mockResolvedValueOnce({ rows: [], rowCount: 0 }) // pg_advisory_lock
-        .mockResolvedValueOnce({ rows: [], rowCount: 0 }) // CREATE TABLE _migrations
-        .mockResolvedValueOnce({ rows: [], rowCount: 0 }) // ALTER TABLE ADD COLUMN
-        .mockResolvedValueOnce({
-          rows: [{ version: "0001", checksum: null }],
-          rowCount: 1,
-        }) // SELECT version, checksum — NULL checksum
-        .mockResolvedValueOnce({ rows: [], rowCount: 0 }); // UPDATE checksum
-
-      const count = await migrate.migrateAuthDb();
-
-      expect(count).toBe(0);
-      const updateCall = mockClientQuery.mock.calls.find(
-        (c: unknown[]) =>
-          typeof c[0] === "string" &&
-          (c[0] as string).includes("UPDATE _migrations SET checksum"),
-      );
-      expect(updateCall).toBeDefined();
-      expect(updateCall?.[1]).toEqual([sha256(sql), "0001"]);
-    });
-
-    it("aborts when NULL-checksum row has no matching file on disk", async () => {
-      // Write a file for 0002 but NOT for 0001, so scanMigrations returns
-      // at least one entry and applyMigrations is invoked.
-      writeMigration("auth", "0002_add_col.sql", "ALTER TABLE a ADD name TEXT");
-
-      mockClientQuery
-        .mockResolvedValueOnce({ rows: [], rowCount: 0 }) // pg_advisory_lock
-        .mockResolvedValueOnce({ rows: [], rowCount: 0 }) // CREATE TABLE _migrations
-        .mockResolvedValueOnce({ rows: [], rowCount: 0 }) // ALTER TABLE ADD COLUMN
-        .mockResolvedValueOnce({
-          rows: [{ version: "0001", checksum: null }],
-          rowCount: 1,
-        }); // SELECT version, checksum
-
-      await expect(migrate.migrateAuthDb()).rejects.toThrow(
-        "Cannot backfill checksum for migration 0001: file not found on disk",
       );
     });
   });
@@ -440,7 +391,6 @@ describe("migrate", () => {
           .fn()
           .mockResolvedValueOnce({ rows: [], rowCount: 0 }) // pg_advisory_lock
           .mockResolvedValueOnce({ rows: [], rowCount: 0 }) // CREATE TABLE _migrations
-          .mockResolvedValueOnce({ rows: [], rowCount: 0 }) // ALTER TABLE ADD COLUMN
           .mockResolvedValueOnce({ rows: [], rowCount: 0 }) // SELECT version, checksum
           .mockResolvedValueOnce({ rows: [], rowCount: 0 }) // BEGIN
           .mockRejectedValueOnce(new Error("migration failed")),
@@ -524,7 +474,6 @@ describe("migrate", () => {
       mockClientQuery
         .mockResolvedValueOnce({ rows: [], rowCount: 0 }) // pg_advisory_lock
         .mockResolvedValueOnce({ rows: [], rowCount: 0 }) // CREATE TABLE _migrations
-        .mockResolvedValueOnce({ rows: [], rowCount: 0 }) // ALTER TABLE ADD COLUMN
         .mockResolvedValueOnce({
           rows: [{ version: "0001", checksum: sha256(sql) }],
           rowCount: 1,

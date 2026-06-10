@@ -131,7 +131,7 @@ button at the bottom of the sidebar. The choice is remembered:
   sign-in. The first painted HTML already reflects the saved
   preference, so reloads do not flash from expanded to collapsed.
 
-The preference is per browser (cookie + `localStorage`) and is not
+The preference is per browser (stored in a cookie) and is not
 synced across devices through your account.
 
 > Screenshots for the expanded and collapsed states will be added

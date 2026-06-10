@@ -146,7 +146,7 @@ describe("DashboardLayout", () => {
     expect(mockRedirect).not.toHaveBeenCalled();
   });
 
-  it("forwards initialSidebarCollapsed=true and hasSidebarCollapsedCookie=true when cookie is 'true'", async () => {
+  it("forwards initialSidebarCollapsed=true when cookie is 'true'", async () => {
     mockGetCurrentSession.mockResolvedValue(validSession);
     mockCookies.mockResolvedValue(cookieStoreFor("true"));
 
@@ -159,10 +159,9 @@ describe("DashboardLayout", () => {
     });
 
     expect(result.props.initialSidebarCollapsed).toBe(true);
-    expect(result.props.hasSidebarCollapsedCookie).toBe(true);
   });
 
-  it("forwards initialSidebarCollapsed=false and hasSidebarCollapsedCookie=true when cookie is 'false'", async () => {
+  it("forwards initialSidebarCollapsed=false when cookie is 'false'", async () => {
     mockGetCurrentSession.mockResolvedValue(validSession);
     mockCookies.mockResolvedValue(cookieStoreFor("false"));
 
@@ -175,10 +174,9 @@ describe("DashboardLayout", () => {
     });
 
     expect(result.props.initialSidebarCollapsed).toBe(false);
-    expect(result.props.hasSidebarCollapsedCookie).toBe(true);
   });
 
-  it("forwards hasSidebarCollapsedCookie=false when cookie is missing", async () => {
+  it("forwards initialSidebarCollapsed=false when cookie is missing", async () => {
     mockGetCurrentSession.mockResolvedValue(validSession);
     mockCookies.mockResolvedValue(cookieStoreFor(undefined));
 
@@ -191,7 +189,6 @@ describe("DashboardLayout", () => {
     });
 
     expect(result.props.initialSidebarCollapsed).toBe(false);
-    expect(result.props.hasSidebarCollapsedCookie).toBe(false);
   });
 
   // The layout used to wrap `getEffectiveCustomerScope` in a `try/catch`

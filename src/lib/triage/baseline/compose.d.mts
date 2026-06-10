@@ -90,7 +90,7 @@ export interface CohortInputRow {
   baseline_version: string;
   raw_score: number;
   baseline_score: number | null;
-  selector_tags: string[] | null;
+  selector_tags: string[];
   is_unlabeled: boolean;
   bucket_count: string | number;
   bucket_tag_sum: string | number;

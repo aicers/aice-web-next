@@ -480,7 +480,7 @@ export const _testing = {
  *   baseline_version: string,
  *   raw_score: number,
  *   baseline_score: number | null,
- *   selector_tags: string[] | null,
+ *   selector_tags: string[],
  *   is_unlabeled: boolean,
  *   bucket_count: string | number,
  *   bucket_tag_sum: string | number,
@@ -515,7 +515,7 @@ export function buildCohortFromRows(rows) {
       baselineVersion: r.baseline_version,
       rawScore: r.raw_score,
       baselineScore: r.baseline_score ?? 0,
-      selectorTags: r.selector_tags ?? [],
+      selectorTags: r.selector_tags,
     })),
   };
 }

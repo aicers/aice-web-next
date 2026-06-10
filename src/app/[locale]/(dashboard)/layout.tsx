@@ -78,10 +78,9 @@ export default async function DashboardLayout({
 
   // Read the persisted sidebar preference so the first server-rendered
   // HTML matches the user's choice — avoids the expanded-then-collapsed
-  // flash on reload. Cookie is authoritative; a missing cookie means
-  // "no preference yet," not "expanded."
+  // flash on reload. The cookie is the sole store; a missing cookie
+  // means "no preference yet," which renders expanded.
   const sidebarCookie = (await cookies()).get("sidebar-collapsed");
-  const hasSidebarCollapsedCookie = sidebarCookie !== undefined;
   const initialSidebarCollapsed = sidebarCookie?.value === "true";
 
   // Gate the Phase 2 login banner on System Administrator — the
@@ -113,7 +112,6 @@ export default async function DashboardLayout({
       scopeFingerprint={scopeFingerprint}
       canManageCustomers={canManageCustomers}
       initialSidebarCollapsed={initialSidebarCollapsed}
-      hasSidebarCollapsedCookie={hasSidebarCollapsedCookie}
       isAimerSystemAdmin={isAimerSystemAdmin}
       aimerAnalysisHref={aimerAnalysisHref}
     >

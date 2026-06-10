@@ -144,7 +144,7 @@ interface BaselineEventDetailRow extends BaselineEventRow {
 interface ProtectedCohortDbRow extends BaselineEventRow {
   baseline_version: string;
   raw_score: number;
-  selector_tags: string[] | null;
+  selector_tags: string[];
   /**
    * `true` when this row is guaranteed not to be in branch A's SQL
    * cohort or branch A's post-`composeMenu` set — i.e. its `bucket_rn`
@@ -193,7 +193,7 @@ interface EligibleByStopRow {
 interface MenuCohortDbRow extends BaselineEventRow {
   baseline_version: string;
   raw_score: number;
-  selector_tags: string[] | null;
+  selector_tags: string[];
   is_unlabeled: boolean;
   /**
    * `EXISTS (SELECT 1 FROM event_group_member ...)` evaluated by
@@ -461,7 +461,7 @@ async function loadCustomerSlice(
       baselineVersion: dbRow.baseline_version,
       slotBucket: `${dbRow.kind}:${
         dbRow.kind === "HttpThreat" &&
-        (dbRow.selector_tags ?? []).includes("unlabeled-cluster")
+        dbRow.selector_tags.includes("unlabeled-cluster")
       }`,
       shownBy: "story_protected" as const,
     };
@@ -810,7 +810,7 @@ function composeMenuFromCohort(
     baselineVersion: r.baseline_version,
     rawScore: r.raw_score,
     baselineScore: r.baseline_score ?? 0,
-    selectorTags: r.selector_tags ?? [],
+    selectorTags: r.selector_tags,
   }));
   return composeMenu({
     postExclusionCount: cohort.postExclusionCount,
