@@ -275,11 +275,12 @@ export interface StoryDraft {
   primaryAsset: string | null;
   /**
    * Dedup discriminator persisted to `event_group.correlation_key`.
-   * `null` for R1/R3 (which dedup on `primary_asset` via the legacy
-   * partial unique index). R4 sets `host(resp_addr) || '|' ||
-   * category`; R5 sets `category`. When non-null, the row is
-   * governed by the `event_group_corrkey_dedup_idx` index instead of
-   * the asset index (see `repository.ts` `insertAutoStory`).
+   * `null` for R1/R3 (which dedup on `primary_asset` via the
+   * `event_group_auto_dedup_idx` partial unique index). R4 sets
+   * `host(resp_addr) || '|' || category`; R5 sets `category`. When
+   * non-null, the row is governed by the
+   * `event_group_corrkey_dedup_idx` index instead of the asset index
+   * (see `repository.ts` `insertAutoStory`).
    */
   correlationKey?: string | null;
   /**

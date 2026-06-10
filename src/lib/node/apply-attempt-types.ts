@@ -96,8 +96,8 @@ export interface ExternalPlannedDispatch {
 export type PlannedDispatch = ManagerPlannedDispatch | ExternalPlannedDispatch;
 
 /**
- * Database row shape for `apply_attempts`. Matches the migration
- * 0023_apply_attempts.sql columns one-to-one.
+ * Database row shape for `apply_attempts`. Matches the table's
+ * auth-schema columns one-to-one.
  */
 export interface ApplyAttemptRow {
   attemptId: string;

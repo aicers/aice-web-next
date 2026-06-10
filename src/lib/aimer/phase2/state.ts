@@ -2,7 +2,7 @@
  * Phase 2 push state helpers (RFC 0002 §7 / sub-issue #592).
  *
  * Server-only utilities that operate on the three foundational tables
- * created by migration `customer/0012_aimer_push_state_and_queue.sql`:
+ * from the tenant schema (`migrations/customer/0001_init_schema.sql`):
  *
  *   - `aimer_push_state`   — per-kind cursor + pause toggle for the
  *                            streaming kinds (`baseline_event`, `story`)
@@ -128,12 +128,10 @@ export interface AimerPushStateRow {
    * are eligible for the behind-cursor scan. `NULL` for an unseeded
    * row (no activation yet — skip the straggler scan).
    *
-   * For the `baseline_event` streaming kind this column is populated
-   * (migration `0020_aimer_push_state_streaming_activated_at.sql`
-   * backfills from `last_pushed_event_time`) but the baseline drain
-   * has no equivalent late-commit race — baseline rows are keyed on
-   * sensor `event_time`, not on the row's PG insert timestamp — so
-   * the baseline drain ignores this column.
+   * The `baseline_event` streaming kind never stamps this column (it
+   * stays `NULL`): the baseline drain has no equivalent late-commit
+   * race — baseline rows are keyed on sensor `event_time`, not on the
+   * row's PG insert timestamp — so it ignores the column.
    */
   streaming_activated_at: Date | null;
   /**

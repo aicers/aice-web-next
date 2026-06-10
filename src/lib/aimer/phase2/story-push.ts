@@ -551,9 +551,8 @@ export interface StoryStragglerSlice {
  *     orthogonal "committed late, ended up behind cursor" case the
  *     forward slice cannot recover on its own.
  *
- * Backed by partial index
- * `event_group_auto_unsent_created_at_idx` (migration
- * `0021_event_group_unsent_idx.sql`).
+ * Backed by the partial index
+ * `event_group_auto_unsent_created_at_idx` in the tenant schema.
  */
 export async function loadStoryStragglerSlice(
   input: LoadStoryStragglerSliceInput,

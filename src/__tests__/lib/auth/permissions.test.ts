@@ -137,13 +137,12 @@ describe("permissions", () => {
     });
   });
 
-  // The migration `0022_node_service_permissions.sql` grants the five
-  // node/service permissions to the three built-in roles per
-  // `decisions/node-permissions.md`. The unit-level cache layer is an
-  // in-memory mirror of the role_permissions rows that migration writes,
-  // so seeding the mock with the same row sets we expect from a fresh
-  // bootstrap lets us assert the documented `hasPermission` contract
-  // without standing up a real database.
+  // The auth schema seed grants the five node/service permissions to
+  // the three built-in roles per `decisions/node-permissions.md`. The
+  // unit-level cache layer is an in-memory mirror of those
+  // role_permissions rows, so seeding the mock with the same row sets
+  // we expect from a fresh bootstrap lets us assert the documented
+  // `hasPermission` contract without standing up a real database.
   describe("hasPermission — built-in roles (#307)", () => {
     const SYSTEM_ADMIN_PERMS = [
       "nodes:read",

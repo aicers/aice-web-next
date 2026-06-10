@@ -10,8 +10,8 @@ import { getCustomerPool } from "@/lib/triage/policy/customer-db";
  *
  * Three sweeps against `policy_triage_run` per tenant DB. Each row's
  * `policy_triaged_event` rows cascade with the run (`ON DELETE CASCADE`
- * in `0009_policy_corpus_b.sql`), so pruning a run also prunes its
- * events in the same transaction.
+ * in the tenant schema), so pruning a run also prunes its events in
+ * the same transaction.
  *
  * Sweep order is important: the zombie reaper runs *first* so a
  * timed-out `computing` row flips to `failed` and is then eligible for
