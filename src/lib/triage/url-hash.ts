@@ -54,14 +54,12 @@ export interface TriagePivotHashStep {
 /**
  * Composite asset focus encoded in the hash. Two customers can host
  * the same RFC1918 address on different perimeters, so the focus key
- * carries `customerId/address`. Hashes produced by an earlier build
- * that wrote a single-component asset (just the address) parse with
- * `customerId === null`; the caller treats those as stale and falls
- * back to the asset root rather than mis-resolving against the first
+ * carries `customerId/address`. A bare address (no `customerId/`) is
+ * rejected at parse time rather than mis-resolving against the first
  * customer's matching address.
  */
 export interface TriagePivotAssetFocus {
-  customerId: number | null;
+  customerId: number;
   address: string;
 }
 
@@ -103,7 +101,7 @@ export interface TriagePivotHashState {
   rejectedStepCount: number;
   /**
    * `true` when a `triage.pivot.story=...` value was present but
-   * rejected (legacy bare-id, empty halves, non-numeric customerId).
+   * rejected (bare storyId, empty halves, non-numeric customerId).
    * Treated like a rejected step on restore — the caller surfaces the
    * stale-hash toast and falls back to the asset root.
    */
@@ -128,13 +126,12 @@ export type TriageTabId = "asset-list" | "stories" | "pivot";
 
 /**
  * Composite Story focus encoded in the hash (#490). `customerId` is
- * mandatory in v1 because `event_group.id` is `BIGSERIAL` per tenant
- * DB. A bare `storyId` (no `customerId/`) parses with
- * `customerId = null` so the consumer can render the stale-hash
- * fallback toast.
+ * mandatory because `event_group.id` is `BIGSERIAL` per tenant DB. A
+ * bare `storyId` (no `customerId/`) is rejected at parse time so the
+ * consumer renders the stale-hash fallback toast.
  */
 export interface TriageStoryHashFocus {
-  customerId: number | null;
+  customerId: number;
   storyId: string;
 }
 
@@ -145,8 +142,8 @@ export interface TriageStoriesHashState {
   story: TriageStoryHashFocus | null;
   /**
    * `true` when a `triage.story=...` value was present but rejected
-   * (legacy bare-id, empty halves, non-numeric customerId). The
-   * caller surfaces the stale-hash toast in that case.
+   * (bare storyId, empty halves, non-numeric customerId). The caller
+   * surfaces the stale-hash toast in that case.
    */
   storyStaleHash: boolean;
 }
@@ -306,31 +303,21 @@ function parseStoryOriginValue(value: string): TriagePivotStoryOrigin | null {
 }
 
 /**
- * Decode the `triage.pivot.asset` value into its composite shape.
- * Two encodings are accepted:
- *
- *   - `customerId/address` — the current shape. `customerId` parses
- *     as a non-negative integer; `address` is the rest of the value
- *     (preserving any further `/` characters in case a future address
- *     format includes them).
- *   - `address` (no `/`) — legacy single-component shape from URLs
- *     produced before the multi-customer key landed. Returns
- *     `customerId: null` so the caller can render the stale-hash
- *     toast and fall back to the asset root rather than mis-resolving
- *     against the first customer's matching address.
+ * Decode the `triage.pivot.asset` value into its composite
+ * `customerId/address` shape. `customerId` parses as a non-negative
+ * integer; `address` is the rest of the value (preserving any further
+ * `/` characters in case a future address format includes them). A
+ * bare address (no `/`) is rejected like any other malformed value.
  */
 function parseAssetValue(value: string): TriagePivotAssetFocus | null {
   if (value.length === 0) return null;
   const slash = value.indexOf("/");
-  if (slash < 0) {
-    return { customerId: null, address: value };
-  }
+  if (slash < 0) return null;
   const customerStr = value.slice(0, slash);
   const address = value.slice(slash + 1);
   if (customerStr.length === 0 || address.length === 0) return null;
   // Reject empty / non-numeric / negative customer ids — those would
-  // also mis-resolve. They get the same stale-hash treatment as the
-  // legacy single-component encoding.
+  // mis-resolve against the wrong tenant.
   if (!/^\d+$/.test(customerStr)) return null;
   const customerId = Number.parseInt(customerStr, 10);
   if (!Number.isFinite(customerId) || customerId < 0) return null;
@@ -370,12 +357,8 @@ function parseStepValue(value: string): TriagePivotHashStep | null {
 /**
  * Serialize a pivot hash state back into a `location.hash` string
  * (without the leading `#`). Empty / null fields are omitted so a
- * fresh menu URL stays tidy.
- *
- * The asset focus is encoded as `customerId/address` whenever a
- * `customerId` is present, falling back to bare `address` only for
- * the legacy single-component round-trip shape (which a freshly-
- * built state should never need).
+ * fresh menu URL stays tidy. The asset focus is encoded as
+ * `customerId/address`.
  */
 export function serializeTriagePivotHash(state: TriagePivotHashState): string {
   const entries: string[] = [];
@@ -400,7 +383,6 @@ export function serializeTriagePivotHash(state: TriagePivotHashState): string {
 }
 
 function serializeAssetFocus(asset: TriagePivotAssetFocus): string {
-  if (asset.customerId === null) return asset.address;
   return `${asset.customerId}/${asset.address}`;
 }
 
@@ -492,10 +474,6 @@ export function parseTriageStoriesHash(hash: string): TriageStoriesHashState {
       const parsed = parseStoryFocus(value);
       if (parsed === null) {
         storyStaleHash = true;
-      } else if (parsed.customerId === null) {
-        // Bare `storyId` from a legacy / mis-typed URL — the composite
-        // is required for unambiguous tenant resolution.
-        storyStaleHash = true;
       } else {
         story = parsed;
       }
@@ -508,9 +486,7 @@ export function parseTriageStoriesHash(hash: string): TriageStoriesHashState {
 function parseStoryFocus(value: string): TriageStoryHashFocus | null {
   if (value.length === 0) return null;
   const slash = value.indexOf("/");
-  if (slash < 0) {
-    return { customerId: null, storyId: value };
-  }
+  if (slash < 0) return null;
   const customerStr = value.slice(0, slash);
   const storyId = value.slice(slash + 1);
   if (customerStr.length === 0 || storyId.length === 0) return null;
@@ -533,7 +509,7 @@ export function serializeTriageStoriesHash(
   if (state.tab !== null) {
     entries.push(`${TAB_KEY}=${encodeURIComponent(state.tab)}`);
   }
-  if (state.story && state.story.customerId !== null) {
+  if (state.story) {
     const value = `${state.story.customerId}/${state.story.storyId}`;
     entries.push(`${STORY_KEY}=${encodeURIComponent(value)}`);
   }

@@ -1,7 +1,8 @@
 /**
  * Corpus B run / event domain types.
  *
- * Mirrors the columns in `migrations/customer/0009_policy_corpus_b.sql`.
+ * Mirrors the `policy_triage_run` / `policy_triaged_event` columns in
+ * the tenant schema.
  * Used by the runner, repository, and (eventually) the menu read-path
  * for "With my policies" mode.
  */

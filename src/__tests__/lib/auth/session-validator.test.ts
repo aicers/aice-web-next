@@ -71,33 +71,6 @@ describe("assessIpUaRisk", () => {
     ]);
   });
 
-  it("empty stored fingerprint (legacy session) → skips UA comparison", () => {
-    const result = assessIpUaRisk({
-      ...base,
-      storedBrowserFingerprint: "",
-      currentBrowserFingerprint: "Firefox/133",
-    });
-
-    expect(result.proceed).toBe(true);
-    expect(result.requiresReauth).toBe(false);
-    expect(result.riskLevel).toBe("none");
-    expect(result.auditActions).toEqual([]);
-  });
-
-  it("empty stored fingerprint + IP change → only IP mismatch", () => {
-    const result = assessIpUaRisk({
-      ...base,
-      storedBrowserFingerprint: "",
-      currentIp: "10.0.0.1",
-      currentBrowserFingerprint: "Firefox/133",
-    });
-
-    expect(result.proceed).toBe(true);
-    expect(result.requiresReauth).toBe(false);
-    expect(result.riskLevel).toBe("low");
-    expect(result.auditActions).toEqual(["session.ip_mismatch"]);
-  });
-
   it("'unknown' IP is treated as unchanged", () => {
     const result = assessIpUaRisk({
       ...base,
@@ -149,20 +122,5 @@ describe("assessIpUaRisk", () => {
     expect(result.proceed).toBe(true);
     expect(result.riskLevel).toBe("none");
     expect(result.auditActions).toEqual([]);
-  });
-
-  it("legacy session (empty fingerprint) with IP change + UA major → only IP mismatch (low)", () => {
-    const result = assessIpUaRisk({
-      storedIp: "192.168.1.1",
-      currentIp: "10.0.0.1",
-      storedBrowserFingerprint: "",
-      currentBrowserFingerprint: "Firefox/133",
-    });
-
-    // Empty fingerprint forces UA to "same", so only IP changed
-    expect(result.proceed).toBe(true);
-    expect(result.requiresReauth).toBe(false);
-    expect(result.riskLevel).toBe("low");
-    expect(result.auditActions).toEqual(["session.ip_mismatch"]);
   });
 });

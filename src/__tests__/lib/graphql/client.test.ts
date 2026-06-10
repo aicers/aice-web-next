@@ -228,41 +228,12 @@ describe("graphql client", () => {
 
     it("throws when REVIEW_GRAPHQL_ENDPOINT is missing", async () => {
       delete process.env.REVIEW_GRAPHQL_ENDPOINT;
-      client.resetClient();
 
       await expect(
         client.graphqlRequest(Q_HELLO, undefined, { role: "admin" }),
       ).rejects.toThrow(
         "Missing environment variable: REVIEW_GRAPHQL_ENDPOINT",
       );
-    });
-  });
-
-  // ── resetClient ──────────────────────────────────────────────────
-
-  describe("resetClient", () => {
-    it("forces client re-creation with new endpoint", async () => {
-      await client.graphqlRequest(Q_A, undefined, { role: "admin" });
-
-      client.resetClient();
-      process.env.REVIEW_GRAPHQL_ENDPOINT = "https://other.example.com/graphql";
-
-      await client.graphqlRequest(Q_B, undefined, { role: "admin" });
-
-      const [url1] = fetchSpy.mock.calls[0];
-      const [url2] = fetchSpy.mock.calls[1];
-      expect(url1.toString()).toContain("review.example.com");
-      expect(url2.toString()).toContain("other.example.com");
-    });
-
-    it("reuses client across requests without reset", async () => {
-      await client.graphqlRequest(Q_A, undefined, { role: "admin" });
-      await client.graphqlRequest(Q_B, undefined, { role: "admin" });
-
-      // Both should go to the same endpoint
-      const [url1] = fetchSpy.mock.calls[0];
-      const [url2] = fetchSpy.mock.calls[1];
-      expect(url1.toString()).toBe(url2.toString());
     });
   });
 

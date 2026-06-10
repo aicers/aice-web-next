@@ -35,7 +35,7 @@ import { readFileSync } from "node:fs";
 import type { DocumentNode } from "graphql";
 import { Agent, fetch as undiciFetch } from "undici";
 
-import { graphqlRequest, resetClient } from "@/lib/graphql/client";
+import { graphqlRequest } from "@/lib/graphql/client";
 import { loadFixtureJson } from "@/test-harness/fixtures";
 import type { AdminStubRequest } from "@/test-harness/mock-server";
 
@@ -151,9 +151,8 @@ interface CallGraphqlOptions {
  * trip so tests can exercise query documents against canned fixtures
  * without asserting on any particular API route.
  *
- * The module-level client cache is reset before each call so that any
- * change to `REVIEW_GRAPHQL_ENDPOINT` between tests (e.g. pointing at a
- * per-file mock) takes effect immediately.
+ * `REVIEW_GRAPHQL_ENDPOINT` is read per request, so a change between
+ * tests (e.g. pointing at a per-file mock) takes effect immediately.
  */
 export async function callGraphQL<
   TData,
@@ -163,7 +162,6 @@ export async function callGraphQL<
   variables?: TVars,
   opts: CallGraphqlOptions = {},
 ): Promise<TData> {
-  resetClient();
   return graphqlRequest<TData, TVars>(document, variables, {
     role: opts.role ?? "SYSTEM_ADMINISTRATOR",
     customerIds: opts.customerIds ?? [],

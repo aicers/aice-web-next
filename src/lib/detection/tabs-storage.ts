@@ -39,8 +39,6 @@
 import {
   type AnalyticsDimension,
   type AnalyticsTopN,
-  DEFAULT_ANALYTICS_DIMENSION,
-  DEFAULT_ANALYTICS_TOP_N,
   isAnalyticsDimension,
   isAnalyticsTopN,
 } from "./analytics";
@@ -91,14 +89,14 @@ interface StoredTab {
   draft: DetectionFilterDraft | null;
   analyticsOpen: boolean;
   /**
-   * Reviewer Round 1 (P2 per-tab state): the dimension currently
-   * shown in the analytics strip's selector. Optional in the
-   * stored payload so a v1 session that pre-dates this field
-   * still rehydrates — missing values fall back to the default.
+   * The dimension currently shown in the analytics strip's selector
+   * (Reviewer Round 1, P2 per-tab state). Required: a tab missing or
+   * carrying an invalid value is dropped like any other structurally
+   * invalid tab, per the module's drop-don't-migrate policy.
    */
-  analyticsDimension?: AnalyticsDimension;
-  /** See {@link analyticsDimension}; same opt-in upgrade path. */
-  analyticsTopN?: AnalyticsTopN;
+  analyticsDimension: AnalyticsDimension;
+  /** See {@link analyticsDimension}. */
+  analyticsTopN: AnalyticsTopN;
 }
 
 interface StoredPayload {
@@ -131,12 +129,6 @@ function toStoredTab(tab: TabSnapshot): StoredTab {
 function hydrateStoredTab(stored: StoredTab): TabSnapshot {
   return {
     ...stored,
-    analyticsDimension: isAnalyticsDimension(stored.analyticsDimension)
-      ? stored.analyticsDimension
-      : DEFAULT_ANALYTICS_DIMENSION,
-    analyticsTopN: isAnalyticsTopN(stored.analyticsTopN)
-      ? stored.analyticsTopN
-      : DEFAULT_ANALYTICS_TOP_N,
     quickPeekEvent: null,
     pendingQuickPeekToken: null,
     result: EMPTY_RESULT_CACHE,
@@ -218,7 +210,9 @@ function isStoredTab(candidate: unknown): candidate is StoredTab {
     typeof c.filter === "object" &&
     Array.isArray(c.endpoints) &&
     !!c.pagination &&
-    typeof c.pagination === "object"
+    typeof c.pagination === "object" &&
+    isAnalyticsDimension(c.analyticsDimension) &&
+    isAnalyticsTopN(c.analyticsTopN)
   );
 }
 

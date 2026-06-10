@@ -421,7 +421,7 @@ async function flushBaseline(client, rows) {
   for (const r of rows) {
     const base = params.length;
     const ph = [];
-    for (let j = 1; j <= 20; j += 1) ph.push(`$${base + j}`);
+    for (let j = 1; j <= 19; j += 1) ph.push(`$${base + j}`);
     placeholders.push(`(${ph.join(", ")})`);
     params.push(
       r.eventKey,
@@ -440,7 +440,6 @@ async function flushBaseline(client, rows) {
       r.baselineVersion,
       r.exclusionsFp,
       r.category,
-      r.baselineScore,
       r.rawScore,
       r.selectorTags,
       r.payloadSummary,
@@ -452,7 +451,7 @@ async function flushBaseline(client, rows) {
         orig_addr, orig_port, resp_addr, resp_port, proto,
         host, dns_query, uri,
         ingested_at, baseline_version, exclusions_fp, category,
-        baseline_score, raw_score, selector_tags, payload_summary
+        raw_score, selector_tags, payload_summary
       ) VALUES ${placeholders.join(", ")}`,
     params,
   );
@@ -604,7 +603,6 @@ export async function seedCorpus({
         baselineVersion,
         exclusionsFp,
         category,
-        baselineScore: null,
         rawScore,
         selectorTags,
         payloadSummary: null,

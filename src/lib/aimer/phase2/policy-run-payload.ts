@@ -260,21 +260,13 @@ export async function loadPolicyRunForSend(
  * Unwrap the runner's DB-side `{ scores: [...] }` snapshot to the wire's
  * flat array. Exported so the test suite can pin the contract.
  *
- * Accepts both the canonical object form (`{ scores: [...] }`) and a
- * legacy/edge flat-array form so a partially-migrated corpus does not
- * crash the Send. An empty `scores` produces an empty wire array
- * (NOT an empty object).
+ * The only writer (src/lib/triage/policy/corpus-b/runner.ts) always
+ * persists the canonical `{ scores: [...] }` object. An empty `scores`
+ * produces an empty wire array (NOT an empty object).
  */
 export function unwrapPolicyTriageSnapshot(
   raw: unknown,
 ): Record<string, unknown>[] {
-  if (Array.isArray(raw)) {
-    // Legacy / forward-compat — already flat.
-    return raw.filter(
-      (item): item is Record<string, unknown> =>
-        item !== null && typeof item === "object" && !Array.isArray(item),
-    );
-  }
   if (raw !== null && typeof raw === "object" && "scores" in raw) {
     const scores = (raw as { scores: unknown }).scores;
     if (Array.isArray(scores)) {

@@ -660,8 +660,8 @@ interface StoryMemberRowSql {
  * 0002 §6 `storyItem`). Members whose baseline row has been retention-
  * swept fall back to the schema-minimal `{event_key, role}` pair, since
  * `event_group_member` is intentionally not FK-linked to
- * `baseline_triaged_event` (different retention windows; see
- * `migrations/customer/0008_event_group_story.sql`). The flat
+ * `baseline_triaged_event` (different retention windows; see the
+ * tenant schema's `event_group_member` rationale). The flat
  * `time_window_start` / `time_window_end` fields are kept on the
  * in-memory shape so {@link buildStoryRefreshPayloads} can slice on
  * `time_window_end`; the wire builder ({@link toWireStoryItem}) nests
@@ -757,9 +757,8 @@ export async function loadStoryRefreshRows(
  * payload-shaped row keyed by `event_key`. Used by
  * {@link loadStoryRefreshRows} to embed member event details inline
  * per RFC 0002 §6 `storyItem.members[].event`. Keys whose underlying
- * row has been retention-swept (180-day corpus retention; see
- * `migrations/customer/0008_event_group_story.sql`) are absent from
- * the map; the caller treats absence as "schema-minimal member."
+ * row has been retention-swept (180-day corpus retention) are absent
+ * from the map; the caller treats absence as "schema-minimal member."
  */
 async function loadBaselineEventsByKey(
   client: pg.PoolClient,

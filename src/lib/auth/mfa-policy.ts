@@ -17,7 +17,7 @@ interface MfaPolicyRow {
   allowed_methods: string[];
 }
 
-// ── Defaults (matching migration 0007) ───────────────────────────
+// ── Defaults (matching the auth schema seed) ───────────────────────────
 
 const DEFAULT_POLICY: MfaPolicy = {
   allowedMethods: ["webauthn", "totp"],

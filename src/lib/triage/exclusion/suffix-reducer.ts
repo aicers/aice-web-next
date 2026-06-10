@@ -66,15 +66,6 @@ export interface DomainSuffixReduction {
   value: string;
   /** Which SQL predicate the planner can emit for this reduction. */
   subset: DomainSuffixSubset;
-  /**
-   * `true` iff the pattern matches the literal hostname only. Kept for
-   * backward compatibility with existing call sites that only need the
-   * exact-vs-suffix bit.
-   *
-   * @deprecated Inspect `subset` directly — `exact === true` iff
-   * `subset === 'exact'`.
-   */
-  exact: boolean;
 }
 
 /**
@@ -114,7 +105,7 @@ export function reduceDomainPatternToSuffix(
       const tail = body.slice(token.length);
       const literal = unescapeHostnameLiteral(tail);
       if (literal === null) return null;
-      return { value: `.${literal}`, subset: "suffix", exact: false };
+      return { value: `.${literal}`, subset: "suffix" };
     }
   }
 
@@ -127,13 +118,13 @@ export function reduceDomainPatternToSuffix(
     const tail = body.slice(repeatingLabel.length);
     const literal = unescapeHostnameLiteral(tail);
     if (literal === null) return null;
-    return { value: `.${literal}`, subset: "exactOrSuffix", exact: false };
+    return { value: `.${literal}`, subset: "exactOrSuffix" };
   }
 
   // Exact-hostname shape: `\.`-escaped literals only.
   const literal = unescapeHostnameLiteral(body);
   if (literal !== null) {
-    return { value: literal, subset: "exact", exact: true };
+    return { value: literal, subset: "exact" };
   }
 
   return null;

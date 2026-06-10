@@ -91,31 +91,6 @@ export const AUDIT_ACTION_CUSTOMER_SCOPE: {
   "aimer_signing_key.switched": "customer-agnostic",
   "aimer_signing_key.deactivated": "customer-agnostic",
   "aimer_integration_setting.changed": "customer-agnostic",
-  // Aimer context-token issuance (#439). Issuance only happens after
-  // the chosen `customerId` is resolved and verified, so the audit
-  // row reliably carries `customerId` — a customer-scoped event.
-  "aimer_context_token.issued": "customer-scoped",
-  // Denial happens at any of several stages, some of which run before
-  // the customer is resolved (`aimer_integration_not_configured`,
-  // `rate_limited`) or where the requested customer may not actually
-  // exist for the caller (`event_not_found_for_customer`). Forcing
-  // this to be customer-scoped would either violate the policy
-  // comment ("emitter MUST set customerId") or push toward leaking
-  // customer existence by pasting a `requestedCustomerId` into the
-  // audit row. `customer-agnostic` is the simpler and safer placement.
-  "aimer_context_token.denied": "customer-agnostic",
-  // Detection menu Send routing (#621). Phase 2 issuance happens after
-  // the chosen `customerId` is resolved and verified, so `.issued`
-  // reliably carries `customerId` and is customer-scoped. `.denied`
-  // mirrors `aimer_context_token.denied`: denial happens at any of
-  // several stages, some of which run before the customer is resolved
-  // (rate-limit, integration-not-configured) or where the requested
-  // customer may not exist for the caller (cross-tenant 404). Forcing
-  // it to customer-scoped would either violate the "emitter MUST set
-  // customerId" rule or push toward leaking customer existence via the
-  // `requestedCustomerId` detail.
-  "aimer_detection_send.issued": "customer-scoped",
-  "aimer_detection_send.denied": "customer-agnostic",
   // Analyze-envelope mint (#629). The mint route resolves the
   // `customerId` before it can sign — `.issued` always carries the
   // resolved customer. `.denied` happens at any pre-resolve guard

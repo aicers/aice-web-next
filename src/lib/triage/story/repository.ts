@@ -17,12 +17,12 @@ import "server-only";
  *     `(correlation_rule_id, primary_asset, time_window_start,
  *      time_window_end) WHERE kind = 'auto_correlated' AND
  *      primary_asset IS NOT NULL AND correlation_key IS NULL`
- *     (`event_group_auto_dedup_idx`, re-scoped by migration 0024).
+ *     (`event_group_auto_dedup_idx`).
  *   - R4/R5 (`correlation_key IS NOT NULL`) →
  *     `(correlation_rule_id, correlation_key, time_window_start,
  *      time_window_end) WHERE kind = 'auto_correlated' AND
  *      correlation_key IS NOT NULL`
- *     (`event_group_corrkey_dedup_idx`, added by migration 0024).
+ *     (`event_group_corrkey_dedup_idx`).
  *
  * A re-evaluated slop-window candidate therefore never produces a
  * duplicate `event_group` row.
@@ -121,7 +121,7 @@ function rowToCandidate(row: CandidateRow): CandidateEvent {
     origAddr: row.orig_addr,
     respAddr: row.resp_addr ?? null,
     category: row.category,
-    selectorTags: row.selector_tags ?? [],
+    selectorTags: row.selector_tags,
     rawScore: Number(row.raw_score),
   };
 }
@@ -552,21 +552,21 @@ export async function insertAutoStory(
   const correlationKey = draft.correlationKey ?? null;
   // Branch the ON CONFLICT arbiter by whether the draft carries a
   // `correlation_key`, NOT by rule id. R1/R3 (`correlation_key
-  // IS NULL`) dedup on the legacy asset index; R4/R5
-  // (`correlation_key IS NOT NULL`) dedup on the new
-  // `correlation_key` index. The two indexes partition cleanly by
-  // `correlation_key` NULL-ness (migration 0024 re-scopes the old
-  // index with `AND correlation_key IS NULL`), so a `correlation_key`
-  // -bearing row is governed solely by the new index and two
+  // IS NULL`) dedup on the single-asset index; R4/R5
+  // (`correlation_key IS NOT NULL`) dedup on the `correlation_key`
+  // index. The two indexes partition cleanly by `correlation_key`
+  // NULL-ness (`event_group_auto_dedup_idx` is scoped with
+  // `AND correlation_key IS NULL`), so a `correlation_key`-bearing
+  // row is governed solely by the corrkey index and two
   // same-victim/same-window R4 rows that differ only by `category`
   // both persist without tripping an unhandled `unique_violation` on
-  // the old index.
+  // the single-asset index.
   // The ON CONFLICT inference predicate must match the target partial
   // index's predicate exactly (Postgres partial-index arbiter rule),
-  // so the R1/R3 branch carries the `AND correlation_key IS NULL`
-  // clause migration 0024 added to `event_group_auto_dedup_idx`.
-  // Omitting it raises "no unique or exclusion constraint matching the
-  // ON CONFLICT specification".
+  // so the R1/R3 branch carries `event_group_auto_dedup_idx`'s
+  // `AND correlation_key IS NULL` clause. Omitting it raises "no
+  // unique or exclusion constraint matching the ON CONFLICT
+  // specification".
   const onConflict =
     correlationKey !== null
       ? `ON CONFLICT (correlation_rule_id, correlation_key, time_window_start, time_window_end)
@@ -1083,7 +1083,7 @@ export async function readBaselineEventsByKey(
     kind: string;
     orig_addr: string | null;
     category: ThreatCategory | string | null;
-    selector_tags: string[] | null;
+    selector_tags: string[];
     raw_score: number;
   }>(SELECT_BASELINE_EVENTS_BY_KEY_SQL, [eventKeys]);
   return rows.map((row) => ({
@@ -1096,7 +1096,7 @@ export async function readBaselineEventsByKey(
     // selected here.
     respAddr: null,
     category: row.category,
-    selectorTags: row.selector_tags ?? [],
+    selectorTags: row.selector_tags,
     rawScore: Number(row.raw_score),
   }));
 }

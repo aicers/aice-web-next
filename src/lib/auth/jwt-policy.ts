@@ -15,7 +15,7 @@ interface JwtPolicyRow {
   access_token_expiration_minutes: number;
 }
 
-// ── Defaults (matching migration 0007) ───────────────────────────
+// ── Defaults (matching the auth schema seed) ───────────────────────────
 
 const DEFAULT_POLICY: JwtPolicy = {
   accessTokenExpirationMinutes: 15,

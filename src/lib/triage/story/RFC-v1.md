@@ -384,9 +384,9 @@ lookback stay at 1 hour.
   event-time floor (wall-clock anchor for §7 active-window age,
   not an event-time marker; using it here would mis-bound a
   historical catch-up). The page's own `event_time.min` is also
-  NOT used as a floor: a tenant that already has
-  `baseline_triaged_event` rows when migration 0008 lands carries
-  rows that sit before this page's min — those rows must be
+  NOT used as a floor: a tenant can hold `baseline_triaged_event`
+  rows older than this page's min (historical catch-up pages
+  ingested before the first step-(f) tick) — those rows must be
   candidates on the first tick or they would never be considered
   for finalization again after the watermark advances past them.
 - **Empty page (zero `baseline_triaged_event` survivors).** Step
@@ -409,7 +409,7 @@ lookback stay at 1 hour.
 R6 is finalized by a **separate hourly sweep**
 (`baseline/lowslow-sweep.ts`), decoupled from per-page step (f), with
 its own `baseline_corpus_state.lowslow_finalized_through` watermark
-(migration 0025, additive) and its own per-customer advisory lock
+and its own per-customer advisory lock
 (`triage_lowslow_sweep:`). It scans the already-ingested local corpus
 over a 24-hour window — no REview fetch.
 
@@ -472,20 +472,22 @@ over a 24-hour window — no REview fetch.
 
 ## §5 — Persistence
 
-Migration `migrations/customer/0008_event_group_story.sql` lands
-the original schema (single new file). The only `ALTER` on existing
-tables is the additive `story_finalized_through` column on the
-`baseline_corpus_state` singleton; corpus A tables
-(`baseline_triaged_event`, `observed_event_meta`) are not touched.
+The Story schema lives in the tenant init migration
+(`migrations/customer/0001_init_schema.sql`): the `event_group` /
+`event_group_member` tables plus the additive
+`story_finalized_through`, `lowslow_finalized_through` watermark
+columns on the `baseline_corpus_state` singleton. Corpus A tables
+(`baseline_triaged_event`, `observed_event_meta`) carry no
+Story-specific columns.
 
-### `correlation_key` column and dedup re-scope (issue #694)
+### `correlation_key` and the dual dedup indexes (issue #694)
 
-Migration `migrations/customer/0024_event_group_correlation_key.sql`
-adds the multi-source rules' persistence:
+The multi-source rules' persistence is the nullable
+`event_group.correlation_key` column plus two partial unique indexes
+that partition the auto-correlated rows by `correlation_key`
+NULL-ness:
 
-- `ALTER TABLE event_group ADD COLUMN correlation_key TEXT;`
-  (additive, nullable).
-- New partial unique index governing R4/R5:
+- R4/R5 (`correlation_key IS NOT NULL`) dedup on:
 
   ```sql
   CREATE UNIQUE INDEX event_group_corrkey_dedup_idx ON event_group
@@ -493,35 +495,28 @@ adds the multi-source rules' persistence:
     WHERE kind = 'auto_correlated' AND correlation_key IS NOT NULL;
   ```
 
-- **Re-scope of the existing index** so an R4 row (which sets BOTH
-  `primary_asset` and `correlation_key`) is governed solely by the
-  new index. Without this, two same-victim/same-window R4 rows
-  differing only by `category` would collide on
-  `(R4, resp_addr, window)` and the old index would raise an
-  unhandled `unique_violation` (`ON CONFLICT` only arbitrates the
-  named `correlation_key` index). The fix narrows the old index with
-  `AND correlation_key IS NULL` (DROP + CREATE, no data change):
+- R1/R3 (`correlation_key IS NULL`) dedup on:
 
   ```sql
-  DROP INDEX IF EXISTS event_group_auto_dedup_idx;
   CREATE UNIQUE INDEX event_group_auto_dedup_idx ON event_group
     (correlation_rule_id, primary_asset, time_window_start, time_window_end)
     WHERE kind = 'auto_correlated' AND primary_asset IS NOT NULL
       AND correlation_key IS NULL;
   ```
 
-  This partitions cleanly by `correlation_key` NULL-ness: R1/R3
-  (`correlation_key IS NULL`) on the old index, R4/R5
-  (`correlation_key IS NOT NULL`) on the new one. The migration is
-  therefore **not purely additive** (it re-scopes one existing index)
-  but is data-preserving — R1/R3 dedup semantics are identical.
+  The `AND correlation_key IS NULL` scoping is load-bearing: an R4
+  row sets BOTH `primary_asset` and `correlation_key`, so without it
+  two same-victim/same-window R4 rows differing only by `category`
+  would collide on `(R4, resp_addr, window)` and the single-asset
+  index would raise an unhandled `unique_violation` (`ON CONFLICT`
+  only arbitrates the named `correlation_key` index).
 
 - **`insertAutoStory` branches its `ON CONFLICT` target by whether
   `correlationKey` is present**, not by rule id, and writes
   `correlation_key` in both the plain and carry-over INSERT variants.
   When `correlationKey` is set (R4/R5) it targets
-  `event_group_corrkey_dedup_idx`; when NULL (R1/R3) it keeps the
-  re-scoped `event_group_auto_dedup_idx`. Both paths stay
+  `event_group_corrkey_dedup_idx`; when NULL (R1/R3) it targets
+  `event_group_auto_dedup_idx`. Both paths stay
   `… ON CONFLICT DO NOTHING`. R1/R3 always write
   `correlation_key = NULL`.
 
@@ -532,17 +527,16 @@ transaction the runner already opens.
 
 ### `lowslow_finalized_through` watermark (issue #701)
 
-Migration `migrations/customer/0025_lowslow_finalized_through.sql`
-adds the additive `lowslow_finalized_through TIMESTAMPTZ` column on the
-`baseline_corpus_state` singleton — the low-and-slow sweep's own
+The additive `lowslow_finalized_through TIMESTAMPTZ` column on the
+`baseline_corpus_state` singleton is the low-and-slow sweep's own
 monotonic watermark (§4 "Low-and-slow sweep"). No `event_group` schema
-change: R6 carries `correlation_key = NULL` and reuses the re-scoped
-`event_group_auto_dedup_idx` (the #694 index), so it dedups exactly
-like R1/R3 via `insertAutoStory`'s NULL-`correlationKey` branch. R6's
-candidate read (`readR6Candidates`) rides the existing `event_time` /
-`orig_addr` indexes on `baseline_triaged_event`; the optional
-`selector_tags` GIN index is a measurement-gated follow-up, not added
-by default.
+support beyond the above: R6 carries `correlation_key = NULL` and
+reuses `event_group_auto_dedup_idx` (the #694 index), so it dedups
+exactly like R1/R3 via `insertAutoStory`'s NULL-`correlationKey`
+branch. R6's candidate read (`readR6Candidates`) rides the existing
+`event_time` / `orig_addr` indexes on `baseline_triaged_event`; the
+optional `selector_tags` GIN index is a measurement-gated follow-up,
+not added by default.
 
 ### Per-rule SQL push-down
 

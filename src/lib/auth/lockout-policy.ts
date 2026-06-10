@@ -17,7 +17,7 @@ interface LockoutPolicyRow {
   stage1_duration_minutes: number;
 }
 
-// ── Defaults (matching migration 0007) ───────────────────────────
+// ── Defaults (matching the auth schema seed) ───────────────────────────
 
 const DEFAULT_POLICY: LockoutPolicy = {
   stage1Threshold: 5,

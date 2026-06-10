@@ -11,7 +11,7 @@ export interface ActiveSession {
   display_name: string | null;
   ip_address: string | null;
   user_agent: string | null;
-  browser_fingerprint: string | null;
+  browser_fingerprint: string;
   created_at: string;
   last_active_at: string;
   needs_reauth: boolean;

@@ -250,8 +250,7 @@ async function markOk(
   // moment of the first successful cadence commit. `COALESCE` keeps the
   // first-ever value sticky across subsequent runs so the §7 windows
   // measure age against the real start of ingestion, not the latest
-  // commit. Migration 0007 backfills it from `min(ingested_at)` on
-  // existing corpora.
+  // commit.
   await client.query(
     `UPDATE baseline_corpus_state
         SET last_run_status = 'ok',

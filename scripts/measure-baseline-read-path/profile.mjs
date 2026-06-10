@@ -124,18 +124,14 @@ export class ProfileAssertionError extends Error {
  * signal (the first-tick scan covers the full table by construction;
  * the gate cares about slop-replay).
  *
- * Backwards-compatible bare-number form: passing a bare `nowMs`
- * number (legacy callers) skips only the range-dependent
- * slop-replay phase-1 candidate-count probe, because that probe
- * needs a `memberScan` range the bare-number form does not carry.
- * The `story_finalized_through IS NOT NULL` precondition still
- * fires, since it is a tenant-level precondition (no range needed)
- * and gate eligibility hinges on it. The menu-shape checks also
- * still fire. New callers should pass the structured form so the
- * range-dependent gate check fires too.
+ * Callers pass the structured form so the range-dependent slop-replay
+ * gate check fires; omitting `memberScan` skips only that probe. The
+ * `story_finalized_through IS NOT NULL` precondition always fires,
+ * since it is a tenant-level precondition (no range needed) and gate
+ * eligibility hinges on it. The menu-shape checks also always fire.
  *
  * @param {object} pool
- * @param {number | { nowMs?: number, memberScan?: { startIso: string | null, endIso: string } }} [opts]
+ * @param {{ nowMs?: number, memberScan?: { startIso: string | null, endIso: string } }} [opts]
  */
 export async function assertRepresentativeProfile(pool, opts) {
   const { nowMs, memberScan } = normalizeAssertOpts(opts);
@@ -262,11 +258,11 @@ export async function assertRepresentativeProfile(pool, opts) {
     }
   }
 
-  // Story-shape additions (issue #601). Only the structured form
-  // carries a `memberScan` range — bare-number / undefined callers
-  // skip these. Note the `story_finalized_through` check fires even
-  // when `memberScan` is absent because it is a precondition on the
-  // tenant, not on the range.
+  // Story-shape additions (issue #601). Callers without a
+  // `memberScan` range skip the range-dependent probe. Note the
+  // `story_finalized_through` check fires even when `memberScan` is
+  // absent because it is a precondition on the tenant, not on the
+  // range.
   const storyWatermark = await storyFinalizedThroughQuery(
     pool,
     PROFILE_PROBE_SQL.storyFinalizedThrough,
@@ -318,23 +314,17 @@ export async function assertRepresentativeProfile(pool, opts) {
 }
 
 /**
- * Normalize the backwards-compatible second argument to
+ * Normalize the optional second argument to
  * `assertRepresentativeProfile`. Accepts:
  *
- *   * `undefined` — uses `Date.now()`, no Story-shape checks.
- *   * a bare `number` — legacy callers; treated as `{ nowMs }` with
- *     no Story-shape checks beyond the `story_finalized_through`
- *     precondition.
- *   * a structured object `{ nowMs?, memberScan? }` — issue #601
- *     callers; enables every Story-shape check the `memberScan`
- *     range allows.
+ *   * `undefined` — uses `Date.now()`, no Story-shape checks beyond
+ *     the `story_finalized_through` precondition.
+ *   * a structured object `{ nowMs?, memberScan? }` — enables every
+ *     Story-shape check the `memberScan` range allows (issue #601).
  */
 function normalizeAssertOpts(opts) {
   if (opts === undefined || opts === null) {
     return { nowMs: Date.now(), memberScan: null };
-  }
-  if (typeof opts === "number") {
-    return { nowMs: opts, memberScan: null };
   }
   return {
     nowMs: typeof opts.nowMs === "number" ? opts.nowMs : Date.now(),

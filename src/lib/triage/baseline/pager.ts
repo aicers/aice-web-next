@@ -46,14 +46,13 @@ import "server-only";
  *       contributions, emit `selector_tags` per §9 thresholds.
  *   e4. One batched INSERT lifts all page rows into
  *       `baseline_triaged_event` with
- *       `baseline_version = PHASE_1B_BASELINE_VERSION`,
- *       `raw_score`, `selector_tags`, and `baseline_score = NULL`
- *       (§3 makes `baseline_score` read-time-only; co-populating
- *       it with `raw_score` would falsely suggest a stored
- *       interpretation). Phase 2 stays at one batched SELECT plus
- *       one batched INSERT per page so the runner's per-page time
- *       budget does not get eaten by 500 sequential statement
- *       executions.
+ *       `baseline_version = PHASE_1B_BASELINE_VERSION`, `raw_score`,
+ *       and `selector_tags` (§3 makes the menu's baseline score
+ *       read-time-only — `cume_dist()` over `raw_score` per cohort —
+ *       so no stored score column exists). Phase 2 stays at one
+ *       batched SELECT plus one batched INSERT per page so the
+ *       runner's per-page time budget does not get eaten by 500
+ *       sequential statement executions.
  *
  * Steps (d)–(e) and the corpus-state UPDATE all commit in the per-page
  * transaction the runner already opens. The pager itself is purely
@@ -419,7 +418,7 @@ interface BaselineRow extends SurvivorRow {
   selectorTags: string[];
 }
 
-const BASELINE_COLS_PER_ROW = 19;
+const BASELINE_COLS_PER_ROW = 18;
 
 async function insertObservedEventMetaBatch(
   client: pg.PoolClient,
@@ -464,13 +463,10 @@ async function insertBaselineTriagedEventBatch(
   exclusionsFp: string,
 ): Promise<{ rowCount: number | null }> {
   if (rows.length === 0) return { rowCount: 0 };
-  // Phase 1.B stops writing the legacy `baseline_score` column for new
-  // rows — RFC §3 makes the value read-time-only (computed by
-  // `cume_dist()` over `raw_score` per-`(kind, baseline_version)`
-  // cohort at menu read). Co-populating it with `raw_score` would
-  // suggest a stored interpretation that does not exist. `raw_score`
-  // and `selector_tags` are the new persisted columns; PR 2's
-  // migration sets both NOT NULL.
+  // The menu's baseline score is read-time-only — RFC §3 computes it
+  // via `cume_dist()` over `raw_score` per-`(kind, baseline_version)`
+  // cohort at menu read — so the row persists only `raw_score` and
+  // `selector_tags` (both NOT NULL).
   const params: unknown[] = [];
   const placeholders: string[] = [];
   for (const { eventKey, event, cols, rawScore, selectorTags } of rows) {
@@ -496,8 +492,6 @@ async function insertBaselineTriagedEventBatch(
       PHASE_1B_BASELINE_VERSION,
       exclusionsFp,
       categoryToDb(event.category),
-      // Legacy baseline_score: NULL for Phase 1.B rows (RFC §3).
-      null,
       rawScore,
       selectorTags,
       // payload_summary stays NULL — Phase 1.B does not surface
@@ -511,7 +505,7 @@ async function insertBaselineTriagedEventBatch(
         orig_addr, orig_port, resp_addr, resp_port, proto,
         host, dns_query, uri,
         baseline_version, exclusions_fp, category,
-        baseline_score, raw_score, selector_tags, payload_summary
+        raw_score, selector_tags, payload_summary
       ) VALUES ${placeholders.join(", ")}
       ON CONFLICT (event_key) DO NOTHING`,
     params,

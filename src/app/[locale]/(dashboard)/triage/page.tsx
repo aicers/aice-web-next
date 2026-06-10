@@ -93,9 +93,8 @@ export default async function TriagePage({ searchParams }: TriagePageProps) {
       storiesTruncated = s.truncated;
     } catch {
       // Stories failure must not block the rest of the menu — the tab
-      // simply renders empty if the read path errors. This keeps the
-      // ship deployable when the Story schema migration has not yet
-      // landed on a particular tenant.
+      // simply renders empty if the read path errors. A stories read
+      // error must not take down the whole triage page.
       stories = [];
       storiesTruncated = false;
     }

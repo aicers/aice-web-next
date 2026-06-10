@@ -229,14 +229,6 @@ export interface ManagerNotifyDispatchInput {
   agentKeys: string[] | null;
 }
 
-/**
- * @deprecated Retained as an alias for source-compat with code paths that
- * have not yet migrated off the v1 single-stage manager dispatcher.
- * New code should use `ManagerDbDispatchInput` or
- * `ManagerNotifyDispatchInput` directly.
- */
-export type ManagerDispatchInput = ManagerDbDispatchInput;
-
 export interface ExternalDispatchInput {
   attemptId: string;
   dispatchId: string;

@@ -306,9 +306,8 @@ async function runRebuildTransaction(
     }
 
     // (3) DELETE auto Stories in the window. `event_group_member`
-    // rows follow via `ON DELETE CASCADE`
-    // (`migrations/customer/0008_event_group_story.sql`), so no
-    // explicit member DELETE is needed.
+    // rows follow via `ON DELETE CASCADE`, so no explicit member
+    // DELETE is needed.
     const deletedRes = await client.query<{ count: number }>(
       `WITH deleted AS (
          DELETE FROM event_group

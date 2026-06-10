@@ -43,7 +43,7 @@ interface ApiRateLimitRow {
   per_user_window_minutes: number;
 }
 
-// ── Defaults (matching migration 0007) ───────────────────────────
+// ── Defaults (matching the auth schema seed) ───────────────────────────
 
 const DEFAULT_SIGNIN_CONFIG: SignInRateLimitConfig = {
   perIpCount: 20,

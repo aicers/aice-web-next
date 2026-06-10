@@ -140,8 +140,6 @@ describe("detection ↔ REview wiring (network mocked)", () => {
     mockHasPermission.mockReset();
     mockResolveEffectiveCustomerIds.mockReset();
     process.env.REVIEW_GRAPHQL_ENDPOINT = "https://review.example.com/graphql";
-    const { resetClient } = await import("@/lib/graphql/client");
-    resetClient();
   });
 
   afterEach(() => {

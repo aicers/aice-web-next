@@ -267,9 +267,9 @@ describe("runStepF — first-tick / NULL watermark", () => {
 
   it("first-tick historical catch-up: rows older than pageMin are still candidates", async () => {
     // Regression for the page-min floor bug: a tenant with
-    // pre-existing baseline_triaged_event rows (e.g., cadence
-    // started before migration 0008 landed) carries rows older
-    // than the current page's min. They must be visible on the
+    // pre-existing baseline_triaged_event rows (historical catch-up
+    // pages ingested before the first step-(f) tick) carries rows
+    // older than the current page's min. They must be visible on the
     // first tick — otherwise the watermark advances past them and
     // they are never considered for finalization again.
     const pageMax = new Date("2026-05-09T13:00:00Z");

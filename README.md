@@ -330,11 +330,6 @@ local `docker-compose.override.yml`. Note that the internal redirect
 emits `https://$host$request_uri`, so reopening host `:80` without
 also publishing host `:443` will land the redirect on a closed port.
 
-**Migration note.** This default changed from `80:80, 443:443` to
-`9443:443`. Operators relying on the previous default need to
-update bookmarks and any reverse-proxy upstream from `:443` to
-`:9443`, or pin the old mapping in their override.
-
 `Content-Security-Policy-Report-Only` is emitted by the Next.js app
 (per-request nonce — nginx leaves the header untouched). Enforcement
 is staged: the Report-Only mode lands first to surface any inline

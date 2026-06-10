@@ -26,7 +26,6 @@ interface DashboardLayoutProps {
   scopeFingerprint: string;
   canManageCustomers: boolean;
   initialSidebarCollapsed?: boolean;
-  hasSidebarCollapsedCookie?: boolean;
   /**
    * When `true`, mount the Phase 2 sync banner (#620). The banner is
    * gated on System Administrator because the underlying
@@ -50,13 +49,11 @@ export default function DashboardLayout({
   scopeFingerprint,
   canManageCustomers,
   initialSidebarCollapsed = false,
-  hasSidebarCollapsedCookie = false,
   isAimerSystemAdmin = false,
   aimerAnalysisHref = null,
 }: Readonly<DashboardLayoutProps>) {
   const { collapsed, toggle } = useSidebar({
     initialCollapsed: initialSidebarCollapsed,
-    hasCookie: hasSidebarCollapsedCookie,
   });
   const [mobileOpen, setMobileOpen] = useState(false);
 

@@ -57,11 +57,11 @@ describe("account-role-policy", () => {
   });
 
   it("treats the built-in Security Monitor permission set after #307 as equivalent", () => {
-    // The built-in Security Monitor role gains `nodes:read` and
-    // `services:read` from migration 0022 (#307). Without these in the
+    // The built-in Security Monitor role carries `nodes:read` and
+    // `services:read` in the seed (#307). Without these in the
     // allow-list, Security Monitor accounts would silently lose
-    // `tenantManageable: true` after the migration runs and Tenant
-    // Administrators could no longer create or manage them.
+    // `tenantManageable: true` and Tenant Administrators could no
+    // longer create or manage them.
     const policy = deriveAccountRolePolicy({
       id: 9,
       name: "Security Monitor",
@@ -80,10 +80,10 @@ describe("account-role-policy", () => {
   });
 
   it("treats triage:read as Security Monitor-equivalent", () => {
-    // Migration 0030 (#454) seeds `triage:read` onto Security Monitor.
+    // The seed grants `triage:read` to Security Monitor (#454).
     // Without this in the allow-list, Security Monitor accounts would
-    // silently lose `tenantManageable: true` after the migration runs
-    // and Tenant Administrators could no longer create or manage them.
+    // silently lose `tenantManageable: true` and Tenant Administrators
+    // could no longer create or manage them.
     const policy = deriveAccountRolePolicy({
       id: 12,
       name: "Security Monitor",
@@ -103,10 +103,10 @@ describe("account-role-policy", () => {
   });
 
   it("treats event:read as Security Monitor-equivalent", () => {
-    // Migration 0035 (#724) seeds `event:read` onto Security Monitor.
+    // The seed grants `event:read` to Security Monitor (#724).
     // Without this in the allow-list, Security Monitor accounts would
-    // silently lose `tenantManageable: true` after the migration runs
-    // and Tenant Administrators could no longer create or manage them.
+    // silently lose `tenantManageable: true` and Tenant Administrators
+    // could no longer create or manage them.
     const policy = deriveAccountRolePolicy({
       id: 14,
       name: "Security Monitor",

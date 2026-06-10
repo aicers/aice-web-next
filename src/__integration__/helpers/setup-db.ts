@@ -158,11 +158,13 @@ export async function createFakeSessions(
 ): Promise<void> {
   await withAuthDb((c) =>
     c.query(
-      `INSERT INTO sessions (sid, account_id, ip_address, user_agent)
+      `INSERT INTO sessions (sid, account_id, ip_address, user_agent,
+                              browser_fingerprint)
        SELECT gen_random_uuid(),
               (SELECT id FROM accounts WHERE username = $1),
               '127.0.0.1',
-              'integration-fake-session'
+              'integration-fake-session',
+              'Unknown/0'
        FROM generate_series(1, $2)`,
       [username, count],
     ),

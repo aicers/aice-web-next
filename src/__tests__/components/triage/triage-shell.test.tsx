@@ -890,13 +890,13 @@ describe("TriageShell — strictness_change engagement capture (#588 R2)", () =>
   // the slider) would emit the action and the assertions would fail.
 });
 
-describe("TriageShell — legacy URL hash fallback", () => {
-  it("falls back to the asset root with a stale-hash toast for a legacy single-component asset hash", async () => {
-    // Legacy hashes from before the composite `(customerId, address)`
-    // key encoded only the address. The page must treat them as stale
-    // — mis-resolving to the first customer's matching row could
-    // misattribute pivots across two tenants that share an RFC1918
-    // address.
+describe("TriageShell — malformed URL hash fallback", () => {
+  it("ignores a bare-address asset hash (no customerId/) and stays on the asset root", async () => {
+    // The asset focus requires the composite `(customerId, address)`
+    // key — mis-resolving a bare address to the first customer's
+    // matching row could misattribute pivots across two tenants that
+    // share an RFC1918 address. A bare address is rejected like any
+    // other malformed segment, so nothing is restored.
     window.location.hash = `#triage.pivot.asset=${encodeURIComponent("10.0.0.1")}`;
     const events: TriageEvent[] = [
       ev({
@@ -916,7 +916,9 @@ describe("TriageShell — legacy URL hash fallback", () => {
       />,
     );
     await flushAsync();
-    expect(screen.getByText("Stale hash — showing asset root")).toBeTruthy();
+    // The asset list root renders; no focused-asset detail view.
+    expect(screen.queryByText("Stale hash — showing asset root")).toBeNull();
+    expect(screen.getByRole("tab", { name: "Asset list" })).toBeTruthy();
   });
 });
 

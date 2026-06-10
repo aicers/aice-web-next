@@ -21,7 +21,7 @@ interface PasswordPolicyRow {
   reuse_ban_count: number;
 }
 
-// ── Defaults (matching migration 0007) ───────────────────────────
+// ── Defaults (matching the auth schema seed) ───────────────────────────
 
 const DEFAULT_POLICY: PasswordPolicy = {
   minLength: 12,
@@ -66,10 +66,5 @@ export async function loadPasswordPolicy(): Promise<PasswordPolicy> {
 
 /** Invalidate the cached policy so the next call re-queries the DB. */
 export function invalidatePasswordPolicy(): void {
-  cache.invalidate(CACHE_KEY);
-}
-
-/** @deprecated Use `invalidatePasswordPolicy()` instead. Kept for test compatibility. */
-export function resetPasswordPolicyCache(): void {
   cache.invalidate(CACHE_KEY);
 }

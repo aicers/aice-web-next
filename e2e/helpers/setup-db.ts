@@ -130,11 +130,13 @@ export async function createFakeSessions(
   count: number,
 ): Promise<void> {
   await pool.query(
-    `INSERT INTO sessions (sid, account_id, ip_address, user_agent)
+    `INSERT INTO sessions (sid, account_id, ip_address, user_agent,
+                            browser_fingerprint)
      SELECT gen_random_uuid(),
             (SELECT id FROM accounts WHERE username = $1),
             '127.0.0.1',
-            'e2e-fake-session'
+            'e2e-fake-session',
+            'Unknown/0'
      FROM generate_series(1, $2)`,
     [username, count],
   );

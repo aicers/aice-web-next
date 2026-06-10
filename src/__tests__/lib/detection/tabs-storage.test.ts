@@ -76,17 +76,16 @@ describe("serializeTabsForStorage / deserializeTabsFromStorage", () => {
     expect(roundTripped?.analyticsTopN).toBe(20);
   });
 
-  // The legacy stored payload (pre Reviewer Round 1) does not carry
-  // these fields; the deserializer must fall back to defaults rather
-  // than handing back an undefined-typed snapshot that would crash
-  // the analytics strip's selector.
-  it("falls back to defaults when stored payload omits analyticsDimension / analyticsTopN", () => {
-    const legacyPayload = JSON.stringify({
+  // `analyticsDimension` / `analyticsTopN` are required fields: a tab
+  // missing them (or carrying an invalid value) is structurally
+  // invalid and dropped, per the module's drop-don't-migrate policy.
+  it("rejects a tab that omits analyticsDimension / analyticsTopN", () => {
+    const payload = JSON.stringify({
       version: 1,
-      activeTabId: "legacy",
+      activeTabId: "incomplete",
       tabs: [
         {
-          id: "legacy",
+          id: "incomplete",
           name: null,
           manualName: false,
           filter: FILTER_1H,
@@ -99,10 +98,31 @@ describe("serializeTabsForStorage / deserializeTabsFromStorage", () => {
         },
       ],
     });
-    const decoded = deserializeTabsFromStorage(legacyPayload);
-    const tab = decoded?.tabs[0];
-    expect(tab?.analyticsDimension).toBe("srcIp");
-    expect(tab?.analyticsTopN).toBe(10);
+    expect(deserializeTabsFromStorage(payload)).toBeNull();
+  });
+
+  it("rejects a tab whose analyticsDimension / analyticsTopN are invalid", () => {
+    const payload = JSON.stringify({
+      version: 1,
+      activeTabId: "invalid",
+      tabs: [
+        {
+          id: "invalid",
+          name: null,
+          manualName: false,
+          filter: FILTER_1H,
+          period: "1h",
+          endpoints: [],
+          pivotOnly: {},
+          pagination: { pageSize: 50, page: 1, anchor: { kind: "head" } },
+          draft: null,
+          analyticsOpen: true,
+          analyticsDimension: "notADimension",
+          analyticsTopN: 12345,
+        },
+      ],
+    });
+    expect(deserializeTabsFromStorage(payload)).toBeNull();
   });
 
   it("strips the cached events so sessionStorage stays within quota", () => {

@@ -36,7 +36,7 @@ type SelectorRow = {
  *     parameter rows so the pager's `observedInserted` accumulator
  *     reflects the true insert count.
  *   - `INSERT INTO baseline_triaged_event` (single batched multi-row
- *     VALUES per page) — same pattern, sized by 19 columns per row.
+ *     VALUES per page) — same pattern, sized by 18 columns per row.
  *   - `SELECT … cume_dist() …` (the batched Phase 2 SELECT) — return a
  *     scripted per-row map keyed by `event_key`.
  *   - any other query — empty rows, `rowCount: 1`.
@@ -46,7 +46,7 @@ type SelectorRow = {
  * `observed_event_meta` history.
  */
 const OBSERVED_COLS_PER_ROW = 11;
-const BASELINE_COLS_PER_ROW = 19;
+const BASELINE_COLS_PER_ROW = 18;
 function makeClient(
   selectorRows: Map<string, Omit<SelectorRow, "event_key">> = new Map(),
 ): FakeClient {
@@ -317,21 +317,17 @@ describe("createCadencePager — Phase 1.B four-selector pipeline", () => {
 
     // Per-row offsets (zero-indexed within each row):
     //   12 → baseline_version, 14 → category,
-    //   15 → baseline_score (legacy, now NULL), 16 → raw_score,
-    //   17 → selector_tags
+    //   15 → raw_score, 16 → selector_tags
     for (const row of baselineRows) {
       expect(row[12]).toBe("phase1b-four-selector");
-      // baseline_score must be NULL on Phase 1.B rows — RFC §3 makes
-      // it read-time-only.
-      expect(row[15]).toBeNull();
-      expect(typeof row[16]).toBe("number");
-      expect(Array.isArray(row[17])).toBe(true);
+      expect(typeof row[15]).toBe("number");
+      expect(Array.isArray(row[16])).toBe(true);
     }
 
     // HttpThreat unlabeled CC: s1 (0.95 > 0.85) → S1-high; s2 = 1 →
     // S2-severe; s3 = 9/10 = 0.9 > 0.5 → S3-recurring; s4 = 3/4 =
     // 0.75 > 0.5 → S4-correlated; unlabeled → unlabeled-cluster.
-    const httpThreatTags = baselineRows[0][17] as string[];
+    const httpThreatTags = baselineRows[0][16] as string[];
     expect(httpThreatTags.sort()).toEqual([
       "S1-high",
       "S2-severe",
@@ -343,10 +339,10 @@ describe("createCadencePager — Phase 1.B four-selector pipeline", () => {
     // NetworkThreat labelled IMPACT: s1 = 0.5 (no S1-high), s2 = 1 →
     // S2-severe, s3 = 0/10 = 0 (no S3), s4 = 0/4 = 0 (no S4), not
     // HttpThreat → no unlabeled. Only S2-severe.
-    expect(baselineRows[1][17]).toEqual(["S2-severe"]);
+    expect(baselineRows[1][16]).toEqual(["S2-severe"]);
 
     // PortScan RECONNAISSANCE: nothing fires.
-    expect(baselineRows[2][17]).toEqual([]);
+    expect(baselineRows[2][16]).toEqual([]);
 
     // exclusions_fp threaded into every page-row tuple of the batched
     // baseline INSERT.
@@ -661,12 +657,10 @@ describe("createCadencePager — Phase 1.B four-selector pipeline", () => {
       q.sql.includes("INSERT INTO baseline_triaged_event"),
     );
     expect(baseInsert).toBeDefined();
-    // baseline_score: NULL on Phase 1.B.
-    expect(baseInsert?.params?.[15]).toBeNull();
     // raw_score = w_UNLABELED * 1 = 0.5 (only the UNLABELED_BONUS
     // fires in a non-critical-category cold-start row).
-    expect(baseInsert?.params?.[16]).toBeCloseTo(0.5, 10);
-    expect(baseInsert?.params?.[17]).toEqual(["unlabeled-cluster"]);
+    expect(baseInsert?.params?.[15]).toBeCloseTo(0.5, 10);
+    expect(baseInsert?.params?.[16]).toEqual(["unlabeled-cluster"]);
   });
 
   it("emits no S3 / S4 tags when orig_addr IS NULL even with non-zero per-window numerators (NULL-address contract)", async () => {
@@ -726,7 +720,7 @@ describe("createCadencePager — Phase 1.B four-selector pipeline", () => {
     const baseInsert = client.queries.find((q) =>
       q.sql.includes("INSERT INTO baseline_triaged_event"),
     );
-    const tags = baseInsert?.params?.[17] as string[];
+    const tags = baseInsert?.params?.[16] as string[];
     expect(tags).not.toContain("S3-recurring");
     expect(tags).not.toContain("S4-correlated");
     // S2 fires (CREDENTIAL_ACCESS ∈ CRITICAL_CATEGORIES).

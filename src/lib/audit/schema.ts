@@ -110,39 +110,6 @@ type AimerSigningKeyAction =
 type AimerIntegrationSettingAction = "aimer_integration_setting.changed";
 
 /**
- * Aimer context-token issuance actions (#439).
- *
- * Historically emitted by `POST /api/aimer/context-token` for the
- * Phase 1 Send-to-Aimer bridge handoff.
- *
- * @deprecated stopped emitting in #629 (analyze-bridge rewire); kept
- * in the enum so historical rows remain queryable through the audit
- * filter UI / API allowlist. No production source path emits these
- * actions after the rewire — the analyze-envelope mint emits
- * `aimer_analyze_envelope.*` instead.
- */
-type AimerContextTokenAction =
-  | "aimer_context_token.issued"
-  | "aimer_context_token.denied";
-
-/**
- * Detection menu Send button routing (#621).
- *
- * Historically emitted by `POST /api/aimer/detection-send`, which
- * routed an operator's Send click between Phase 1 (existing bridge
- * handoff via `/api/aimer/context-token`) and Phase 2 (single-event
- * baseline batch direct to aimer-web).
- *
- * @deprecated stopped emitting in #629 (analyze-bridge rewire); kept
- * in the enum so historical rows remain queryable through the audit
- * filter UI / API allowlist. No production source path emits these
- * actions after the rewire.
- */
-type AimerDetectionSendAction =
-  | "aimer_detection_send.issued"
-  | "aimer_detection_send.denied";
-
-/**
  * Analyze-envelope mint actions (#629).
  *
  * Emitted by `POST /api/aimer/analyze-envelope`, which mints the
@@ -257,8 +224,8 @@ type TriageExclusionAction =
  * emitter populates `customerId` with the route's `customerId`
  * argument. The target reuses the existing `"customer"` target type
  * rather than introducing a first-class "baseline corpus" entity,
- * matching the reuse pattern established for
- * `aimer_context_token.issued`.
+ * matching the reuse pattern of the other customer-targeted aimer
+ * actions.
  */
 type TriageBaselineAction = "triage_baseline.rebuild";
 
@@ -326,8 +293,6 @@ export type AuditAction =
   | ServiceAction
   | AimerSigningKeyAction
   | AimerIntegrationSettingAction
-  | AimerContextTokenAction
-  | AimerDetectionSendAction
   | AimerAnalyzeEnvelopeAction
   | TriagePolicyAction
   | TriageStoryAction
@@ -408,10 +373,6 @@ export const AUDIT_ACTIONS = [
   "aimer_signing_key.switched",
   "aimer_signing_key.deactivated",
   "aimer_integration_setting.changed",
-  "aimer_context_token.issued",
-  "aimer_context_token.denied",
-  "aimer_detection_send.issued",
-  "aimer_detection_send.denied",
   "aimer_analyze_envelope.issued",
   "aimer_analyze_envelope.denied",
   "triage.policy.create",

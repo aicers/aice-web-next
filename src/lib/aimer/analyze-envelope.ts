@@ -68,8 +68,8 @@ export async function signAnalyzeParamsToken(
     exp: number;
     /**
      * Pre-loaded signing key material. When omitted the helper loads
-     * the active key itself — kept for backward compatibility and for
-     * test callers that do not need cross-token kid pinning. The
+     * the active key itself — a convenience for test callers that do
+     * not need cross-token kid pinning. The
      * envelope-mint route in `/api/aimer/analyze-envelope` always
      * passes this so its three sibling JWSes share one `kid`.
      */

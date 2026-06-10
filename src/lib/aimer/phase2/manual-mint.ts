@@ -1,8 +1,7 @@
 /**
  * Phase 2 manual Send-to-aimer-web mint ledger helpers (#493).
  *
- * Backs the `aimer_phase2_manual_mint` table (see
- * `migrations/customer/0017_aimer_phase2_manual_mint.sql`). Two
+ * Backs the tenant schema's `aimer_phase2_manual_mint` table. Two
  * primitives:
  *
  *  - {@link recordManualMint} — INSERT one row at `build-envelope`
