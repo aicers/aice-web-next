@@ -1452,8 +1452,7 @@
       "sensor": "Sensor",
       "sensorPlaceholder": "Select a sensor",
       "sensorRequired": "Select a sensor to search.",
-      "quickRange": "Quick range",
-      "quickRangeNone": "Custom",
+      "periodLabel": "Period",
       "time": "Time range",
       "start": "Start",
       "end": "End",
@@ -1474,12 +1473,7 @@
       "1h": "1 hour",
       "12h": "12 hours",
       "1d": "1 day",
-      "1w": "1 week",
-      "1m": "1 month",
-      "3m": "3 months",
-      "6m": "6 months",
-      "1y": "1 year",
-      "3y": "3 years"
+      "1w": "1 week"
     },
     "table": {
       "time": "Time",

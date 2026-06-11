@@ -32,6 +32,7 @@ import {
 import { EventFilterForm } from "./event-filter-form";
 import { RawEventDetailSheet } from "./raw-event-detail-sheet";
 import { RawEventResultsTable } from "./raw-event-results-table";
+import { EventResultContainer, EventStatePanel } from "./result-panels";
 
 /** Search outcome handed down from the server component. */
 export type RawEventResult =
@@ -199,27 +200,31 @@ function ResultsRegion({
   const descriptor = RECORD_DESCRIPTORS[descriptorId];
 
   if (result.status === "prequery") {
-    return <Empty message={t("states.prequery")} />;
+    return <EventStatePanel message={t("states.prequery")} />;
   }
   if (result.status === "error") {
     return (
-      <Empty message={t("states.error")} role="alert" tone="destructive" />
+      <EventStatePanel
+        message={t("states.error")}
+        role="alert"
+        tone="destructive"
+      />
     );
   }
   if (result.edges.length === 0) {
-    return <Empty message={t("states.empty")} />;
+    return <EventStatePanel message={t("states.empty")} />;
   }
 
   return (
     <div className="space-y-3">
-      <div className="overflow-x-auto rounded-md border">
+      <EventResultContainer className="overflow-x-auto">
         <RawEventResultsTable
           descriptor={descriptor}
           edges={result.edges}
           locale={locale}
           onRowOpen={onRowOpen}
         />
-      </div>
+      </EventResultContainer>
       <div className="flex items-center justify-between gap-4">
         <div className="flex items-center gap-2 text-sm">
           <span className="text-muted-foreground">
@@ -267,27 +272,6 @@ function ResultsRegion({
           </Button>
         </div>
       </div>
-    </div>
-  );
-}
-
-function Empty({
-  message,
-  role,
-  tone,
-}: {
-  message: string;
-  role?: "alert";
-  tone?: "destructive";
-}) {
-  return (
-    <div
-      role={role}
-      className={`rounded-md border border-dashed p-10 text-center text-sm ${
-        tone === "destructive" ? "text-destructive" : "text-muted-foreground"
-      }`}
-    >
-      {message}
     </div>
   );
 }

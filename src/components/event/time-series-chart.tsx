@@ -14,6 +14,8 @@ import {
 
 import { buildTimeSeries, type TimeSeriesNode } from "@/lib/event";
 
+import { EventResultContainer, EventStatePanel } from "./result-panels";
+
 const LINE_COLOR = "#2563eb";
 
 /** Locale-aware compact number for axis ticks and tooltips. */
@@ -44,11 +46,7 @@ export function TimeSeriesChart({
   const series = useMemo(() => buildTimeSeries(nodes), [nodes]);
 
   if (series.points.length === 0) {
-    return (
-      <div className="text-muted-foreground rounded-md border border-dashed p-10 text-center text-sm">
-        {t("noData")}
-      </div>
-    );
+    return <EventStatePanel message={t("noData")} />;
   }
 
   return (
@@ -58,7 +56,7 @@ export function TimeSeriesChart({
           {t("origin", { start: series.origin })}
         </p>
       ) : null}
-      <div className="h-80 w-full text-xs">
+      <EventResultContainer className="h-80 w-full p-3 text-xs">
         <ResponsiveContainer width="100%" height="100%">
           <LineChart
             data={series.points}
@@ -104,7 +102,7 @@ export function TimeSeriesChart({
             />
           </LineChart>
         </ResponsiveContainer>
-      </div>
+      </EventResultContainer>
     </div>
   );
 }

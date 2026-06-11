@@ -13,15 +13,16 @@ import {
   SelectTrigger,
   SelectValue,
 } from "@/components/ui/select";
-import { computePeriodRange, PERIOD_KEYS } from "@/lib/detection/period";
 import {
+  computeEventPeriodRange,
   type EventFilter,
+  type EventPeriodKey,
   isPortString,
   RECORD_TYPE_IDS,
   recordFamily,
 } from "@/lib/event";
 
-const QUICK_RANGE_NONE = "none";
+import { EventPeriodPills } from "./event-period-pills";
 
 /** The four `EventFilter` keys backed by a port `<input>`. */
 type PortKey =
@@ -81,15 +82,16 @@ export function EventFilterForm({
 }) {
   const t = useTranslations("event");
   const tf = useTranslations("event.filters");
-  const tp = useTranslations("event.periods");
 
   const set = (patch: Partial<EventFilter>): void =>
     onChange({ ...draft, ...patch });
 
-  const applyQuickRange = (key: string): void => {
-    if (key === QUICK_RANGE_NONE) return;
-    const range = computePeriodRange(key as (typeof PERIOD_KEYS)[number]);
-    set({ start: range.start, end: range.end });
+  // Picking a pill fills the explicit range and records the key so the
+  // pill lights up immediately (no millisecond drift from re-matching the
+  // range against a fresh `now`).
+  const onSelectPeriod = (key: EventPeriodKey): void => {
+    const range = computeEventPeriodRange(key);
+    set({ period: key, start: range.start, end: range.end });
   };
 
   // Port inputs keep their raw text locally so an invalid entry
@@ -220,36 +222,20 @@ export function EventFilterForm({
             </SelectContent>
           </Select>
         </div>
+      </div>
 
-        <div className="space-y-1.5">
-          <Label htmlFor="event-quick-range">{tf("quickRange")}</Label>
-          <Select
-            defaultValue={QUICK_RANGE_NONE}
-            onValueChange={applyQuickRange}
-          >
-            <SelectTrigger id="event-quick-range">
-              <SelectValue />
-            </SelectTrigger>
-            <SelectContent>
-              <SelectItem value={QUICK_RANGE_NONE}>
-                {tf("quickRangeNone")}
-              </SelectItem>
-              {PERIOD_KEYS.map((key) => (
-                <SelectItem key={key} value={key}>
-                  {tp(key)}
-                </SelectItem>
-              ))}
-            </SelectContent>
-          </Select>
-        </div>
+      <EventPeriodPills selected={draft.period} onSelect={onSelectPeriod} />
 
+      <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
         <div className="space-y-1.5">
           <Label htmlFor="event-start">{tf("start")}</Label>
           <Input
             id="event-start"
             type="datetime-local"
             value={isoToLocalInput(draft.start)}
-            onChange={(e) => set({ start: localInputToIso(e.target.value) })}
+            onChange={(e) =>
+              set({ period: null, start: localInputToIso(e.target.value) })
+            }
           />
         </div>
         <div className="space-y-1.5">
@@ -258,7 +244,9 @@ export function EventFilterForm({
             id="event-end"
             type="datetime-local"
             value={isoToLocalInput(draft.end)}
-            onChange={(e) => set({ end: localInputToIso(e.target.value) })}
+            onChange={(e) =>
+              set({ period: null, end: localInputToIso(e.target.value) })
+            }
           />
         </div>
       </div>

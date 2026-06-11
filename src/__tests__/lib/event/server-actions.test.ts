@@ -59,6 +59,7 @@ const baseFilter: EventFilter = {
   sensor: "sensor-a",
   start: "2026-06-09T00:00:00Z",
   end: "2026-06-09T01:00:00Z",
+  period: null,
   origAddrStart: null,
   origAddrEnd: null,
   respAddrStart: null,
@@ -252,6 +253,7 @@ const statsFilter: StatisticsFilter = {
   sensors: ["sensor-a"],
   start: "2026-06-09T00:00:00Z",
   end: "2026-06-09T01:00:00Z",
+  period: null,
   protocols: ["conn", "dns"],
 };
 
@@ -283,6 +285,7 @@ describe("fetchStatistics", () => {
       sensors: ["sensor-a"],
       start: null,
       end: null,
+      period: null,
       protocols: [],
     });
     const [, variables] = mockGigantoClient.mock.calls[0];
@@ -313,6 +316,7 @@ const tsFilter: TimeSeriesFilter = {
   id: "policy-1",
   start: "2026-06-09T00:00:00Z",
   end: "2026-06-09T01:00:00Z",
+  period: null,
 };
 
 describe("fetchPeriodicTimeSeries", () => {
@@ -348,6 +352,7 @@ describe("fetchPeriodicTimeSeries", () => {
       id: "policy-1",
       start: null,
       end: null,
+      period: null,
     });
     const [, variables] = mockGigantoClient.mock.calls[0];
     expect(variables.filter).toEqual({ id: "policy-1" });

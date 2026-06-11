@@ -26,6 +26,7 @@ describe("parseTimeSeriesFilterFromSearchParams", () => {
       id: "policy-1",
       start: "2026-06-09T00:00:00.000Z",
       end: "2026-06-09T01:00:00.000Z",
+      period: null,
     });
   });
 
@@ -52,6 +53,7 @@ describe("timeSeriesFilterToSearchEntries", () => {
       id: "policy-1",
       start: "2026-06-09T00:00:00.000Z",
       end: null,
+      period: null,
     };
     expect(timeSeriesFilterToSearchEntries(filter)).toEqual([
       [TIME_SERIES_PARAM_KEYS.id, "policy-1"],
@@ -64,6 +66,7 @@ describe("timeSeriesFilterToSearchEntries", () => {
       id: "policy-9",
       start: "2026-01-01T00:00:00.000Z",
       end: "2026-01-02T00:00:00.000Z",
+      period: null,
     };
     const source = Object.fromEntries(timeSeriesFilterToSearchEntries(filter));
     expect(parseTimeSeriesFilterFromSearchParams(source)).toEqual(filter);
@@ -83,7 +86,12 @@ describe("toTimeSeriesFilterInput", () => {
 
   it("emits the id only when no time bounds are set", () => {
     expect(
-      toTimeSeriesFilterInput({ id: "policy-1", start: null, end: null }),
+      toTimeSeriesFilterInput({
+        id: "policy-1",
+        start: null,
+        end: null,
+        period: null,
+      }),
     ).toEqual({ id: "policy-1" });
   });
 
@@ -93,6 +101,7 @@ describe("toTimeSeriesFilterInput", () => {
         id: "policy-1",
         start: "2026-06-09T00:00:00.000Z",
         end: null,
+        period: null,
       }),
     ).toEqual({
       id: "policy-1",

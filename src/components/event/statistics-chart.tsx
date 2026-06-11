@@ -33,6 +33,8 @@ import {
   type StatisticsSeriesDatum,
 } from "@/lib/event";
 
+import { EventResultContainer, EventStatePanel } from "./result-panels";
+
 /**
  * Per-protocol line colors. A fixed palette (rather than a CSS token)
  * because the series count is data-driven — protocols cycle through
@@ -117,11 +119,9 @@ export function StatisticsChart({
       </div>
 
       {series.data.length === 0 || series.protocols.length === 0 ? (
-        <div className="text-muted-foreground rounded-md border border-dashed p-10 text-center text-sm">
-          {t("noMetricData")}
-        </div>
+        <EventStatePanel message={t("noMetricData")} />
       ) : (
-        <div className="h-80 w-full text-xs">
+        <EventResultContainer className="h-80 w-full p-3 text-xs">
           <ResponsiveContainer width="100%" height="100%">
             <LineChart
               data={series.data}
@@ -192,7 +192,7 @@ export function StatisticsChart({
               ))}
             </LineChart>
           </ResponsiveContainer>
-        </div>
+        </EventResultContainer>
       )}
     </div>
   );

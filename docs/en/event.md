@@ -57,10 +57,12 @@ sensor.
   the sensors Giganto has ingested data for. If the list cannot be
   loaded, the selector is disabled and a notice is shown. The sensor is
   required for every record type, network and Sysmon alike.
-- **Quick range** — a shortcut that fills the start/end time range with
-  a relative window (1 hour, 12 hours, 1 day, … up to 3 years).
+- **Period** — quick-select pills that fill the start/end time range with
+  a relative window. Because the Event dataset is large, the windows are
+  capped at one week: 1 hour, 12 hours, 1 day, and 1 week. Selecting a
+  pill highlights it; only one is active at a time.
 - **Time range** — explicit **Start** (inclusive) and **End**
-  (exclusive) bounds. Editing these overrides the quick range.
+  (exclusive) bounds. Editing either clears the active period pill.
 - **Source / destination IP range** — optional start/end IP bounds for
   the originating and responding addresses.
 - **Source / destination port range** — optional start/end port bounds
@@ -220,8 +222,9 @@ Select it from the [view toggle](#views).
   statistics query aggregates across every selected sensor, so unlike
   the single-sensor event search you can pick several at once. At least
   one sensor is required before **Apply** is enabled.
-- **Quick range** and **Time range** — the same relative-window
-  shortcut and explicit start/end bounds as the event search.
+- **Period** and **Time range** — the same one-week-capped period pills
+  (1 hour, 12 hours, 1 day, 1 week) and explicit start/end bounds as the
+  event search.
 - **Protocols** — an optional subset of the protocols the statistics
   API tracks (Conn, DNS, Malformed DNS, RADIUS, RDP, HTTP, SMTP, NTLM,
   Kerberos, SSH, DCE/RPC, FTP, MQTT, LDAP, TLS, SMB, NFS, BOOTP, DHCP,
@@ -266,9 +269,10 @@ it from the [view toggle](#views).
   before **Apply** is enabled, because Giganto keys a time series by its
   policy id. If the policy list cannot be loaded, the selector is
   disabled and a notice is shown.
-- **Quick range** and **Time range** — the same relative-window shortcut
-  and explicit start/end bounds as the other views. The window is
-  optional; leaving it unset charts the policy's full available series.
+- **Period** and **Time range** — the same one-week-capped period pills
+  (1 hour, 12 hours, 1 day, 1 week) and explicit start/end bounds as the
+  other views. The window is optional; leaving it unset charts the
+  policy's full available series.
 
 Reading the sampling policy list and the series both require the
 `event:read` permission — the same gate as the rest of the Event menu.

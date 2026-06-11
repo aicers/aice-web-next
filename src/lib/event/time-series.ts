@@ -9,6 +9,7 @@
  * `time-series-filter-form.tsx`). `time` is an optional window.
  */
 
+import { coerceEventPeriod, type EventPeriodKey } from "./period";
 import type { TimeSeriesFilterInput } from "./types";
 
 /**
@@ -22,12 +23,19 @@ export interface TimeSeriesFilter {
   start: string | null;
   /** ISO-8601 UTC, exclusive. */
   end: string | null;
+  /**
+   * Selected period quick-select pill, or `null` when none is active.
+   * Presentation-only: highlights a pill and round-trips through the URL,
+   * but never reaches the query (driven by `start`/`end`).
+   */
+  period: EventPeriodKey | null;
 }
 
 export const EMPTY_TIME_SERIES_FILTER: TimeSeriesFilter = {
   id: null,
   start: null,
   end: null,
+  period: null,
 };
 
 /**
@@ -39,6 +47,7 @@ export const TIME_SERIES_PARAM_KEYS = {
   id: "tsId",
   start: "tsStart",
   end: "tsEnd",
+  period: "tsPeriod",
 } as const;
 
 function readString(
@@ -64,6 +73,9 @@ export function parseTimeSeriesFilterFromSearchParams(
     id: readString(source, TIME_SERIES_PARAM_KEYS.id),
     start: readString(source, TIME_SERIES_PARAM_KEYS.start),
     end: readString(source, TIME_SERIES_PARAM_KEYS.end),
+    period: coerceEventPeriod(
+      readString(source, TIME_SERIES_PARAM_KEYS.period),
+    ),
   };
 }
 
@@ -78,6 +90,9 @@ export function timeSeriesFilterToSearchEntries(
   if (filter.id) entries.push([TIME_SERIES_PARAM_KEYS.id, filter.id]);
   if (filter.start) entries.push([TIME_SERIES_PARAM_KEYS.start, filter.start]);
   if (filter.end) entries.push([TIME_SERIES_PARAM_KEYS.end, filter.end]);
+  if (filter.period) {
+    entries.push([TIME_SERIES_PARAM_KEYS.period, filter.period]);
+  }
   return entries;
 }
 

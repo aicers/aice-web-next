@@ -7,20 +7,14 @@ import { Checkbox } from "@/components/ui/checkbox";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import {
-  Select,
-  SelectContent,
-  SelectItem,
-  SelectTrigger,
-  SelectValue,
-} from "@/components/ui/select";
-import { computePeriodRange, PERIOD_KEYS } from "@/lib/detection/period";
-import {
+  computeEventPeriodRange,
+  type EventPeriodKey,
   STATISTICS_PROTOCOLS,
   type StatisticsFilter,
   type StatisticsProtocol,
 } from "@/lib/event";
 
-const QUICK_RANGE_NONE = "none";
+import { EventPeriodPills } from "./event-period-pills";
 
 /** Convert an ISO-8601 UTC string to a `datetime-local` input value. */
 function isoToLocalInput(iso: string | null): string {
@@ -74,16 +68,14 @@ export function StatisticsFilterForm({
 }) {
   const t = useTranslations("event.statistics");
   const tf = useTranslations("event.filters");
-  const tp = useTranslations("event.periods");
   const tpr = useTranslations("event.protocols");
 
   const set = (patch: Partial<StatisticsFilter>): void =>
     onChange({ ...draft, ...patch });
 
-  const applyQuickRange = (key: string): void => {
-    if (key === QUICK_RANGE_NONE) return;
-    const range = computePeriodRange(key as (typeof PERIOD_KEYS)[number]);
-    set({ start: range.start, end: range.end });
+  const onSelectPeriod = (key: EventPeriodKey): void => {
+    const range = computeEventPeriodRange(key);
+    set({ period: key, start: range.start, end: range.end });
   };
 
   const noSensors = draft.sensors.length === 0;
@@ -129,35 +121,18 @@ export function StatisticsFilterForm({
         )}
       </fieldset>
 
-      <div className="grid grid-cols-1 gap-4 sm:grid-cols-3">
-        <div className="space-y-1.5">
-          <Label htmlFor="stat-quick-range">{tf("quickRange")}</Label>
-          <Select
-            defaultValue={QUICK_RANGE_NONE}
-            onValueChange={applyQuickRange}
-          >
-            <SelectTrigger id="stat-quick-range">
-              <SelectValue />
-            </SelectTrigger>
-            <SelectContent>
-              <SelectItem value={QUICK_RANGE_NONE}>
-                {tf("quickRangeNone")}
-              </SelectItem>
-              {PERIOD_KEYS.map((key) => (
-                <SelectItem key={key} value={key}>
-                  {tp(key)}
-                </SelectItem>
-              ))}
-            </SelectContent>
-          </Select>
-        </div>
+      <EventPeriodPills selected={draft.period} onSelect={onSelectPeriod} />
+
+      <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
         <div className="space-y-1.5">
           <Label htmlFor="stat-start">{tf("start")}</Label>
           <Input
             id="stat-start"
             type="datetime-local"
             value={isoToLocalInput(draft.start)}
-            onChange={(e) => set({ start: localInputToIso(e.target.value) })}
+            onChange={(e) =>
+              set({ period: null, start: localInputToIso(e.target.value) })
+            }
           />
         </div>
         <div className="space-y-1.5">
@@ -166,7 +141,9 @@ export function StatisticsFilterForm({
             id="stat-end"
             type="datetime-local"
             value={isoToLocalInput(draft.end)}
-            onChange={(e) => set({ end: localInputToIso(e.target.value) })}
+            onChange={(e) =>
+              set({ period: null, end: localInputToIso(e.target.value) })
+            }
           />
         </div>
       </div>

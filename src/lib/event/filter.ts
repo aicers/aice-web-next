@@ -8,6 +8,7 @@
  * round-trip through the query string and server-action boundary.
  */
 
+import { coerceEventPeriod, type EventPeriodKey } from "./period";
 import {
   coerceRecordType,
   DEFAULT_RECORD_TYPE,
@@ -28,6 +29,13 @@ export interface EventFilter {
   start: string | null;
   /** ISO-8601 UTC, exclusive. */
   end: string | null;
+  /**
+   * Selected period quick-select pill, or `null` when none is active.
+   * Presentation-only: it drives the highlighted pill and round-trips
+   * through the URL, but never reaches the Giganto query — the query is
+   * driven solely by the resolved `start`/`end`.
+   */
+  period: EventPeriodKey | null;
   origAddrStart: string | null;
   origAddrEnd: string | null;
   respAddrStart: string | null;
@@ -49,6 +57,7 @@ export const EMPTY_EVENT_FILTER: EventFilter = {
   sensor: null,
   start: null,
   end: null,
+  period: null,
   origAddrStart: null,
   origAddrEnd: null,
   respAddrStart: null,
@@ -94,6 +103,7 @@ export const FILTER_PARAM_KEYS = {
   sensor: "sensor",
   start: "start",
   end: "end",
+  period: "period",
   origAddrStart: "origAddrStart",
   origAddrEnd: "origAddrEnd",
   respAddrStart: "respAddrStart",
@@ -191,6 +201,7 @@ export function parseFilterFromSearchParams(
     sensor: readString(source, FILTER_PARAM_KEYS.sensor),
     start: readString(source, FILTER_PARAM_KEYS.start),
     end: readString(source, FILTER_PARAM_KEYS.end),
+    period: coerceEventPeriod(readString(source, FILTER_PARAM_KEYS.period)),
     origAddrStart: readString(source, FILTER_PARAM_KEYS.origAddrStart),
     origAddrEnd: readString(source, FILTER_PARAM_KEYS.origAddrEnd),
     respAddrStart: readString(source, FILTER_PARAM_KEYS.respAddrStart),
@@ -232,6 +243,8 @@ export function filterToSearchEntries(
   push(FILTER_PARAM_KEYS.sensor, filter.sensor);
   push(FILTER_PARAM_KEYS.start, filter.start);
   push(FILTER_PARAM_KEYS.end, filter.end);
+  // Presentation-only quick-select pill; shared by both families.
+  push(FILTER_PARAM_KEYS.period, filter.period);
 
   if (recordFamily(filter.recordType) === "sysmon") {
     push(FILTER_PARAM_KEYS.agentId, filter.agentId);
