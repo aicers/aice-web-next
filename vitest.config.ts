@@ -212,6 +212,13 @@ export default defineConfig({
             // Detection URL while modifier-clicks fall through. Needs a
             // real DOM because it renders an anchor and fires clicks.
             "src/__tests__/hooks/use-detection-return-nav.test.tsx",
+            // Issue #749: Quick peek pivot plain-click → in-app
+            // `onPivot` (vs modifier / middle-click → `<a href>`
+            // navigation). Needs a real DOM because it renders the
+            // pivot anchors and fires clicks to assert `preventDefault`
+            // / handler dispatch; the static `<a href>` assertions are
+            // kept and run here too.
+            "src/__tests__/components/detection/quick-peek-inspector.test.tsx",
           ],
           setupFiles: ["src/__tests__/setup/dom-setup.ts"],
         },
@@ -271,6 +278,7 @@ export default defineConfig({
             "src/__tests__/lib/aimer/phase2/transport-client.test.ts",
             "src/__tests__/lib/aimer/phase2/manual-send-client.test.ts",
             "src/__tests__/hooks/use-detection-return-nav.test.tsx",
+            "src/__tests__/components/detection/quick-peek-inspector.test.tsx",
           ],
         },
       },

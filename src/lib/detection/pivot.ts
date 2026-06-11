@@ -482,6 +482,18 @@ export interface OpenPivotTabArgs {
    * a low cap to exercise the toast branch.
    */
   maxTabs: number;
+  /**
+   * Explicit period for the created tab, overriding the active tab's
+   * period. Quick peek pivots advertise a fixed window (source /
+   * destination → last 24h, kind → last 7d) rather than inheriting
+   * the active tab's period like the result-list / analytics pivots
+   * do. The override participates in the duplicate / focus identity
+   * checks too, so a pivot that differs from the active tab only by
+   * window opens its own tab instead of being treated as a no-op.
+   * Omitted (`undefined`) → inherit `active.period`; an explicit
+   * `null` forces the page-default (no period) tab.
+   */
+  periodOverride?: PeriodKey | null;
 }
 
 /**
@@ -500,10 +512,16 @@ export interface OpenPivotTabArgs {
  */
 export function openPivotTab(args: OpenPivotTabArgs): PivotAction {
   const { patch, active, tabs, maxTabs } = args;
+  // `undefined` → inherit the active tab's period; an explicit period
+  // (including `null`) overrides it. The target period feeds both the
+  // identity checks below and the created tab, so a pivot that differs
+  // only by window is a distinct tab rather than a duplicate.
+  const targetPeriod =
+    args.periodOverride !== undefined ? args.periodOverride : active.period;
   const merged = applyPivotPatch(active.filter, active.endpoints, patch);
   const targetIdentity = normalizeFilterIdentity({
     filter: merged.filter,
-    period: active.period,
+    period: targetPeriod,
   });
   const activeIdentity = normalizeFilterIdentity({
     filter: active.filter,
@@ -529,7 +547,7 @@ export function openPivotTab(args: OpenPivotTabArgs): PivotAction {
     kind: "createTab",
     filter: merged.filter,
     endpoints: merged.endpoints,
-    period: active.period,
+    period: targetPeriod,
     displayValue: patch.displayValue,
   };
 }
