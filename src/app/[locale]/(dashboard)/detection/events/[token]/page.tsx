@@ -1,4 +1,5 @@
 import { getTranslations } from "next-intl/server";
+import { EventBreadcrumbRegistrar } from "@/components/events/event-breadcrumb-registrar";
 import { EventInvestigation } from "@/components/events/event-investigation";
 import { EventNotFound } from "@/components/events/event-not-found";
 import { extractAimerCustomerCandidates } from "@/lib/aimer/candidate-customers";
@@ -124,17 +125,20 @@ export default async function EventInvestigationPage({
   ]);
 
   return (
-    <EventInvestigation
-      event={event}
-      locator={locator}
-      backHref={backHref}
-      labels={buildInvestigationLabels(t)}
-      initialTab={initialTab}
-      customers={investigationCustomers}
-      candidates={candidates}
-      customerBridgeEligible={customerBridgeEligible}
-      aimerSetup={aimerSetup}
-    />
+    <>
+      <EventBreadcrumbRegistrar time={event.time} typename={event.__typename} />
+      <EventInvestigation
+        event={event}
+        locator={locator}
+        backHref={backHref}
+        labels={buildInvestigationLabels(t)}
+        initialTab={initialTab}
+        customers={investigationCustomers}
+        candidates={candidates}
+        customerBridgeEligible={customerBridgeEligible}
+        aimerSetup={aimerSetup}
+      />
+    </>
   );
 }
 

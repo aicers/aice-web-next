@@ -3,6 +3,7 @@
 import { ChevronRight } from "lucide-react";
 import { useTranslations } from "next-intl";
 import { Fragment } from "react";
+import { useBreadcrumbLabel } from "@/components/providers/breadcrumb-label-provider";
 import { Link, usePathname } from "@/i18n/navigation";
 import { parseBreadcrumbs } from "@/lib/breadcrumbs";
 import { cn } from "@/lib/utils";
@@ -11,12 +12,23 @@ export function Breadcrumbs() {
   const pathname = usePathname();
   const tNav = useTranslations("nav");
   const tSettings = useTranslations("settings");
+  const override = useBreadcrumbLabel();
 
-  const crumbs = parseBreadcrumbs(pathname, (ns, key) => {
-    if (ns === "nav") return tNav(key);
-    if (ns === "settings") return tSettings(key);
-    return null;
-  });
+  // Only honour an override registered for the current pathname; a
+  // stale override left by a previous page (during a route transition)
+  // must not bleed onto this one.
+  const overrideLastLabel =
+    override?.pathname === pathname ? override.label : undefined;
+
+  const crumbs = parseBreadcrumbs(
+    pathname,
+    (ns, key) => {
+      if (ns === "nav") return tNav(key);
+      if (ns === "settings") return tSettings(key);
+      return null;
+    },
+    overrideLastLabel,
+  );
 
   if (crumbs.length === 0) return null;
 

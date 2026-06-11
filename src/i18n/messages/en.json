@@ -89,7 +89,9 @@
     "nodes": "Nodes",
     "settings": "Settings",
     "audit-logs": "Audit Logs",
-    "openAiAnalyses": "Open AI analyses →"
+    "openAiAnalyses": "Open AI analyses →",
+    "eventDetail": "Event detail",
+    "nodeDetail": "Node detail"
   },
   "settings": {
     "accounts": "Accounts",

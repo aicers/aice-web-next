@@ -61,6 +61,19 @@ The page header shows:
   targets are rejected — the back link only follows
   same-origin relative paths.
 
+## Breadcrumb
+
+The dashboard breadcrumb shows **Detection › Event › {event time} ·
+{event kind}** while an event detail page is open — for example
+`Detection › Event › 06-11 14:23 · HTTP Threat`. The label is built
+from the page's own data: the time uses the operator's timezone
+preference and the active interface language, dropping the year and
+seconds so it stays compact, and the event kind matches the friendly
+name shown in the page header. The opaque event token never appears in
+the breadcrumb. Before the page data loads — or when the token is
+invalid or the event cannot be fetched — the breadcrumb falls back to
+the static **Event detail** label rather than the raw token.
+
 ## Error states
 
 ### Invalid event link

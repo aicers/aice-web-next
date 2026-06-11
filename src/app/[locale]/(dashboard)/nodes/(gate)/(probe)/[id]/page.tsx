@@ -2,6 +2,7 @@ import { notFound, redirect } from "next/navigation";
 
 import { CustomerScopeCallout } from "@/components/layout/customer-scope-callout";
 import { ManagerUnavailablePanel } from "@/components/node/manager-unavailable-panel";
+import { NodeBreadcrumbRegistrar } from "@/components/node/node-breadcrumb-registrar";
 import { NodeDetailDashboard } from "@/components/node/node-detail-dashboard";
 import { NodeDetailServiceGrid } from "@/components/node/node-detail-service-grid";
 import { getEffectiveCustomerScope } from "@/lib/auth/customer-scope";
@@ -237,6 +238,7 @@ export default async function NodeDetailPage({
 
   return (
     <div className="space-y-6" data-testid="node-detail-page" data-node-id={id}>
+      <NodeBreadcrumbRegistrar displayName={node.nameDraft ?? node.name} />
       <CustomerScopeCallout scope={scope} />
       <NodeDetailDashboard
         node={node}

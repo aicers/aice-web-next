@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 
-import { formatDateTime } from "@/lib/format-date";
+import { formatDateTime, formatDateTimeCompact } from "@/lib/format-date";
 
 describe("formatDateTime", () => {
   // Use a fixed UTC date to avoid locale-dependent output
@@ -56,5 +56,57 @@ describe("formatDateTime", () => {
     expect(result).toMatch(/12/); // hour
     expect(result).toMatch(/30/); // minute
     expect(result).toMatch(/45/); // second
+  });
+});
+
+describe("formatDateTimeCompact", () => {
+  // 2024-06-15 12:30:45 UTC
+  const isoString = "2024-06-15T12:30:45Z";
+
+  it("drops the year and the seconds", () => {
+    const result = formatDateTimeCompact(isoString, "UTC", "en");
+    // Month, day, hour, and minute remain.
+    expect(result).toMatch(/15/); // day
+    expect(result).toMatch(/30/); // minute
+    // The year and seconds must be gone.
+    expect(result).not.toContain("2024");
+    expect(result).not.toContain("45");
+  });
+
+  it("applies the given timezone", () => {
+    // UTC 12:30 → Asia/Seoul (UTC+9) is 21:30; the UTC hour 12 must
+    // not appear as a standalone hour.
+    const seoul = formatDateTimeCompact(isoString, "Asia/Seoul", "en");
+    expect(seoul).toContain("30"); // minute survives the shift
+    expect(seoul).not.toMatch(/\b12:/);
+
+    // UTC 12:30 → America/New_York (UTC-4, EDT) is 08:30.
+    const ny = formatDateTimeCompact(isoString, "America/New_York", "en");
+    expect(ny).toContain("8");
+    expect(ny).toContain("30");
+  });
+
+  it("threads the explicit locale through Intl", () => {
+    // The Korean locale renders 24-hour-ish output without an AM/PM
+    // marker, while English includes one. Asserting the marker differs
+    // proves the explicit `locale` argument reaches `toLocaleString`
+    // rather than pinning locale-specific separators.
+    const en = formatDateTimeCompact(isoString, "UTC", "en");
+    const ko = formatDateTimeCompact(isoString, "UTC", "ko");
+    expect(en).not.toBe(ko);
+    expect(en).toMatch(/AM|PM/i);
+    expect(ko).not.toMatch(/AM|PM/i);
+  });
+
+  it("returns a non-empty string when timezone/locale are absent", () => {
+    const result = formatDateTimeCompact(isoString);
+    expect(typeof result).toBe("string");
+    expect(result.length).toBeGreaterThan(0);
+  });
+
+  it("formats a Date object", () => {
+    const result = formatDateTimeCompact(new Date(isoString), "UTC", "en");
+    expect(result).toMatch(/15/);
+    expect(result).toMatch(/30/);
   });
 });

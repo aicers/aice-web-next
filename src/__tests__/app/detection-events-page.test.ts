@@ -40,6 +40,10 @@ vi.mock("@/components/events/event-investigation", () => ({
     `investigation:${event.__typename}`,
 }));
 
+vi.mock("@/components/events/event-breadcrumb-registrar", () => ({
+  EventBreadcrumbRegistrar: () => null,
+}));
+
 vi.mock("@/components/events/event-not-found", () => ({
   EventNotFound: ({ reason }: { reason: string }) => `not-found:${reason}`,
 }));
@@ -226,7 +230,9 @@ describe("EventInvestigationPage", () => {
       params: Promise.resolve({ locale: "en", token: buildToken() }),
       searchParams: noSearch(),
     });
-    expect(result?.props?.event?.__typename).toBe("HttpThreat");
+    expect(result?.props?.children?.[1]?.props?.event?.__typename).toBe(
+      "HttpThreat",
+    );
   });
 
   it("defaults backHref to /detection when no returnTo is supplied", async () => {
@@ -253,7 +259,7 @@ describe("EventInvestigationPage", () => {
       params: Promise.resolve({ locale: "en", token: buildToken() }),
       searchParams: noSearch(),
     });
-    expect(result?.props?.backHref).toBe("/detection");
+    expect(result?.props?.children?.[1]?.props?.backHref).toBe("/detection");
   });
 
   it("propagates a same-origin returnTo into the back link", async () => {
@@ -282,7 +288,7 @@ describe("EventInvestigationPage", () => {
         returnTo: "/detection?source=10.0.0.5&window=1d",
       }),
     });
-    expect(result?.props?.backHref).toBe(
+    expect(result?.props?.children?.[1]?.props?.backHref).toBe(
       "/detection?source=10.0.0.5&window=1d",
     );
   });
@@ -311,6 +317,6 @@ describe("EventInvestigationPage", () => {
       params: Promise.resolve({ locale: "en", token: buildToken() }),
       searchParams: Promise.resolve({ returnTo: "//evil.tld/phish" }),
     });
-    expect(result?.props?.backHref).toBe("/detection");
+    expect(result?.props?.children?.[1]?.props?.backHref).toBe("/detection");
   });
 });
