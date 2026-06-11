@@ -132,7 +132,72 @@ function buildEnv(): Record<string, string> {
   return env;
 }
 
-export default defineConfig({
+// E2E CI sharding (#759). The full suite runs as one Playwright project graph
+// locally; in CI it is split into independent shards that run as concurrent
+// GitHub Actions jobs, each on its own database and dev server. `E2E_SHARD`
+// selects one shard: every project's intra-shard ordering is kept (so the
+// global-state serial chains still run serially within their job) and only
+// cross-shard `dependencies` are dropped — those existed solely to serialize
+// same-database mutation, which is impossible across shards with separate
+// databases. The four shards partition the 21 default projects with no
+// project dropped or duplicated.
+const E2E_SHARDS: Record<string, readonly string[]> = {
+  parallel: ["parallel"],
+  node: [
+    "node-status",
+    "node-list",
+    "node-create-edit",
+    "node-detail",
+    "node-apply-preview",
+  ],
+  mfa: [
+    "serial",
+    "mfa-policy-1",
+    "mfa-policy-2",
+    "mfa-policy-3",
+    "mfa-policy-4",
+    "mfa-policy-5",
+    "mfa-policy-6",
+  ],
+  stateful: [
+    "isolated",
+    "stateful-accounts",
+    "stateful-detection-pivot",
+    "stateful-lockout",
+    "stateful-mfa-reset",
+    "stateful-must-change-password",
+    "stateful-session-policy",
+    "detection-return-nav",
+  ],
+};
+
+function selectE2eShard<T extends { name?: string; dependencies?: string[] }>(
+  projects: T[],
+  shard: string | undefined,
+): T[] {
+  if (!shard) return projects;
+  const names = E2E_SHARDS[shard];
+  if (!names) {
+    throw new Error(
+      `Unknown E2E_SHARD "${shard}". Expected one of: ${Object.keys(E2E_SHARDS).join(", ")}.`,
+    );
+  }
+  const inShard = new Set<string>(names);
+  return projects
+    .filter((project) => inShard.has(project.name ?? ""))
+    .map((project) =>
+      project.dependencies
+        ? ({
+            ...project,
+            dependencies: project.dependencies.filter((dep) =>
+              inShard.has(dep),
+            ),
+          } as T)
+        : project,
+    );
+}
+
+const e2eConfig = defineConfig({
   globalSetup: "./global-setup.ts",
   globalTeardown: "./global-teardown.ts",
   testDir: ".",
@@ -379,3 +444,19 @@ export default defineConfig({
     env: buildEnv(),
   },
 });
+
+// Apply CI sharding (#759) after the full config is built, so the project
+// list above stays a plain literal (readable, stable git history). In CI each
+// shard runs as its own job; locally (no E2E_SHARD) the full graph runs.
+if (
+  process.env.E2E_SHARD &&
+  !detectionManualCaptureOnly &&
+  e2eConfig.projects
+) {
+  e2eConfig.projects = selectE2eShard(
+    e2eConfig.projects,
+    process.env.E2E_SHARD,
+  );
+}
+
+export default e2eConfig;
