@@ -33,11 +33,21 @@ const ASSETS_DIR = path.resolve(__dirname, "..", "docs", "assets");
 
 test.use({ viewport: VIEWPORT });
 
+// Screenshot capture is opt-in. In a normal `pnpm e2e` run these tests are
+// skipped and the file-scope hooks below short-circuit, so no `eventList`
+// stub is registered against the shared mock-server registry. Run with
+// `CAPTURE_SCREENSHOTS=1` (or via `DETECTION_MANUAL_CAPTURE_ONLY=1`, which
+// the manual-capture project mode sets) to capture the assets locally.
+const SHOULD_CAPTURE =
+  process.env.CAPTURE_SCREENSHOTS === "1" ||
+  process.env.DETECTION_MANUAL_CAPTURE_ONLY === "1";
+
 // Per-spec scope so the empty-bootstrap stub registered below is
 // removed in `afterAll` without touching other specs' state.
 const session = mockServerSession();
 
 test.beforeAll(async () => {
+  if (!SHOULD_CAPTURE) return;
   // The Detection page bootstrap dispatches `eventList` with the
   // default page size (50). Since #405 Round 2 the bootstrap re-
   // throws unrecognised review GraphQL `errors[]` payloads as
@@ -56,6 +66,7 @@ test.beforeAll(async () => {
 });
 
 test.afterAll(async () => {
+  if (!SHOULD_CAPTURE) return;
   await session.clear();
   await closeAdminAgent();
 });
@@ -64,6 +75,7 @@ test.afterAll(async () => {
 // back; without resetting between tests the auth rate limiter blocks
 // the later locale's sign-in.
 test.beforeEach(async () => {
+  if (!SHOULD_CAPTURE) return;
   await resetRateLimits();
 });
 
@@ -80,6 +92,11 @@ async function forceDarkTheme(
 
 test.describe
   .serial("Detection manual screenshots", () => {
+    test.skip(
+      !SHOULD_CAPTURE,
+      "Manual screenshot capture — set CAPTURE_SCREENSHOTS=1 to run.",
+    );
+
     test("EN filter drawer", async ({
       page,
       workerUsername,

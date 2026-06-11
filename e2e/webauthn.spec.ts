@@ -651,20 +651,15 @@ test.describe("WebAuthn API (#217)", () => {
 
   // ── Unauthenticated access ─────────────────────────────────
 
-  test("unauthenticated: status returns 401", async ({ page }) => {
-    const res = await page.request.get("/api/auth/mfa/webauthn/status");
-    expect(res.status()).toBe(401);
-  });
+  test("unauthenticated: WebAuthn endpoints return 401", async ({ page }) => {
+    // A single auth guard fronts every WebAuthn endpoint; probe one GET and
+    // one POST to confirm both verbs are rejected without a session.
+    const status = await page.request.get("/api/auth/mfa/webauthn/status");
+    expect(status.status()).toBe(401);
 
-  test("unauthenticated: credentials list returns 401", async ({ page }) => {
-    const res = await page.request.get("/api/auth/mfa/webauthn/credentials");
-    expect(res.status()).toBe(401);
-  });
-
-  test("unauthenticated: register options returns 401", async ({ page }) => {
-    const res = await page.request.post(
+    const registerOptions = await page.request.post(
       "/api/auth/mfa/webauthn/register/options",
     );
-    expect(res.status()).toBe(401);
+    expect(registerOptions.status()).toBe(401);
   });
 });

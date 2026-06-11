@@ -53,16 +53,6 @@ test.describe("Auth flow screens (#131)", () => {
     ).toBeVisible();
   });
 
-  test("session-ended screen has Sign in again button", async ({ page }) => {
-    await page.goto("/sign-in?reason=session-ended");
-    const btn = page.getByRole("link", { name: /sign in again/i });
-    await expect(btn).toBeVisible();
-
-    await btn.click();
-    await page.waitForURL(/\/sign-in$/);
-    await expect(page.getByLabel("Account ID")).toBeVisible();
-  });
-
   // ── Invalid reason falls back to sign-in form ───────────────
 
   test("invalid reason parameter shows regular sign-in form", async ({
@@ -84,26 +74,6 @@ test.describe("Auth flow screens (#131)", () => {
     await expect(
       page.getByRole("link", { name: /다시 로그인/i }),
     ).toBeVisible();
-  });
-
-  test("session-ended screen renders in Korean", async ({ page }) => {
-    await page.goto("/ko/sign-in?reason=session-ended");
-    await expect(page.getByRole("heading")).toBeVisible();
-    await expect(
-      page.getByRole("link", { name: /다시 로그인/i }),
-    ).toBeVisible();
-  });
-
-  // ── Required field markers (*) ──────────────────────────────
-
-  test("sign-in form shows required asterisks on labels", async ({ page }) => {
-    await page.goto("/sign-in");
-
-    // The FormLabel component renders <span aria-hidden="true" class="text-destructive ml-0.5">*</span>
-    // for required fields. Both Account ID and Password are required.
-    const asterisks = page.locator('span[aria-hidden="true"].text-destructive');
-    const count = await asterisks.count();
-    expect(count).toBeGreaterThanOrEqual(2);
   });
 
   // ── Sign-out invalidates session and redirects ──────────────

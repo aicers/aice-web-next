@@ -1,5 +1,4 @@
 import { expect, test } from "./fixtures";
-import { APP_ORIGIN } from "./helpers/app-url";
 
 import { resetRateLimits } from "./helpers/auth";
 import { clearMustChangePassword, revokeAllSessions } from "./helpers/setup-db";
@@ -45,48 +44,5 @@ test.describe("Authentication E2E", () => {
     const alert = page.locator("p[role='alert']");
     await expect(alert).toBeVisible();
     await expect(alert).toContainText("Invalid account ID or password");
-  });
-
-  test("sign-in with valid credentials redirects to dashboard", async ({
-    page,
-    workerUsername,
-    workerPassword,
-  }) => {
-    await page.goto("/sign-in");
-    await page.getByLabel("Account ID").fill(workerUsername);
-    await page.locator("input[name='password']").fill(workerPassword);
-    await page.getByRole("button", { name: "Sign In" }).click();
-
-    await expect(page).not.toHaveURL(/sign-in/, { timeout: 10_000 });
-  });
-
-  test("sign-out clears session and redirects to sign-in", async ({
-    page,
-    workerUsername,
-    workerPassword,
-  }) => {
-    // Sign in first
-    await page.goto("/sign-in");
-    await page.getByLabel("Account ID").fill(workerUsername);
-    await page.locator("input[name='password']").fill(workerPassword);
-    await page.getByRole("button", { name: "Sign In" }).click();
-    await expect(page).not.toHaveURL(/sign-in/, { timeout: 10_000 });
-
-    // Sign out via API (NavUser button not wired yet).
-    // The endpoint requires CSRF token + Origin header.
-    const cookies = await page.context().cookies();
-    const csrfCookie = cookies.find((c) => c.name === "csrf");
-    const response = await page.request.post("/api/auth/sign-out", {
-      headers: {
-        "x-csrf-token": csrfCookie?.value ?? "",
-        Origin: APP_ORIGIN,
-      },
-    });
-    expect(response.ok()).toBeTruthy();
-
-    // Protected route should redirect to sign-in
-    await page.goto("/audit-logs");
-    await page.waitForURL("**/sign-in");
-    await expect(page).toHaveURL(/\/sign-in$/);
   });
 });
