@@ -198,8 +198,16 @@ jobs:
           MOCK_REVIEW_GRAPHQL_PORT: "4011"
 
   e2e:
-    name: E2E
+    name: E2E (${{ matrix.shard }})
     needs: check
+    # Run the Playwright suite as independent shards on concurrent runners
+    # (#759). Each shard is a self-contained slice of the project graph with
+    # its own Postgres + dev server, so wall-clock is the slowest shard, not
+    # the sum. fail-fast: false keeps every shard's result on a failure.
+    strategy:
+      fail-fast: false
+      matrix:
+        shard: [parallel, node, mfa, stateful]
     runs-on: ubuntu-latest
     services:
       postgres:
@@ -235,6 +243,7 @@ jobs:
         run: pnpm e2e
         env:
           CI: true
+          E2E_SHARD: ${{ matrix.shard }}
           DATABASE_URL: postgres://postgres:postgres@localhost:5432/auth_db
           DATABASE_ADMIN_URL: postgres://postgres:postgres@localhost:5432/postgres
           AUDIT_DATABASE_URL: postgres://audit_writer:changeme@localhost:5432/audit_db
@@ -247,7 +256,7 @@ jobs:
       - uses: actions/upload-artifact@v7
         if: ${{ !cancelled() }}
         with:
-          name: playwright-report
+          name: playwright-report-${{ matrix.shard }}
           path: e2e/playwright-report/
           retention-days: 7
 
