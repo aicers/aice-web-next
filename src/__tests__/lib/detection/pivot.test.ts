@@ -334,6 +334,53 @@ describe("openPivotTab", () => {
     expect(action.period).toBe("1h");
   });
 
+  it("seeds the created tab with periodOverride instead of the active period (#749)", () => {
+    const filter = structured({});
+    const action = openPivotTab({
+      patch: requirePatch(buildPivotPatch("origCountry", { raw: "KR" })),
+      // Active tab is on a 1h window, but the Quick peek pivot
+      // advertises 24h → the created tab must take the override.
+      active: { id: "tab-a", filter, endpoints: [], period: "1h" },
+      tabs: [summary("tab-a", filter)],
+      maxTabs: 8,
+      periodOverride: "1d",
+    });
+    expect(action.kind).toBe("createTab");
+    if (action.kind !== "createTab") return;
+    expect(action.period).toBe("1d");
+  });
+
+  it("treats a same-filter pivot with a different window as a distinct tab, not a duplicate (#749)", () => {
+    // The active tab already filters by KR on a 7d window; pivoting on
+    // the same KR value but with a 24h override must NOT be read as a
+    // no-op re-narrow — the window difference makes it its own tab.
+    const filter = structured({ countries: ["KR"] });
+    const action = openPivotTab({
+      patch: requirePatch(buildPivotPatch("origCountry", { raw: "KR" })),
+      active: { id: "tab-a", filter, endpoints: [], period: "1w" },
+      tabs: [summary("tab-a", filter)],
+      maxTabs: 8,
+      periodOverride: "1d",
+    });
+    expect(action.kind).toBe("createTab");
+    if (action.kind !== "createTab") return;
+    expect(action.period).toBe("1d");
+  });
+
+  it("still toasts a duplicate when the override matches the active period and the filter is unchanged (#749)", () => {
+    // Override equal to the active period + no new narrowing → same
+    // identity as today, so the duplicate toast path is preserved.
+    const filter = structured({ countries: ["KR"] });
+    const action = openPivotTab({
+      patch: requirePatch(buildPivotPatch("origCountry", { raw: "KR" })),
+      active: { id: "tab-a", filter, endpoints: [], period: "1d" },
+      tabs: [summary("tab-a", filter)],
+      maxTabs: 8,
+      periodOverride: "1d",
+    });
+    expect(action.kind).toBe("toastDuplicate");
+  });
+
   it("toasts when the wrapper is at the tab cap", () => {
     const filter = structured({});
     const tabs: PivotTabSummary[] = Array.from({ length: 8 }, (_, i) =>

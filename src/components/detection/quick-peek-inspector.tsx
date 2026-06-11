@@ -12,6 +12,8 @@ import { useTimezone } from "@/components/providers/timezone-provider";
 import { Badge } from "@/components/ui/badge";
 import { Link } from "@/i18n/navigation";
 import { formatEventTime } from "@/lib/detection/event-time";
+import type { PeriodKey } from "@/lib/detection/period";
+import { buildPivotPatch, type PivotPatch } from "@/lib/detection/pivot";
 import type { RenderedHighlight } from "@/lib/detection/quick-peek-highlights";
 import { pickHighlightValues } from "@/lib/detection/quick-peek-highlights";
 import type {
@@ -21,7 +23,11 @@ import type {
   ThreatLevel,
   TriageScore,
 } from "@/lib/detection/types";
-import { buildDetectionPivotUrl } from "@/lib/detection/url-filters";
+import {
+  buildDetectionPivotUrl,
+  type PivotWindow,
+  pivotWindowToPeriodKey,
+} from "@/lib/detection/url-filters";
 import { cn } from "@/lib/utils";
 
 /**
@@ -80,6 +86,19 @@ export interface QuickPeekInspectorProps {
    */
   investigateHref: string | null;
   onClose: () => void;
+  /**
+   * In-app pivot activation hook (#749). When supplied, a plain
+   * left-click on a Quick peek pivot ("Same source IP" / "Same
+   * destination IP" / "Same kind") opens a new narrowed tab in-app via
+   * this callback instead of doing a same-route client navigation that
+   * the tab shell ignores. The `periodOverride` pins the new tab to
+   * the window advertised next to each link (source / destination →
+   * 24h, kind → 7d). Modifier / middle-click still falls through to
+   * the `<Link href>` so the pivot URL opens in a new browser tab.
+   * When omitted (isolated render tests / standalone shell), the
+   * pivots stay plain navigating anchors.
+   */
+  onPivot?: (patch: PivotPatch, periodOverride?: PeriodKey | null) => void;
   /** Density affordance: omit the inline close button on overlays (the Sheet supplies its own). */
   showClose?: boolean;
   /**
@@ -120,6 +139,7 @@ export function QuickPeekInspector({
   locale,
   investigateHref,
   onClose,
+  onPivot,
   showClose = true,
   customers,
 }: QuickPeekInspectorProps) {
@@ -300,6 +320,7 @@ export function QuickPeekInspector({
               labels={labels}
               addressing={addressing}
               customers={customers}
+              onPivot={onPivot}
             />
           </div>
         </Section>
@@ -637,21 +658,38 @@ function CopyButton({
 
 /**
  * Pivot links into Detection — same-source / same-destination / same-kind.
- * Each is a real anchor so middle-click / Cmd+click opens a new tab.
- * Pivot targets that are not present on the event (e.g. source IP
- * on a response-only subtype) are omitted rather than rendered as
- * no-op buttons.
+ *
+ * Each renders a real anchor (`<Link href>`) so middle-click /
+ * Cmd+click still opens the pivot URL in a new browser tab. On a plain
+ * left-click, when an {@link QuickPeekInspectorProps.onPivot} handler
+ * is supplied, the anchor's default navigation is suppressed and the
+ * pivot is routed through the in-app handler instead (#749): a plain
+ * same-route `<Link>` click only changes `searchParams`, which the
+ * tab shell initializes from once and never re-reads — so the click
+ * appeared dead. Routing through `onPivot` opens a new narrowed tab
+ * alongside the existing ones, consistent with the result-list and
+ * analytics pivots.
+ *
+ * Each link advertises an explicit window (source / destination →
+ * 24h, kind → 7d); the `periodOverride` derived from that window pins
+ * the created tab's period rather than inheriting the active tab's.
+ *
+ * Pivot targets that are not present on the event (e.g. source IP on a
+ * response-only subtype) are omitted rather than rendered as no-op
+ * links.
  */
 function Pivots({
   event,
   labels,
   addressing,
   customers,
+  onPivot,
 }: {
   event: DetectionEvent;
   labels: QuickPeekInspectorLabels;
   addressing: ReturnType<typeof readEventAddressing>;
   customers?: readonly string[];
+  onPivot?: (patch: PivotPatch, periodOverride?: PeriodKey | null) => void;
 }) {
   const source =
     addressing.origAddr ??
@@ -661,7 +699,13 @@ function Pivots({
     (addressing.respAddrs.length > 0 ? addressing.respAddrs[0] : null);
   const customerList =
     customers && customers.length > 0 ? [...customers] : undefined;
-  const items: { key: string; href: string; label: string }[] = [];
+  const items: {
+    key: string;
+    href: string;
+    label: string;
+    patch: PivotPatch | null;
+    window: PivotWindow;
+  }[] = [];
   if (source) {
     items.push({
       key: "same-source",
@@ -671,6 +715,8 @@ function Pivots({
         customers: customerList,
       }),
       label: labels.pivotSource,
+      patch: buildPivotPatch("origAddr", { raw: source }),
+      window: "1d",
     });
   }
   if (destination) {
@@ -682,6 +728,8 @@ function Pivots({
         customers: customerList,
       }),
       label: labels.pivotDestination,
+      patch: buildPivotPatch("respAddr", { raw: destination }),
+      window: "1d",
     });
   }
   items.push({
@@ -692,6 +740,8 @@ function Pivots({
       customers: customerList,
     }),
     label: labels.pivotKind,
+    patch: buildPivotPatch("kind", { raw: event.__typename }),
+    window: "7d",
   });
   return (
     <ul className="flex flex-col gap-1 text-xs">
@@ -700,6 +750,24 @@ function Pivots({
           <Link
             href={item.href}
             className="text-muted-foreground hover:text-foreground inline-flex items-center gap-1 hover:underline"
+            onClick={(clickEvent) => {
+              // Modifier / middle-click must keep opening the pivot URL
+              // in a new browser tab, so only intercept an unmodified
+              // primary-button click. With no handler (or no derivable
+              // patch) fall through to the anchor's default navigation.
+              if (!onPivot || item.patch === null) return;
+              if (
+                clickEvent.button !== 0 ||
+                clickEvent.metaKey ||
+                clickEvent.ctrlKey ||
+                clickEvent.shiftKey ||
+                clickEvent.altKey
+              ) {
+                return;
+              }
+              clickEvent.preventDefault();
+              onPivot(item.patch, pivotWindowToPeriodKey(item.window));
+            }}
           >
             <span aria-hidden="true">·</span>
             {item.label}

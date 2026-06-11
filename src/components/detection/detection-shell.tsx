@@ -693,13 +693,17 @@ export interface DetectionShellProps {
   onStateChange?: (snapshot: DetectionShellStateSnapshot) => void;
   /**
    * Pivot (drill-down) activation hook (Phase Detection-12).
-   * Forwarded straight to {@link ResultList}; the multi-tab wrapper
-   * supplies a handler that decides whether to create / focus /
-   * toast based on the patch and the rest of the tab list. When
+   * Forwarded to {@link ResultList}, {@link DetectionAnalytics}, and
+   * the Quick peek inspector; the multi-tab wrapper supplies a handler
+   * that decides whether to create / focus / toast based on the patch
+   * and the rest of the tab list. The optional `periodOverride` lets a
+   * caller pin the created tab to an explicit window (Quick peek pivots
+   * advertise 24h / 7d) instead of inheriting the active tab's period;
+   * omitting it keeps the existing inherit-period behaviour. When
    * undefined, pivot affordances are hidden (single-tab / standalone
    * shell paths).
    */
-  onPivot?: (patch: PivotPatch) => void;
+  onPivot?: (patch: PivotPatch, periodOverride?: PeriodKey | null) => void;
   /**
    * Personal saved-filters state owned by the multi-tab wrapper
    * (Phase Detection-15). Threaded down so the rail stays consistent
@@ -3899,6 +3903,7 @@ export function DetectionShell({
                 locale={locale}
                 investigateHref={buildInvestigateHref(quickPeekEvent)}
                 onClose={closeQuickPeek}
+                onPivot={onPivot}
                 customers={committedCustomers}
               />
             </aside>
@@ -3985,6 +3990,7 @@ export function DetectionShell({
         labels={quickPeekLabels}
         buildInvestigateHref={buildInvestigateHref}
         onClose={closeQuickPeek}
+        onPivot={onPivot}
         customers={committedCustomers}
       />
 
@@ -4256,6 +4262,7 @@ function QuickPeekInspectorOverlay({
   labels,
   buildInvestigateHref,
   onClose,
+  onPivot,
   customers,
 }: {
   event: DetectionEvent | null;
@@ -4263,6 +4270,7 @@ function QuickPeekInspectorOverlay({
   labels: QuickPeekInspectorLabels;
   buildInvestigateHref: (event: DetectionEvent) => string | null;
   onClose: () => void;
+  onPivot?: (patch: PivotPatch, periodOverride?: PeriodKey | null) => void;
   customers?: readonly string[];
 }) {
   const open = event !== null;
@@ -4308,6 +4316,7 @@ function QuickPeekInspectorOverlay({
             locale={locale}
             investigateHref={buildInvestigateHref(event)}
             onClose={onClose}
+            onPivot={onPivot}
             showClose={false}
             customers={customers}
           />

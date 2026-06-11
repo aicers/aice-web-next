@@ -888,7 +888,7 @@ export function DetectionTabsShell({
   }, [withActiveSnapshot]);
 
   const handlePivot = useCallback(
-    (patch: PivotPatch) => {
+    (patch: PivotPatch, periodOverride?: PeriodKey | null) => {
       const currentTabs = withActiveSnapshot(tabsRef.current);
       const activeId = activeTabIdRef.current;
       const active = currentTabs.find((t) => t.id === activeId);
@@ -907,6 +907,10 @@ export function DetectionTabsShell({
         },
         tabs: summaries,
         maxTabs: MAX_TABS,
+        // Quick peek pivots carry an explicit window (24h / 7d);
+        // result-list / analytics pivots omit it and inherit the
+        // active tab's period.
+        periodOverride,
       });
       const effect = resolvePivotEffect(action, currentTabs, {
         alreadyFilteredTemplate: labels.pivot.alreadyFilteredTemplate,

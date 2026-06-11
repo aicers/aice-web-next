@@ -688,9 +688,17 @@ rows rather than a column of dashes.
     tab.
   - **Pivot links** — `Same source IP · last 24h`,
     `Same destination IP · last 24h`, and `Same kind ·
-    last 7d` — are also real anchor tags pointing at the
-    `/detection?…` page, so they can be middle-clicked into a
-    new tab. Pivot targets that are not present on the event
+    last 7d`. A plain left-click opens a new narrowed result
+    tab in-app — alongside the existing tabs, switching to it —
+    pinned to the advertised window (source / destination →
+    last 24h, kind → last 7d), exactly like the
+    [result-cell pivots](#pivot-drill-down-from-result-cells).
+    A pivot that differs from the current tab only by window
+    opens its own tab; an identical one focuses the existing tab
+    (or shows the _already filtered_ toast). Each link is still a
+    real anchor pointing at the `/detection?…` page, so
+    middle-click / Cmd-Ctrl-click open the pivot URL in a new
+    browser tab. Pivot targets that are not present on the event
     (e.g. source IP on a response-only subtype) are omitted
     rather than rendered as dead controls.
 

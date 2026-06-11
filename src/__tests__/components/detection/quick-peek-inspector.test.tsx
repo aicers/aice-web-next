@@ -15,23 +15,28 @@
  * - When `investigateHref` is null the Open investigation action is
  *   omitted entirely rather than rendering a disabled button.
  */
+import { fireEvent, render } from "@testing-library/react";
 import { renderToStaticMarkup } from "react-dom/server";
 import { describe, expect, it, vi } from "vitest";
 
 // `next-intl`'s navigation Link expects a routing context; stubbing
 // it with a plain `<a>` keeps the tests framework-agnostic and
-// preserves the "real anchor tag" acceptance check.
+// preserves the "real anchor tag" acceptance check. `onClick` is
+// forwarded so the #749 plain-click → `onPivot` interception can be
+// exercised under jsdom.
 vi.mock("@/i18n/navigation", () => ({
   Link: ({
     href,
     children,
     className,
+    onClick,
   }: {
     href: string;
     children: React.ReactNode;
     className?: string;
+    onClick?: (event: React.MouseEvent<HTMLAnchorElement>) => void;
   }) => (
-    <a href={href} className={className}>
+    <a href={href} className={className} onClick={onClick}>
       {children}
     </a>
   ),
@@ -791,5 +796,110 @@ describe("QuickPeekInspector", () => {
     expect(html).toContain("Summary");
     expect(html).toContain("sensor-1");
     expect(html).not.toContain("Open full investigation");
+  });
+
+  it("routes a plain left-click on a pivot through onPivot with the right patch + period and prevents default navigation (#749)", () => {
+    const onPivot = vi.fn();
+    const { getByText } = render(
+      <QuickPeekInspector
+        event={httpThreat()}
+        labels={labels()}
+        locale="en"
+        investigateHref="/detection/events/abc123"
+        onClose={() => {}}
+        onPivot={onPivot}
+      />,
+    );
+
+    // "Same source IP" → origAddr endpoint patch, window 24h → period 1d.
+    const sourceLink = getByText("Same source IP").closest("a");
+    if (!sourceLink) throw new Error("source pivot anchor not found");
+    const prevented = !fireEvent.click(sourceLink, { button: 0 });
+    expect(prevented).toBe(true);
+    expect(onPivot).toHaveBeenCalledTimes(1);
+    expect(onPivot).toHaveBeenCalledWith(
+      {
+        kind: "endpointHost",
+        direction: "FROM",
+        host: "10.0.0.5",
+        displayValue: "10.0.0.5",
+      },
+      "1d",
+    );
+
+    // "Same destination IP" → respAddr endpoint patch, window 24h → 1d.
+    onPivot.mockClear();
+    const destLink = getByText("Same destination IP").closest("a");
+    if (!destLink) throw new Error("destination pivot anchor not found");
+    fireEvent.click(destLink, { button: 0 });
+    expect(onPivot).toHaveBeenCalledWith(
+      {
+        kind: "endpointHost",
+        direction: "TO",
+        host: "203.0.113.45",
+        displayValue: "203.0.113.45",
+      },
+      "1d",
+    );
+
+    // "Same kind" → kinds string-array patch, window 7d → period 1w.
+    onPivot.mockClear();
+    const kindLink = getByText("Same kind").closest("a");
+    if (!kindLink) throw new Error("kind pivot anchor not found");
+    fireEvent.click(kindLink, { button: 0 });
+    expect(onPivot).toHaveBeenCalledWith(
+      {
+        kind: "stringArray",
+        field: "kinds",
+        value: "HttpThreat",
+        displayValue: "HttpThreat",
+      },
+      "1w",
+    );
+  });
+
+  it("does not intercept a modifier-click on a pivot — the href navigates in a new tab (#749)", () => {
+    const onPivot = vi.fn();
+    const { getByText } = render(
+      <QuickPeekInspector
+        event={httpThreat()}
+        labels={labels()}
+        locale="en"
+        investigateHref="/detection/events/abc123"
+        onClose={() => {}}
+        onPivot={onPivot}
+      />,
+    );
+
+    const sourceLink = getByText("Same source IP").closest("a");
+    if (!sourceLink) throw new Error("source pivot anchor not found");
+    // A Cmd/Ctrl/middle-style modifier click must fall through to the
+    // anchor's default navigation so the browser opens the href in a
+    // new tab — the handler must not preventDefault or call onPivot.
+    const notPrevented = fireEvent.click(sourceLink, {
+      button: 0,
+      metaKey: true,
+    });
+    expect(notPrevented).toBe(true);
+    expect(onPivot).not.toHaveBeenCalled();
+  });
+
+  it("leaves pivots as plain navigating anchors when onPivot is absent (#749)", () => {
+    const { getByText } = render(
+      <QuickPeekInspector
+        event={httpThreat()}
+        labels={labels()}
+        locale="en"
+        investigateHref="/detection/events/abc123"
+        onClose={() => {}}
+      />,
+    );
+
+    // With no handler the click is not intercepted: default navigation
+    // is left intact (the isolated-render fallback path).
+    const sourceLink = getByText("Same source IP").closest("a");
+    if (!sourceLink) throw new Error("source pivot anchor not found");
+    const notPrevented = fireEvent.click(sourceLink, { button: 0 });
+    expect(notPrevented).toBe(true);
   });
 });
