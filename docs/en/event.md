@@ -15,14 +15,7 @@ receive this permission by default. Custom roles that grant
 user; the permission is enforced when the page loads, and a user
 without it is redirected away.
 
-![Event page](../assets/event-en.svg)
-
-!!! note "Wireframe stand-in"
-
-    The figure above is an SVG wireframe rather than a real capture.
-    The results table shows data received from Giganto, so a real
-    screenshot is taken from a stack with real data loaded and replaces
-    this placeholder in the final documentation sweep.
+![Event page](../assets/event-en.png)
 
 ## Views
 
@@ -207,14 +200,7 @@ The **Statistics** view aggregates Giganto's per-protocol traffic
 metrics into a time-series chart instead of listing individual records.
 Select it from the [view toggle](#views).
 
-![Event statistics view](../assets/event-statistics-en.svg)
-
-!!! note "Wireframe stand-in"
-
-    The figure above is an SVG wireframe rather than a real capture.
-    The chart shows data received from Giganto, so a real screenshot is
-    taken from a stack with real data loaded and replaces this
-    placeholder in the final documentation sweep.
+![Event statistics view](../assets/event-statistics-en.png)
 
 ### Statistics filters
 
