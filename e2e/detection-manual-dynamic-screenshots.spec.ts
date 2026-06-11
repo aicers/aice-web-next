@@ -37,6 +37,15 @@ if (!INVESTIGATION_TOKEN) {
 
 test.use({ viewport: VIEWPORT });
 
+// Screenshot capture is opt-in. In a normal `pnpm e2e` run these tests are
+// skipped and the file-scope hooks below short-circuit, so no catch-all
+// REview stubs are registered and the on-disk fixture is not rewritten —
+// neither can leak into sibling specs. Run with `CAPTURE_SCREENSHOTS=1`
+// (or via `DETECTION_MANUAL_CAPTURE_ONLY=1`) to capture the assets locally.
+const SHOULD_CAPTURE =
+  process.env.CAPTURE_SCREENSHOTS === "1" ||
+  process.env.DETECTION_MANUAL_CAPTURE_ONLY === "1";
+
 const FIXTURES_ROOT = path.resolve(
   __dirname,
   "..",
@@ -56,6 +65,7 @@ const EVENT_FIXTURE_SOURCE = "detection/event.manual-detail.json";
 let eventFixtureOriginal: string | null = null;
 
 test.beforeAll(async () => {
+  if (!SHOULD_CAPTURE) return;
   const customerId = await ensureCustomerExists("Default", "default_db");
   // Send to Aimer button is only enabled when the customer carries an
   // `external_key` and the Aimer integration is fully configured. Seed
@@ -128,6 +138,7 @@ test.beforeAll(async () => {
 });
 
 test.afterAll(async () => {
+  if (!SHOULD_CAPTURE) return;
   await session.clear();
   await setCustomerExternalKey("Default", null);
   await clearAimerSetting("aice_id");
@@ -146,6 +157,7 @@ test.afterAll(async () => {
 });
 
 test.beforeEach(async ({ page }) => {
+  if (!SHOULD_CAPTURE) return;
   await resetRateLimits();
   await page.addInitScript(() => {
     try {
@@ -174,6 +186,11 @@ test.beforeEach(async ({ page }) => {
 
 test.describe
   .serial("Detection + Event Investigation dynamic manual screenshots", () => {
+    test.skip(
+      !SHOULD_CAPTURE,
+      "Manual screenshot capture — set CAPTURE_SCREENSHOTS=1 to run.",
+    );
+
     test("EN dynamic screenshots", async ({
       page,
       workerUsername,

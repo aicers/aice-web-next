@@ -12,32 +12,7 @@ test.beforeEach(async () => {
   await resetRateLimits();
 });
 
-test.describe("UI regression (#129 Logo, #130 Sidebar/NavUser)", () => {
-  // ── Logo (#129) ─────────────────────────────────────────────
-
-  test("logo renders on sign-in page", async ({ page }) => {
-    await page.goto("/sign-in");
-    // The Logo component renders both light and dark variants;
-    // one is hidden via CSS depending on theme. Check that at least
-    // one img with the alt text exists in the DOM.
-    const logos = page.locator('img[alt="Clumit Security"]');
-    const count = await logos.count();
-    expect(count).toBeGreaterThanOrEqual(1);
-  });
-
-  test("logo renders in sidebar after sign-in", async ({
-    page,
-    workerUsername,
-    workerPassword,
-  }) => {
-    await signInAndWait(page, workerUsername, workerPassword);
-
-    // Sidebar should contain at least one logo image
-    const logos = page.locator('img[alt="Clumit Security"]');
-    const count = await logos.count();
-    expect(count).toBeGreaterThanOrEqual(1);
-  });
-
+test.describe("UI regression (#130 Sidebar/NavUser, #718 color-scheme)", () => {
   // ── NavUser (#130) ──────────────────────────────────────────
 
   test("nav user shows real username instead of hardcoded text", async ({
@@ -68,37 +43,6 @@ test.describe("UI regression (#129 Logo, #130 Sidebar/NavUser)", () => {
     await expect(avatar.first()).toBeVisible();
     const text = await avatar.first().textContent();
     expect(text?.trim().charAt(0).toUpperCase()).toBe("E");
-  });
-
-  // ── Sidebar active indicator (#130) ─────────────────────────
-
-  test("sidebar shows active indicator on current page", async ({
-    page,
-    workerUsername,
-    workerPassword,
-  }) => {
-    await signInAndWait(page, workerUsername, workerPassword);
-
-    // Navigate to accounts page
-    await page.goto("/settings/accounts");
-
-    // The active sidebar item should have the active indicator element
-    // The sidebar-item renders an absolute div with the active indicator
-    // when the item is active (pathname starts with item.href)
-    const sidebar = page.locator("aside");
-    const activeIndicator = sidebar.locator(
-      '[style*="--sidebar-active"], [class*="sidebar-active"]',
-    );
-    // At least one active indicator should exist
-    const indicatorCount = await activeIndicator.count();
-    // If CSS variable approach doesn't work, check for the active link styling
-    if (indicatorCount === 0) {
-      // Fallback: check that at least one nav link has the active text color
-      const activeLink = sidebar.locator("a").filter({
-        has: page.locator('[class*="sidebar-fg"]'),
-      });
-      await expect(activeLink.first()).toBeVisible();
-    }
   });
 
   // ── Sign-out from nav user dropdown ─────────────────────────

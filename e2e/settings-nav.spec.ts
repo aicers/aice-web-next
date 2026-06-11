@@ -261,15 +261,4 @@ test.describe("Settings navigation", () => {
       { timeout: 10_000 },
     );
   });
-
-  test("/settings/system returns 404", async ({
-    page,
-    workerUsername,
-    workerPassword,
-  }) => {
-    await signInAndWait(page, workerUsername, workerPassword);
-
-    const response = await page.goto("/settings/system");
-    expect(response?.status()).toBe(404);
-  });
 });

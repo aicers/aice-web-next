@@ -81,6 +81,14 @@ function buildEnv(): Record<string, string> {
     INIT_ADMIN_USERNAME: getEnvVar("INIT_ADMIN_USERNAME", "admin"),
     INIT_ADMIN_PASSWORD: getEnvVar("INIT_ADMIN_PASSWORD", "Admin1234!"),
     DEFAULT_LOCALE: getEnvVar("DEFAULT_LOCALE", "en"),
+    // Drive the node-status polling tests (`node/list.spec.ts`) at the
+    // minimum 5s cadence instead of the 10s product default, so they wait
+    // out a poll cycle in roughly half the wall-clock. `clampPollIntervalMs`
+    // floors the value at 5000, so this is the fastest interval allowed.
+    NEXT_PUBLIC_NODE_STATUS_POLL_MS: getEnvVar(
+      "NEXT_PUBLIC_NODE_STATUS_POLL_MS",
+      "5000",
+    ),
   };
   Object.assign(process.env, env);
 
@@ -336,25 +344,22 @@ export default defineConfig({
           dependencies: ["stateful-must-change-password"],
           use: { ...devices["Desktop Chrome"] },
         },
-        {
-          name: "detection-screenshots-static",
-          testMatch: ["detection-screenshots.spec.ts"],
-          dependencies: ["stateful-session-policy"],
-          use: { ...devices["Desktop Chrome"] },
-        },
-        {
-          name: "detection-screenshots-dynamic",
-          testMatch: ["detection-manual-dynamic-screenshots.spec.ts"],
-          dependencies: ["detection-screenshots-static"],
-          use: { ...devices["Desktop Chrome"] },
-        },
-        // #668 SPA return-nav regression. Chained last so its populated
-        // `first: 50` `eventList` stub never overlaps `detection.spec.ts`'s
-        // empty stub on the same key in the parallel pool.
+        // The Detection screenshot capture suites
+        // (`detection-screenshots.spec.ts`,
+        // `detection-manual-dynamic-screenshots.spec.ts`) no longer run in
+        // the default suite — they are opt-in via `CAPTURE_SCREENSHOTS=1`
+        // and the dedicated `DETECTION_MANUAL_CAPTURE_ONLY` project mode
+        // above. Capturing overwrites committed `docs/assets/*.png` that CI
+        // discards, so it belongs to the local capture-and-commit workflow.
+        //
+        // #668 SPA return-nav regression. Chained after the stateful block
+        // so its populated `first: 50` `eventList` stub never overlaps
+        // `detection.spec.ts`'s empty stub on the same key in the parallel
+        // pool.
         {
           name: "detection-return-nav",
           testMatch: ["detection-return-nav.spec.ts"],
-          dependencies: ["detection-screenshots-dynamic"],
+          dependencies: ["stateful-session-policy"],
           use: { ...devices["Desktop Chrome"] },
         },
       ],

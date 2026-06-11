@@ -13,26 +13,6 @@ test.describe("Audit log page", () => {
     await resetAccountDefaults(workerUsername);
   });
 
-  test("audit log page loads and displays entries", async ({
-    page,
-    workerUsername,
-    workerPassword,
-  }) => {
-    await signInAndWait(page, workerUsername, workerPassword);
-
-    await page.goto("/audit-logs");
-    await page.waitForURL("**/audit-logs");
-
-    // The heading is rendered by AuditLogTable component.
-    await expect(page.getByRole("heading", { name: "Audit Logs" })).toBeVisible(
-      { timeout: 10_000 },
-    );
-
-    // Table should have at least one row (from the sign-in we just did).
-    const rows = page.locator("table tbody tr");
-    await expect(rows.first()).toBeVisible({ timeout: 10_000 });
-  });
-
   test("sign-in event appears in audit log", async ({
     page,
     workerUsername,

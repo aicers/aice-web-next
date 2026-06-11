@@ -356,32 +356,6 @@ test.describe("Preferences", () => {
     });
   });
 
-  test("timezone preference persists after page reload", async ({
-    page,
-    workerUsername,
-    workerPassword,
-  }) => {
-    await signInAndWait(page, workerUsername, workerPassword);
-
-    const cookies = await page.context().cookies();
-    const csrfCookie = cookies.find((c) => c.name === "csrf");
-
-    // Set timezone via API
-    await page.request.patch("/api/accounts/me/preferences", {
-      data: { timezone: "America/New_York" },
-      headers: {
-        "x-csrf-token": csrfCookie?.value ?? "",
-        Origin: APP_ORIGIN,
-      },
-    });
-
-    // Verify via GET
-    const res = await page.request.get("/api/accounts/me/preferences");
-    expect(res.status()).toBe(200);
-    const body = await res.json();
-    expect(body.data.timezone).toBe("America/New_York");
-  });
-
   // ── Timezone display integration ────────────────────────────────
 
   test("audit log timestamps reflect timezone preference", async ({

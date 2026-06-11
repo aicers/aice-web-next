@@ -221,31 +221,23 @@ test("POST revoke returns 404 for non-existent session", async ({
 
 // ── RBAC tests ───────────────────────────────────────────────────
 
-test("user without dashboard:read gets 403 on sessions endpoint", async ({
+test("user without dashboard:read gets 403 on read endpoints", async ({
   page,
 }) => {
+  // One login, every dashboard read endpoint — the permission gate is the
+  // same handler-level check, so probe them in a loop rather than paying a
+  // full sign-in per endpoint.
   await signInAndWait(page, NOPERM_USER, NOPERM_PASS);
 
-  const response = await page.request.get("/api/dashboard/sessions");
-  expect(response.status()).toBe(403);
-});
-
-test("user without dashboard:read gets 403 on locked-accounts endpoint", async ({
-  page,
-}) => {
-  await signInAndWait(page, NOPERM_USER, NOPERM_PASS);
-
-  const response = await page.request.get("/api/dashboard/locked-accounts");
-  expect(response.status()).toBe(403);
-});
-
-test("user without dashboard:read gets 403 on alerts endpoint", async ({
-  page,
-}) => {
-  await signInAndWait(page, NOPERM_USER, NOPERM_PASS);
-
-  const response = await page.request.get("/api/dashboard/alerts");
-  expect(response.status()).toBe(403);
+  for (const endpoint of [
+    "/api/dashboard/sessions",
+    "/api/dashboard/locked-accounts",
+    "/api/dashboard/alerts",
+    "/api/dashboard/cert-status",
+  ]) {
+    const response = await page.request.get(endpoint);
+    expect(response.status(), endpoint).toBe(403);
+  }
 });
 
 test("dashboard:read user cannot revoke sessions (needs dashboard:write)", async ({
@@ -453,15 +445,6 @@ test("GET /api/dashboard/cert-status returns valid cert status shape", async ({
     // When no cert, only configured:false should be returned
     expect(body.data.severity).toBeUndefined();
   }
-});
-
-test("user without dashboard:read gets 403 on cert-status endpoint", async ({
-  page,
-}) => {
-  await signInAndWait(page, NOPERM_USER, NOPERM_PASS);
-
-  const response = await page.request.get("/api/dashboard/cert-status");
-  expect(response.status()).toBe(403);
 });
 
 test("dashboard:read user can access cert-status endpoint", async ({
