@@ -60,7 +60,10 @@ import {
   SheetHeader,
   SheetTitle,
 } from "@/components/ui/sheet";
-import { useRouter } from "@/i18n/navigation";
+import {
+  usePathname as useLocalizedPathname,
+  useRouter,
+} from "@/i18n/navigation";
 import { probeAuthOrRedirect } from "@/lib/auth/probe-auth";
 import {
   type ChipRemoveTarget,
@@ -1324,6 +1327,13 @@ export function DetectionShell({
   const tPagination = useTranslations("detection.pagination");
   const locale = useLocale();
   const pathname = usePathname();
+  // Locale-stripped pathname (e.g. `/detection`, not `/ko/detection`) for
+  // building `returnTo`. The back link on the Investigation page renders via
+  // the locale-aware <Link>, which re-applies the locale prefix — so passing a
+  // prefixed path would double it (`/ko/ko/detection`) and 404. `pathname`
+  // above stays locale-prefixed because it feeds window.history, which needs
+  // the real browser URL.
+  const localizedPathname = useLocalizedPathname();
   const router = useRouter();
   // Build the function-valued labels for the chip remove button and the
   // result list on this side of the server/client boundary. Function
@@ -3477,7 +3487,7 @@ export function DetectionShell({
       // operator comes back, Quick peek restores on mount from the
       // tab's own URL state rather than from a stale `returnTo`.
       const cleanSearch = applyQuickPeekToken(search, null);
-      const returnTo = `${pathname}${cleanSearch}`;
+      const returnTo = `${localizedPathname}${cleanSearch}`;
       // Forward the active customer narrowing (#384) as a separate
       // query param so the Investigation page can thread it onto its
       // outbound pivot URLs (Overview "same source" / Related). Kept
@@ -3490,7 +3500,7 @@ export function DetectionShell({
       }
       return `/detection/events/${encodeURIComponent(token)}?${params.toString()}`;
     },
-    [pathname, committedCustomers],
+    [localizedPathname, committedCustomers],
   );
 
   const openQuickPeekFor = useCallback(
