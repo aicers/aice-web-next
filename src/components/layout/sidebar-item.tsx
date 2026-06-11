@@ -1,6 +1,6 @@
 "use client";
 
-import type { LucideIcon } from "lucide-react";
+import { Loader2, type LucideIcon } from "lucide-react";
 import {
   Tooltip,
   TooltipContent,
@@ -15,6 +15,16 @@ interface SidebarItemProps {
   label: string;
   active?: boolean;
   collapsed?: boolean;
+  /**
+   * Pending navigation feedback (#751). The Detection item sets this
+   * while its blocking SSR query is in flight (via
+   * `useDetectionReturnNav`'s `isPending`): the item adopts the active
+   * highlight immediately on click and swaps its icon for a spinner, so
+   * the click registers visibly before navigation commits. Independent
+   * of `active`, which only flips once `usePathname()` updates after
+   * the route resolves.
+   */
+  pending?: boolean;
   /**
    * Render as an external anchor (new tab) rather than the in-app i18n
    * `Link`. Used for the "Open AI analyses" deep link into aimer-web,
@@ -38,11 +48,16 @@ export function SidebarItem({
   active = false,
   collapsed = false,
   external = false,
+  pending = false,
   onClick,
 }: SidebarItemProps) {
+  // A pending click adopts the active highlight immediately so the menu
+  // lights up before navigation commits; `active` itself only flips
+  // once `usePathname()` updates after the route resolves.
+  const highlighted = active || pending;
   const className = cn(
     "group relative flex h-12 items-center gap-3 px-4 text-base font-medium transition-colors",
-    active
+    highlighted
       ? "text-[var(--sidebar-fg)]"
       : "text-[var(--sidebar-muted)] hover:text-[var(--sidebar-fg)]",
     collapsed && "justify-center px-0",
@@ -50,11 +65,11 @@ export function SidebarItem({
   const inner = (
     <>
       {/* Active indicator — blue left border bar */}
-      {active && (
+      {highlighted && (
         <span className="absolute top-0 left-0 h-full w-1 rounded-r-lg bg-[var(--sidebar-active)]" />
       )}
       {/* Active glow — radial gradient from left */}
-      {active && (
+      {highlighted && (
         <span
           className="pointer-events-none absolute inset-0"
           style={{
@@ -63,9 +78,19 @@ export function SidebarItem({
           }}
         />
       )}
-      <Icon
-        className={cn("relative z-10 size-5 shrink-0", collapsed && "size-6")}
-      />
+      {pending ? (
+        <Loader2
+          className={cn(
+            "relative z-10 size-5 shrink-0 animate-spin",
+            collapsed && "size-6",
+          )}
+          aria-hidden="true"
+        />
+      ) : (
+        <Icon
+          className={cn("relative z-10 size-5 shrink-0", collapsed && "size-6")}
+        />
+      )}
       {!collapsed && <span className="relative z-10">{label}</span>}
     </>
   );
@@ -79,7 +104,12 @@ export function SidebarItem({
       {inner}
     </a>
   ) : (
-    <Link href={href} className={className} onClick={onClick}>
+    <Link
+      href={href}
+      className={className}
+      onClick={onClick}
+      aria-busy={pending || undefined}
+    >
       {inner}
     </Link>
   );

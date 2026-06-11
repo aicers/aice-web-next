@@ -59,7 +59,8 @@ export function Sidebar({
 }: SidebarProps) {
   const t = useTranslations("nav");
   const pathname = usePathname();
-  const handleDetectionNav = useDetectionReturnNav();
+  const { onClick: handleDetectionNav, isPending: detectionPending } =
+    useDetectionReturnNav();
 
   return (
     <TooltipProvider>
@@ -94,6 +95,7 @@ export function Sidebar({
               label={t(item.key)}
               active={isNavItemActive(pathname, item.href)}
               collapsed={collapsed}
+              pending={item.key === "detection" ? detectionPending : undefined}
               onClick={
                 item.key === "detection" ? handleDetectionNav : undefined
               }

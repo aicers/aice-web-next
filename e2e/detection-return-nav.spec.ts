@@ -56,7 +56,16 @@ test("sidebar away/back restores the active tab + results (not a fresh default)"
 
   await page.goto("/detection");
   // The populated list confirms the active tab ran its query.
-  await expect(page.getByText("mail.example.test")).toBeVisible({
+  //
+  // `.first()` (here and in the other result-row assertions below):
+  // the route's `loading.tsx` (#751) makes `/detection` a Suspense-
+  // streamed route, so during the SSR streaming/hydration window the
+  // result content exists transiently in both the live DOM and the
+  // hidden Next streaming staging container (`<div hidden id="S:…">`,
+  // appended at body end). A bare `getByText` would then hit a strict-
+  // mode "resolved to 2 elements" violation mid-stream. The live copy
+  // is first in DOM order; `.first()` targets it and is strict-safe.
+  await expect(page.getByText("mail.example.test").first()).toBeVisible({
     timeout: 15_000,
   });
 
@@ -112,7 +121,7 @@ test("sidebar away/back restores the active tab + results (not a fresh default)"
     .poll(() => tabParam(page.url()), { timeout: 10_000 })
     .toBe(activeTab);
   // …and that tab shows its results, not the pre-query empty state.
-  await expect(page.getByText("mail.example.test")).toBeVisible({
+  await expect(page.getByText("mail.example.test").first()).toBeVisible({
     timeout: 15_000,
   });
   await expect(page.getByRole("button", { name: "Open filters" })).toHaveCount(
@@ -127,7 +136,9 @@ test("a + tab does not auto-run a query; in-menu switching keeps results", async
 }) => {
   await signInAndWait(page, workerUsername, workerPassword);
   await page.goto("/detection");
-  await expect(page.getByText("mail.example.test")).toBeVisible({
+  // `.first()` — strict-safe against the `loading.tsx` streaming
+  // transient (see the note in the first test).
+  await expect(page.getByText("mail.example.test").first()).toBeVisible({
     timeout: 15_000,
   });
 
@@ -146,10 +157,75 @@ test("a + tab does not auto-run a query; in-menu switching keeps results", async
   // (test-plan item 2). The shell stays mounted across the switch, so
   // this path never consults sessionStorage.
   await page.getByRole("tab").first().click();
-  await expect(page.getByText("mail.example.test")).toBeVisible({
+  await expect(page.getByText("mail.example.test").first()).toBeVisible({
     timeout: 10_000,
   });
   await expect(page.getByRole("button", { name: "Open filters" })).toHaveCount(
     0,
   );
+});
+
+test("navigating to Detection shows pending nav feedback + loading skeleton (#751)", async ({
+  page,
+  workerUsername,
+  workerPassword,
+}) => {
+  // `eventList` is fetched server-side during the Detection page's SSR
+  // (the Next server queries the mock REView server), so a browser-level
+  // `page.route` cannot intercept it. Delay the response at the mock
+  // server / stub level so the route `loading.tsx` skeleton and the nav
+  // pending state stay observable while the SSR query is in flight.
+  // Scoped to its own session and cleared at the end of the test so the
+  // delay never bleeds into the sibling tests' immediate stub.
+  const delayed = mockServerSession();
+  await delayed.registerStub({
+    operation: "eventList",
+    matchVariables: { first: 50 },
+    delayMs: 3_000,
+    response: {
+      kind: "fixture",
+      fixture: "detection/eventList.manual-page.json",
+    },
+  });
+
+  try {
+    await signInAndWait(page, workerUsername, workerPassword);
+
+    // Start from another menu so the navigation actually crosses into
+    // the Detection route (and triggers its blocking SSR query).
+    await page.goto("/dashboard");
+    await page.waitForURL((url) => url.pathname.endsWith("/dashboard"), {
+      timeout: 15_000,
+    });
+
+    const detectionLink = page.getByRole("link", {
+      name: "Detection",
+      exact: true,
+    });
+    await detectionLink.click();
+
+    // The nav item enters its pending state the instant it is clicked —
+    // before the delayed SSR query resolves and the page commits.
+    await expect(detectionLink).toHaveAttribute("aria-busy", "true", {
+      timeout: 2_000,
+    });
+
+    // The route-level loading skeleton paints immediately, reusing the
+    // existing "Running query…" copy, while the SSR response is still in
+    // flight (no result rows yet).
+    await expect(page.getByText("Running query…")).toBeVisible({
+      timeout: 2_000,
+    });
+    await expect(page.getByText("mail.example.test")).toHaveCount(0);
+
+    // Once the delayed response lands, results render and the pending
+    // state clears. `.first()` — strict-safe against the streaming
+    // transient (see the note in the first test).
+    await expect(page.getByText("mail.example.test").first()).toBeVisible({
+      timeout: 15_000,
+    });
+    await expect(detectionLink).not.toHaveAttribute("aria-busy", "true");
+  } finally {
+    await delayed.clear();
+  }
 });

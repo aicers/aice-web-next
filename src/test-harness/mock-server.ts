@@ -54,7 +54,7 @@ export interface StubMatcher {
   matchVariables?: Record<string, unknown>;
 }
 
-export type StubResolver =
+export type StubResolver = (
   | { kind: "fixture"; data: unknown }
   | { kind: "errors"; errors: { message: string }[] }
   // Half-close the underlying socket with a FIN before any HTTP response
@@ -64,7 +64,18 @@ export type StubResolver =
   // Use this kind to exercise the offline-panel branch in tests; a 200
   // with `errors[]` would only produce a `ClientError`, which the page
   // is expected to let propagate as an unexpected failure.
-  | { kind: "connectionFailure" };
+  | { kind: "connectionFailure" }
+) & {
+  /**
+   * Optional artificial delay (ms) the handler awaits before writing the
+   * response. Used to make an in-flight SSR query observable in tests —
+   * e.g. #751 delays `eventList` so the route `loading.tsx` skeleton and
+   * the nav pending state can be asserted while the response is pending.
+   * Since `eventList` is fetched server-side during SSR, a browser-level
+   * `page.route` cannot intercept it; the delay has to live here.
+   */
+  delayMs?: number;
+};
 
 interface RegisteredStub {
   matcher: StubMatcher;
@@ -223,6 +234,13 @@ export interface AdminStubRequest {
    * teardown does not wipe another spec's stubs.
    */
   scope?: string;
+  /**
+   * Optional artificial delay (ms) the mock server awaits before
+   * responding to a matching request. Lets a spec hold an SSR query
+   * (e.g. `eventList`) in flight long enough to observe a route-level
+   * loading skeleton / pending nav state (#751).
+   */
+  delayMs?: number;
   response:
     | { kind: "fixture"; fixture: string }
     | { kind: "errors"; errors: { message: string }[] }
@@ -452,9 +470,23 @@ async function handleAdminStubs(
     });
     return;
   }
+  if (
+    parsed.delayMs !== undefined &&
+    (typeof parsed.delayMs !== "number" ||
+      !Number.isFinite(parsed.delayMs) ||
+      parsed.delayMs < 0)
+  ) {
+    jsonResponse(res, 400, {
+      error: "`delayMs`, when present, must be a non-negative number",
+    });
+    return;
+  }
   try {
     const matcher = buildMatcher(parsed);
-    const resolver = resolveAdminStub(parsed, declaredFixtures, fixtureSchema);
+    const resolver: StubResolver = {
+      ...resolveAdminStub(parsed, declaredFixtures, fixtureSchema),
+      delayMs: parsed.delayMs,
+    };
     registry.register(matcher, resolver, parsed.scope);
   } catch (err) {
     jsonResponse(res, 400, { error: (err as Error).message });
@@ -602,6 +634,12 @@ export async function startMockServer(
         ],
       });
       return;
+    }
+    // Optional artificial delay (#751): hold the response so a spec can
+    // observe an in-flight SSR query (e.g. the route loading skeleton).
+    if (stub.delayMs && stub.delayMs > 0) {
+      const delayMs = stub.delayMs;
+      await new Promise<void>((resolve) => setTimeout(resolve, delayMs));
     }
     if (stub.kind === "errors") {
       jsonResponse(res, 200, { errors: stub.errors });
