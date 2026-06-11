@@ -35,6 +35,28 @@
 - Before pushing or opening a PR, ensure the full CI pipeline passes locally
   (all checks, tests, and builds).
 
+## Schema and migrations
+
+Schema and migration rules live in `decisions/database-migration.md` and
+`migrations/README.md`; read them before touching the schema. Two rules are
+easy to get wrong:
+
+- **Before the first tagged release**, do NOT add new migration files for a
+  schema change. Edit the first schema version in place — the single
+  `0001_*` file in each `migrations/<db>/` stream that builds the v1 schema.
+  The pre-release history stays squashed into that clean v1 schema, so amend
+  it rather than stacking incremental migrations on top.
+- **Once a tagged release exists**, the released schema is frozen: never edit
+  an already-released migration file (the checksum check aborts anyway). Add
+  a new numbered migration for the change. Its baseline is the schema of the
+  **immediately preceding released (tagged) version — NOT the previous commit
+  / `HEAD~1`**. Production runs the last released schema, so the migration
+  must upgrade cleanly from there. Unreleased migrations added since that tag
+  belong to the in-progress release and may still be reworked, but the last
+  *released* schema is never edited.
+- For destructive changes, follow the forward-only, expand/contract rules in
+  `decisions/database-migration.md`.
+
 ## Manual documentation
 
 - A feature is not done until its manual page is written.
