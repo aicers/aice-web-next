@@ -725,6 +725,12 @@ page combines the node's metadata, live ping and resource indicators,
 and a per-service card grid with the same Apply preview modal
 documented above.
 
+While the detail page is open, the dashboard breadcrumb reads
+**Nodes › {node name}** (for example `Nodes › Edge-01`), using the same
+display name shown as the page's title rather than the opaque node id.
+Before the node data loads, the breadcrumb falls back to the static
+**Node detail** label.
+
 ### Dashboard
 
 ![Node detail dashboard](../../assets/node-detail-en.png)

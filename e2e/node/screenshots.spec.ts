@@ -598,6 +598,12 @@ test.describe
       });
       await signInAndWait(page, workerUsername, workerPassword);
       await navigateToDetail(page, "en");
+      // The breadcrumb's node-name label is published by a client effect
+      // after hydration; wait for it so the asset shows the meaningful
+      // name rather than the static `Node detail` fallback.
+      await expect(
+        page.getByRole("navigation", { name: "Breadcrumb" }),
+      ).toContainText("alpha-node");
       await page.screenshot({
         path: path.join(ASSETS_DIR, "node-detail-en.png"),
         animations: "disabled",
@@ -615,6 +621,11 @@ test.describe
       });
       await signInAndWaitKo(page, workerUsername, workerPassword);
       await navigateToDetail(page, "ko");
+      // See the EN counterpart: wait for the breadcrumb's node-name label
+      // (published by a client effect) before capturing.
+      await expect(
+        page.getByRole("navigation", { name: "Breadcrumb" }),
+      ).toContainText("alpha-node");
       await page.screenshot({
         path: path.join(ASSETS_DIR, "node-detail-ko.png"),
         animations: "disabled",

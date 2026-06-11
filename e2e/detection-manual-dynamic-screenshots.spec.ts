@@ -152,6 +152,23 @@ test.beforeEach(async ({ page }) => {
       localStorage.setItem("theme", "gray-dark");
     } catch {}
   });
+  // Hide the Next.js dev-tools indicator (the bottom-left "N Issues"
+  // badge). It is dev-server-only chrome that never appears in the
+  // production UI the manual documents, but `pnpm dev` surfaces it for
+  // any hydration warning — e.g. the event header's `formatDateTime`
+  // renders the browser-locale time, a pre-existing client/server
+  // mismatch unrelated to these captures. Suppress it so the asset
+  // shows only real product UI.
+  await page.addInitScript(() => {
+    const hide = () => {
+      const style = document.createElement("style");
+      style.setAttribute("data-screenshot-hide-dev-overlay", "");
+      style.textContent = "nextjs-portal{display:none !important}";
+      (document.head ?? document.documentElement).appendChild(style);
+    };
+    if (document.head) hide();
+    else document.addEventListener("DOMContentLoaded", hide, { once: true });
+  });
   await page.emulateMedia({ colorScheme: "dark" });
 });
 
@@ -335,6 +352,13 @@ async function captureEventInvestigationSuite(
   await expect(
     page.getByRole("heading", { name: "HTTP Threat" }),
   ).toBeVisible();
+  // The breadcrumb's rich `{compact time} · {event kind}` label is
+  // published by a client effect after hydration. Wait for it so the
+  // captured asset shows the meaningful label rather than the static
+  // `Event detail` fallback that renders for a frame before the effect.
+  await expect(
+    page.getByRole("navigation", { name: "Breadcrumb" }),
+  ).toContainText("HTTP Threat");
   await page.screenshot({
     path: path.join(ASSETS_DIR, `event-investigation-${locale}.png`),
     animations: "disabled",

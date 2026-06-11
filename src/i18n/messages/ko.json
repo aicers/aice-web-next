@@ -89,7 +89,9 @@
     "nodes": "노드",
     "settings": "설정",
     "audit-logs": "감사 로그",
-    "openAiAnalyses": "AI 분석 열기 →"
+    "openAiAnalyses": "AI 분석 열기 →",
+    "eventDetail": "이벤트 상세",
+    "nodeDetail": "노드 상세"
   },
   "settings": {
     "accounts": "계정",

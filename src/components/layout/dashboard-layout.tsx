@@ -8,6 +8,7 @@ import { Breadcrumbs } from "@/components/layout/breadcrumbs";
 import { CustomerScopeIndicator } from "@/components/layout/customer-scope-indicator";
 import { MobileHeader } from "@/components/layout/mobile-header";
 import { Sidebar } from "@/components/layout/sidebar";
+import { BreadcrumbLabelProvider } from "@/components/providers/breadcrumb-label-provider";
 import { ScopeFingerprintProvider } from "@/components/providers/scope-fingerprint-provider";
 import { TimezoneProvider } from "@/components/providers/timezone-provider";
 import { useSidebar } from "@/hooks/use-sidebar";
@@ -60,58 +61,60 @@ export default function DashboardLayout({
   return (
     <ScopeFingerprintProvider fingerprint={scopeFingerprint}>
       <TimezoneProvider>
-        <div className="flex h-screen flex-col">
-          {isAimerSystemAdmin && <AimerPhase2Banner />}
-          {/*
-           * App-shell Phase 2 push cadence (#651). Mounted once, here, so
-           * the per-customer opportunistic drain runs "while signed in"
-           * rather than only while a Triage screen is open. Renders
-           * nothing; gated to System Administrators like the banner.
-           */}
-          {isAimerSystemAdmin && (
-            <AimerPhase2CadenceManager
-              customerIds={scope.customers.map((c) => c.id)}
-            />
-          )}
-
-          {/* Mobile header — visible only below desktop breakpoint */}
-          <MobileHeader
-            open={mobileOpen}
-            onOpenChange={setMobileOpen}
-            username={username}
-            scope={scope}
-            canManageCustomers={canManageCustomers}
-            aimerAnalysisHref={aimerAnalysisHref}
-          />
-
-          <div className="flex flex-1 overflow-hidden">
-            {/* Desktop sidebar — hidden below desktop breakpoint */}
-            <div className="hidden desktop:flex">
-              <Sidebar
-                collapsed={collapsed}
-                onToggle={toggle}
-                username={username}
-                aimerAnalysisHref={aimerAnalysisHref}
+        <BreadcrumbLabelProvider>
+          <div className="flex h-screen flex-col">
+            {isAimerSystemAdmin && <AimerPhase2Banner />}
+            {/*
+             * App-shell Phase 2 push cadence (#651). Mounted once, here, so
+             * the per-customer opportunistic drain runs "while signed in"
+             * rather than only while a Triage screen is open. Renders
+             * nothing; gated to System Administrators like the banner.
+             */}
+            {isAimerSystemAdmin && (
+              <AimerPhase2CadenceManager
+                customerIds={scope.customers.map((c) => c.id)}
               />
-            </div>
+            )}
 
-            {/* Main content */}
-            <main className="flex flex-1 flex-col overflow-hidden">
-              {/* Breadcrumb bar */}
-              <div className="flex h-16 shrink-0 items-center justify-between gap-3 px-6">
-                <Breadcrumbs />
-                <CustomerScopeIndicator
-                  scope={scope}
-                  canManage={canManageCustomers}
-                  className="hidden desktop:inline-flex"
+            {/* Mobile header — visible only below desktop breakpoint */}
+            <MobileHeader
+              open={mobileOpen}
+              onOpenChange={setMobileOpen}
+              username={username}
+              scope={scope}
+              canManageCustomers={canManageCustomers}
+              aimerAnalysisHref={aimerAnalysisHref}
+            />
+
+            <div className="flex flex-1 overflow-hidden">
+              {/* Desktop sidebar — hidden below desktop breakpoint */}
+              <div className="hidden desktop:flex">
+                <Sidebar
+                  collapsed={collapsed}
+                  onToggle={toggle}
+                  username={username}
+                  aimerAnalysisHref={aimerAnalysisHref}
                 />
               </div>
 
-              {/* Page content */}
-              <div className="flex-1 overflow-y-auto p-6">{children}</div>
-            </main>
+              {/* Main content */}
+              <main className="flex flex-1 flex-col overflow-hidden">
+                {/* Breadcrumb bar */}
+                <div className="flex h-16 shrink-0 items-center justify-between gap-3 px-6">
+                  <Breadcrumbs />
+                  <CustomerScopeIndicator
+                    scope={scope}
+                    canManage={canManageCustomers}
+                    className="hidden desktop:inline-flex"
+                  />
+                </div>
+
+                {/* Page content */}
+                <div className="flex-1 overflow-y-auto p-6">{children}</div>
+              </main>
+            </div>
           </div>
-        </div>
+        </BreadcrumbLabelProvider>
       </TimezoneProvider>
     </ScopeFingerprintProvider>
   );

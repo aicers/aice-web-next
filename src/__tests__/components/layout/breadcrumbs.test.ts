@@ -79,6 +79,78 @@ describe("parseBreadcrumbs", () => {
     expect(result[1].label).toBe("settings.accountStatus");
     expect(result[1].href).toBe("/settings/account-status");
   });
+
+  // ── Dynamic detail children ──────────────
+
+  it("labels the event detail child with the static fallback", () => {
+    const result = parseBreadcrumbs(
+      "/detection/events/EyJpZCI6IjEyMyJ9",
+      mockTranslate,
+    );
+    expect(result).toEqual([
+      { label: "nav.detection", href: "/detection" },
+      { label: "nav.events", href: "/detection/events" },
+      {
+        label: "nav.eventDetail",
+        href: "/detection/events/EyJpZCI6IjEyMyJ9",
+      },
+    ]);
+  });
+
+  it("labels the node detail child with the static fallback", () => {
+    const result = parseBreadcrumbs("/nodes/12345", mockTranslate);
+    expect(result).toEqual([
+      { label: "nav.nodes", href: "/nodes" },
+      { label: "nav.nodeDetail", href: "/nodes/12345" },
+    ]);
+  });
+
+  it("uses the override for the last dynamic-child segment", () => {
+    const result = parseBreadcrumbs(
+      "/detection/events/EyJpZCI6IjEyMyJ9",
+      mockTranslate,
+      "06-11 14:23 · HTTP Threat",
+    );
+    expect(result[2]).toEqual({
+      label: "06-11 14:23 · HTTP Threat",
+      href: "/detection/events/EyJpZCI6IjEyMyJ9",
+    });
+  });
+
+  it("uses the override for the node detail child", () => {
+    const result = parseBreadcrumbs("/nodes/12345", mockTranslate, "Edge-01");
+    expect(result[1]).toEqual({ label: "Edge-01", href: "/nodes/12345" });
+  });
+
+  it("never exposes the raw opaque segment for dynamic children", () => {
+    const token = "EyJpZCI6IjEyMyJ9";
+    const fallback = parseBreadcrumbs(`/nodes/${token}`, mockTranslate);
+    expect(fallback[1].label).not.toBe(token);
+    expect(fallback[1].label).toBe("nav.nodeDetail");
+  });
+
+  it("ignores the override when the parent is not a detail route", () => {
+    // `/settings/roles/detail` — `detail`'s parent is `roles`, not a
+    // dynamic-detail route, so the override does not apply and the
+    // capitalised fallback stands.
+    const result = parseBreadcrumbs(
+      "/settings/roles/detail",
+      mockTranslate,
+      "Should be ignored",
+    );
+    expect(result[2].label).toBe("Detail");
+  });
+
+  it("does not treat the singular event route as a detail parent", () => {
+    // `/event/something` — `event` is the static Event-browsing route,
+    // not a detail route, so its child falls back to the capitalised
+    // segment rather than a static detail label.
+    const result = parseBreadcrumbs("/event/something", mockTranslate);
+    expect(result).toEqual([
+      { label: "nav.event", href: "/event" },
+      { label: "Something", href: "/event/something" },
+    ]);
+  });
 });
 
 // ── Segment sets ────────────────────────────
@@ -93,6 +165,7 @@ describe("NAV_SEGMENTS", () => {
       "detection",
       "triage",
       "report",
+      "nodes",
       "audit-logs",
       "settings",
     ];
