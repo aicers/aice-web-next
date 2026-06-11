@@ -482,6 +482,13 @@ The result region uses distinct panels for each non-ready state:
   (a freshly-created tab or a tab whose filter has been fully
   cleared). The panel offers a button that opens the drawer.
 
+When you switch to Detection from another menu, the Detection
+menu item enters its active state with a spinner the instant you
+click it, and the same `Running query…` panel paints immediately
+as a full-page skeleton while the server restores the previous
+tab's query. A slow restored filter (e.g. a wide time range) thus
+gives immediate feedback instead of an apparently frozen screen.
+
 #### Row interactions
 
 Clicking anywhere on a row body opens the **Quick peek**

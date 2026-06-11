@@ -69,7 +69,8 @@ export function MobileHeader({
 }: MobileHeaderProps) {
   const t = useTranslations("nav");
   const pathname = usePathname();
-  const handleDetectionNav = useDetectionReturnNav();
+  const { onClick: handleDetectionNav, isPending: detectionPending } =
+    useDetectionReturnNav();
 
   return (
     <>
@@ -119,6 +120,9 @@ export function MobileHeader({
                   icon={item.icon}
                   label={t(item.key)}
                   active={isNavItemActive(pathname, item.href)}
+                  pending={
+                    item.key === "detection" ? detectionPending : undefined
+                  }
                   onClick={
                     item.key === "detection" ? handleDetectionNav : undefined
                   }
