@@ -12,10 +12,14 @@ import {
   SelectTrigger,
   SelectValue,
 } from "@/components/ui/select";
-import { computePeriodRange, PERIOD_KEYS } from "@/lib/detection/period";
-import type { SamplingPolicy, TimeSeriesFilter } from "@/lib/event";
+import {
+  computeEventPeriodRange,
+  type EventPeriodKey,
+  type SamplingPolicy,
+  type TimeSeriesFilter,
+} from "@/lib/event";
 
-const QUICK_RANGE_NONE = "none";
+import { EventPeriodPills } from "./event-period-pills";
 
 /** Convert an ISO-8601 UTC string to a `datetime-local` input value. */
 function isoToLocalInput(iso: string | null): string {
@@ -61,15 +65,13 @@ export function TimeSeriesFilterForm({
 }) {
   const t = useTranslations("event.timeSeries");
   const tf = useTranslations("event.filters");
-  const tp = useTranslations("event.periods");
 
   const set = (patch: Partial<TimeSeriesFilter>): void =>
     onChange({ ...draft, ...patch });
 
-  const applyQuickRange = (key: string): void => {
-    if (key === QUICK_RANGE_NONE) return;
-    const range = computePeriodRange(key as (typeof PERIOD_KEYS)[number]);
-    set({ start: range.start, end: range.end });
+  const onSelectPeriod = (key: EventPeriodKey): void => {
+    const range = computeEventPeriodRange(key);
+    set({ period: key, start: range.start, end: range.end });
   };
 
   const policyList = policies ?? [];
@@ -111,35 +113,18 @@ export function TimeSeriesFilterForm({
         </div>
       </div>
 
-      <div className="grid grid-cols-1 gap-4 sm:grid-cols-3">
-        <div className="space-y-1.5">
-          <Label htmlFor="ts-quick-range">{tf("quickRange")}</Label>
-          <Select
-            defaultValue={QUICK_RANGE_NONE}
-            onValueChange={applyQuickRange}
-          >
-            <SelectTrigger id="ts-quick-range">
-              <SelectValue />
-            </SelectTrigger>
-            <SelectContent>
-              <SelectItem value={QUICK_RANGE_NONE}>
-                {tf("quickRangeNone")}
-              </SelectItem>
-              {PERIOD_KEYS.map((key) => (
-                <SelectItem key={key} value={key}>
-                  {tp(key)}
-                </SelectItem>
-              ))}
-            </SelectContent>
-          </Select>
-        </div>
+      <EventPeriodPills selected={draft.period} onSelect={onSelectPeriod} />
+
+      <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
         <div className="space-y-1.5">
           <Label htmlFor="ts-start">{tf("start")}</Label>
           <Input
             id="ts-start"
             type="datetime-local"
             value={isoToLocalInput(draft.start)}
-            onChange={(e) => set({ start: localInputToIso(e.target.value) })}
+            onChange={(e) =>
+              set({ period: null, start: localInputToIso(e.target.value) })
+            }
           />
         </div>
         <div className="space-y-1.5">
@@ -148,7 +133,9 @@ export function TimeSeriesFilterForm({
             id="ts-end"
             type="datetime-local"
             value={isoToLocalInput(draft.end)}
-            onChange={(e) => set({ end: localInputToIso(e.target.value) })}
+            onChange={(e) =>
+              set({ period: null, end: localInputToIso(e.target.value) })
+            }
           />
         </div>
       </div>

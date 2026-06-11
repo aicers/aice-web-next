@@ -9,6 +9,7 @@
  * control rather than reusing the single-sensor event search.
  */
 
+import { coerceEventPeriod, type EventPeriodKey } from "./period";
 import type { StatisticsVariables } from "./types";
 
 /**
@@ -95,6 +96,12 @@ export interface StatisticsFilter {
   start: string | null;
   /** ISO-8601 UTC, exclusive. */
   end: string | null;
+  /**
+   * Selected period quick-select pill, or `null` when none is active.
+   * Presentation-only: highlights a pill and round-trips through the URL,
+   * but never reaches the `statistics` query (driven by `start`/`end`).
+   */
+  period: EventPeriodKey | null;
   protocols: StatisticsProtocol[];
 }
 
@@ -102,6 +109,7 @@ export const EMPTY_STATISTICS_FILTER: StatisticsFilter = {
   sensors: [],
   start: null,
   end: null,
+  period: null,
   protocols: [],
 };
 
@@ -110,6 +118,7 @@ export const STATISTICS_PARAM_KEYS = {
   sensors: "sensors",
   start: "statStart",
   end: "statEnd",
+  period: "statPeriod",
   protocols: "protocols",
 } as const;
 
@@ -156,6 +165,7 @@ export function parseStatisticsFilterFromSearchParams(
     sensors: sensorsRaw ? splitList(sensorsRaw) : [],
     start: readString(source, STATISTICS_PARAM_KEYS.start),
     end: readString(source, STATISTICS_PARAM_KEYS.end),
+    period: coerceEventPeriod(readString(source, STATISTICS_PARAM_KEYS.period)),
     protocols: protocolsRaw
       ? splitList(protocolsRaw).filter(isStatisticsProtocol)
       : [],
@@ -176,6 +186,9 @@ export function statisticsFilterToSearchEntries(
   }
   if (filter.start) entries.push([STATISTICS_PARAM_KEYS.start, filter.start]);
   if (filter.end) entries.push([STATISTICS_PARAM_KEYS.end, filter.end]);
+  if (filter.period) {
+    entries.push([STATISTICS_PARAM_KEYS.period, filter.period]);
+  }
   if (filter.protocols.length > 0) {
     entries.push([STATISTICS_PARAM_KEYS.protocols, filter.protocols.join(",")]);
   }

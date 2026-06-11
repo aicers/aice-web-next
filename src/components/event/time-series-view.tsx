@@ -15,6 +15,7 @@ import {
   VIEW_MODE_PARAM,
 } from "@/lib/event";
 
+import { EventStatePanel } from "./result-panels";
 import { TimeSeriesChart } from "./time-series-chart";
 import { TimeSeriesFilterForm } from "./time-series-filter-form";
 
@@ -127,37 +128,20 @@ function ResultsRegion({
   const ts = useTranslations("event.timeSeries");
 
   if (result.status === "prequery") {
-    return <Empty message={ts("prequery")} />;
+    return <EventStatePanel message={ts("prequery")} />;
   }
   if (result.status === "error") {
     return (
-      <Empty message={t("states.error")} role="alert" tone="destructive" />
+      <EventStatePanel
+        message={t("states.error")}
+        role="alert"
+        tone="destructive"
+      />
     );
   }
   if (result.nodes.length === 0) {
-    return <Empty message={ts("empty")} />;
+    return <EventStatePanel message={ts("empty")} />;
   }
 
   return <TimeSeriesChart nodes={result.nodes} locale={locale} />;
-}
-
-function Empty({
-  message,
-  role,
-  tone,
-}: {
-  message: string;
-  role?: "alert";
-  tone?: "destructive";
-}) {
-  return (
-    <div
-      role={role}
-      className={`rounded-md border border-dashed p-10 text-center text-sm ${
-        tone === "destructive" ? "text-destructive" : "text-muted-foreground"
-      }`}
-    >
-      {message}
-    </div>
-  );
 }

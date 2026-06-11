@@ -121,6 +121,12 @@ export default defineConfig({
             // the PCAP tab. Both need real DOM (effects + tab state).
             "src/__tests__/components/events/pcap-tab.test.tsx",
             "src/__tests__/components/events/event-investigation-deeplink.test.tsx",
+            // Issue #747: Event filter period quick-select pills — the
+            // shared pill control's selection/aria-pressed rendering and
+            // the filter form's pick-fills-range / manual-edit-clears
+            // behavior need real DOM (click + input change wiring).
+            "src/__tests__/components/event/event-period-pills.test.tsx",
+            "src/__tests__/components/event/event-filter-form-period.test.tsx",
             // Issue #452 (Reviewer Round 1): real-render coverage of
             // the Triage period-change confirmation flow — pivoting
             // and then changing the period must surface an
@@ -247,6 +253,8 @@ export default defineConfig({
             "src/__tests__/components/events/related-tab.test.tsx",
             "src/__tests__/components/events/pcap-tab.test.tsx",
             "src/__tests__/components/events/event-investigation-deeplink.test.tsx",
+            "src/__tests__/components/event/event-period-pills.test.tsx",
+            "src/__tests__/components/event/event-filter-form-period.test.tsx",
             "src/__tests__/components/triage/triage-shell.test.tsx",
             "src/__tests__/components/triage/tab-strip.test.tsx",
             "src/__tests__/components/triage/baseline-content.test.tsx",

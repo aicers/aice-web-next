@@ -72,6 +72,7 @@ describe("statisticsFilterToSearchEntries", () => {
       sensors: ["sensor-a", "sensor-b"],
       start: "2026-06-09T00:00:00.000Z",
       end: null,
+      period: null,
       protocols: ["conn", "tls"],
     };
     expect(statisticsFilterToSearchEntries(filter)).toEqual([
@@ -86,6 +87,7 @@ describe("statisticsFilterToSearchEntries", () => {
       sensors: ["s1", "s2"],
       start: "2026-01-01T00:00:00.000Z",
       end: "2026-01-02T00:00:00.000Z",
+      period: null,
       protocols: ["dns", "http"],
     };
     const source = Object.fromEntries(statisticsFilterToSearchEntries(filter));
@@ -116,6 +118,7 @@ describe("toStatisticsVariables", () => {
         sensors: ["s1", "s2"],
         start: "2026-06-09T00:00:00.000Z",
         end: null,
+        period: null,
         protocols: ["conn"],
       }),
     ).toEqual({

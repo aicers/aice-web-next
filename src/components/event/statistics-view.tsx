@@ -14,6 +14,7 @@ import {
   VIEW_MODE_PARAM,
 } from "@/lib/event";
 
+import { EventStatePanel } from "./result-panels";
 import { StatisticsChart } from "./statistics-chart";
 import { StatisticsFilterForm } from "./statistics-filter-form";
 
@@ -126,37 +127,20 @@ function ResultsRegion({
   const ts = useTranslations("event.statistics");
 
   if (result.status === "prequery") {
-    return <Empty message={ts("prequery")} />;
+    return <EventStatePanel message={ts("prequery")} />;
   }
   if (result.status === "error") {
     return (
-      <Empty message={t("states.error")} role="alert" tone="destructive" />
+      <EventStatePanel
+        message={t("states.error")}
+        role="alert"
+        tone="destructive"
+      />
     );
   }
   if (result.events.length === 0) {
-    return <Empty message={ts("empty")} />;
+    return <EventStatePanel message={ts("empty")} />;
   }
 
   return <StatisticsChart events={result.events} locale={locale} />;
-}
-
-function Empty({
-  message,
-  role,
-  tone,
-}: {
-  message: string;
-  role?: "alert";
-  tone?: "destructive";
-}) {
-  return (
-    <div
-      role={role}
-      className={`rounded-md border border-dashed p-10 text-center text-sm ${
-        tone === "destructive" ? "text-destructive" : "text-muted-foreground"
-      }`}
-    >
-      {message}
-    </div>
-  );
 }
