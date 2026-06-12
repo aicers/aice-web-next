@@ -71,7 +71,7 @@ export default async function TriagePage({ searchParams }: TriagePageProps) {
 
   // Minimum-disclosure Aimer setup probe (#493 review round 2). The
   // Stories tab greys out per-Story Send when one of `aice_id`,
-  // `aimer_web_bridge_url`, or the active signing key is missing —
+  // `clumit_insight_bridge_url`, or the active signing key is missing —
   // without this gate the operator only finds out after clicking and
   // hitting a `/build-envelope` route error. Only the boolean reaches
   // the client tree; the underlying ids / URLs / key material never

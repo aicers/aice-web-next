@@ -115,7 +115,7 @@ export default async function EventInvestigationPage({
   // Sub-7.2.E: derive Send to Aimer eligibility data server-side so
   // the client component receives only booleans (and non-sensitive
   // enum tags), never the underlying `external_key` / `aice_id` /
-  // `aimer_web_bridge_url` / signing-key material.  Done in parallel
+  // `clumit_insight_bridge_url` / signing-key material.  Done in parallel
   // since the two helpers touch disjoint stores (auth_db.customers
   // vs. system settings + the active signing key).
   const candidates = extractAimerCustomerCandidates(event);

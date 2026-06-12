@@ -6,14 +6,14 @@ import { query } from "@/lib/db/client";
 
 export const AIMER_SETTING_KEYS = [
   "aice_id",
-  "aimer_web_bridge_url",
-  "aimer_default_model_name",
-  "aimer_default_model",
+  "clumit_insight_bridge_url",
+  "clumit_insight_default_model_name",
+  "clumit_insight_default_model",
 ] as const;
 export type AimerSettingKey = (typeof AIMER_SETTING_KEYS)[number];
 
 /**
- * Hard cap on `aimer_default_model_name` / `aimer_default_model`
+ * Hard cap on `clumit_insight_default_model_name` / `clumit_insight_default_model`
  * string length. The underlying LLM catalog is owned by aimer-side
  * configuration, so any non-empty string is structurally valid; we
  * cap the bytes here so a tampered settings row cannot push the
@@ -93,28 +93,32 @@ export function normalizeAimerWebBridgeUrl(input: string):
   if (typeof input !== "string" || input.trim().length === 0) {
     return {
       ok: false,
-      error: "aimer_web_bridge_url must be a non-empty string",
+      error: "clumit_insight_bridge_url must be a non-empty string",
     };
   }
   let url: URL;
   try {
     url = new URL(input.trim());
   } catch {
-    return { ok: false, error: "aimer_web_bridge_url must be a valid URL" };
+    return {
+      ok: false,
+      error: "clumit_insight_bridge_url must be a valid URL",
+    };
   }
   if (url.protocol !== "https:") {
-    return { ok: false, error: "aimer_web_bridge_url must use https:" };
+    return { ok: false, error: "clumit_insight_bridge_url must use https:" };
   }
   if (url.username.length > 0 || url.password.length > 0) {
     return {
       ok: false,
-      error: "aimer_web_bridge_url must not contain credentials",
+      error: "clumit_insight_bridge_url must not contain credentials",
     };
   }
   if (url.search.length > 0 || url.hash.length > 0) {
     return {
       ok: false,
-      error: "aimer_web_bridge_url must not contain a query string or fragment",
+      error:
+        "clumit_insight_bridge_url must not contain a query string or fragment",
     };
   }
   // Strip trailing slashes from the pathname so `https://x.example/`
@@ -142,9 +146,10 @@ export async function getAimerIntegrationSettings(): Promise<{
 
   return {
     aiceId: map.get("aice_id")?.value ?? null,
-    bridgeUrl: map.get("aimer_web_bridge_url")?.value ?? null,
-    defaultModelName: map.get("aimer_default_model_name")?.value ?? null,
-    defaultModel: map.get("aimer_default_model")?.value ?? null,
+    bridgeUrl: map.get("clumit_insight_bridge_url")?.value ?? null,
+    defaultModelName:
+      map.get("clumit_insight_default_model_name")?.value ?? null,
+    defaultModel: map.get("clumit_insight_default_model")?.value ?? null,
   };
 }
 
@@ -187,7 +192,7 @@ export async function updateAimerIntegrationSetting(
       return { valid: false, error: validation.error };
     }
     normalized = rawValue;
-  } else if (key === "aimer_web_bridge_url") {
+  } else if (key === "clumit_insight_bridge_url") {
     const result = normalizeAimerWebBridgeUrl(rawValue);
     if (!result.ok) {
       return { valid: false, error: result.error };

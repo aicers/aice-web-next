@@ -202,9 +202,9 @@ CREATE TABLE system_settings (
   updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
 );
 
--- `aice_id` / `aimer_web_bridge_url` identify the deployment to
+-- `aice_id` / `clumit_insight_bridge_url` identify the deployment to
 -- aimer-web and point at its bridge endpoint (#437);
--- `aimer_default_model_name` / `aimer_default_model` are the required
+-- `clumit_insight_default_model_name` / `clumit_insight_default_model` are the required
 -- analyze-bridge claims aice-web-next mints server-side (#629). All
 -- four ship as `null` so Setup status starts "Not configured" and the
 -- operator must enter them via the admin UI. The third Send-to-Aimer
@@ -246,9 +246,9 @@ INSERT INTO system_settings (key, value) VALUES
     "allowed_methods": ["webauthn", "totp"]
   }'::jsonb),
   ('aice_id', 'null'::jsonb),
-  ('aimer_web_bridge_url', 'null'::jsonb),
-  ('aimer_default_model_name', 'null'::jsonb),
-  ('aimer_default_model', 'null'::jsonb);
+  ('clumit_insight_bridge_url', 'null'::jsonb),
+  ('clumit_insight_default_model_name', 'null'::jsonb),
+  ('clumit_insight_default_model', 'null'::jsonb);
 
 -- ── MFA: TOTP, WebAuthn, recovery codes, challenges ────────────────
 

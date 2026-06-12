@@ -919,9 +919,9 @@ export async function setCustomerExternalKey(
  */
 type AimerSettingKey =
   | "aice_id"
-  | "aimer_web_bridge_url"
-  | "aimer_default_model_name"
-  | "aimer_default_model";
+  | "clumit_insight_bridge_url"
+  | "clumit_insight_default_model_name"
+  | "clumit_insight_default_model";
 
 export async function setAimerSetting(
   key: AimerSettingKey,

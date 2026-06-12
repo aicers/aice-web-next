@@ -128,19 +128,19 @@ describe("PATCH /api/aimer-integration/settings/[key]", () => {
       "@/app/api/aimer-integration/settings/[key]/route"
     );
     const res = await PATCH(
-      makeRequest("aimer_web_bridge_url", {
+      makeRequest("clumit_insight_bridge_url", {
         value: "https://aimer.example.com",
       }),
-      makeContext("aimer_web_bridge_url"),
+      makeContext("clumit_insight_bridge_url"),
     );
     expect(res.status).toBe(200);
     expect(mockAuditRecord).toHaveBeenCalledWith(
       expect.objectContaining({
         action: "aimer_integration_setting.changed",
         target: "system_settings",
-        targetId: "aimer_web_bridge_url",
+        targetId: "clumit_insight_bridge_url",
         details: expect.objectContaining({
-          key: "aimer_web_bridge_url",
+          key: "clumit_insight_bridge_url",
           old: null,
           new: "https://aimer.example.com",
         }),

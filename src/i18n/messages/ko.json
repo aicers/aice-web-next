@@ -111,7 +111,7 @@
   },
   "aimerIntegration": {
     "title": "Clumit Insight 연동",
-    "description": "Insight로 분석 동작에 필요한 시스템 전역 사전 조건(배포 식별자 aice_id, Clumit Insight 브리지 URL, 기본 분석 모델 식별자 aimer_default_model_name 및 aimer_default_model, 컨텍스트 토큰 전용 서명 키페어)을 설정합니다.",
+    "description": "Insight로 분석 동작에 필요한 시스템 전역 사전 조건(배포 식별자 aice_id, Clumit Insight 브리지 URL, 기본 분석 모델 식별자 clumit_insight_default_model_name 및 clumit_insight_default_model, 컨텍스트 토큰 전용 서명 키페어)을 설정합니다.",
     "permissionAlert": {
       "title": "Clumit Insight 서명 키 파일의 권한이 잘못되었습니다",
       "body": "디스크 파일({path})의 모드가 0600이 아닌 {observed}로 확인되었습니다. 계속 진행하기 전에 chmod 0600으로 권한을 복구하십시오. 권한이 더 느슨한 키는 쓰기가 거부되며, 읽기만 가능합니다."
@@ -123,9 +123,9 @@
       "notConfigured": "설정되지 않음",
       "missing": {
         "aiceId": "aice_id가 설정되어 있지 않습니다.",
-        "bridgeUrl": "aimer_web_bridge_url이 설정되어 있지 않습니다.",
-        "defaultModelName": "aimer_default_model_name이 설정되어 있지 않습니다.",
-        "defaultModel": "aimer_default_model이 설정되어 있지 않습니다.",
+        "bridgeUrl": "clumit_insight_bridge_url이 설정되어 있지 않습니다.",
+        "defaultModelName": "clumit_insight_default_model_name이 설정되어 있지 않습니다.",
+        "defaultModel": "clumit_insight_default_model이 설정되어 있지 않습니다.",
         "signingKey": "컨텍스트 토큰 서명 키페어가 생성되어 있지 않습니다."
       }
     },
@@ -185,13 +185,13 @@
       "aiceIdLabel": "aice_id",
       "aiceIdPlaceholder": "acme.example.com",
       "aiceIdHelper": "배포 호스트네임(RFC 1123). JWT iss 클레임과 Clumit Insight로 전달되는 aice_id 클레임에 사용됩니다. Clumit Insight의 trust_registry 조회 키이므로 등록된 값과 일치해야 합니다.",
-      "bridgeUrlLabel": "aimer_web_bridge_url",
+      "bridgeUrlLabel": "clumit_insight_bridge_url",
       "bridgeUrlPlaceholder": "https://insight.example.com",
       "bridgeUrlHelper": "/api/analysis/analyze-bridge로 multipart POST를 받을 Clumit Insight 인스턴스의 베이스 URL. HTTPS 전용. 경로는 정규화 형식(끝 슬래시 없음)으로 저장됩니다.",
-      "defaultModelNameLabel": "aimer_default_model_name",
+      "defaultModelNameLabel": "clumit_insight_default_model_name",
       "defaultModelNamePlaceholder": "anthropic",
       "defaultModelNameHelper": "Clumit Insight로 전송되는 analyze_params_token JWS 클레임에 들어가는 기본 LLM 공급자/모델 패밀리 식별자입니다. 허용되는 카탈로그는 Clumit Insight 측 설정에서 관리합니다.",
-      "defaultModelLabel": "aimer_default_model",
+      "defaultModelLabel": "clumit_insight_default_model",
       "defaultModelPlaceholder": "claude-sonnet-4-6",
       "defaultModelHelper": "analyze_params_token JWS 클레임에 들어가는 기본 LLM 모델 식별자입니다. 허용되는 카탈로그는 Clumit Insight 측 설정에서 관리합니다.",
       "saveAiceId": "aice_id 저장",
