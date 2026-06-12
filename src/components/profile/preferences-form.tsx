@@ -55,6 +55,14 @@ export function PreferencesForm() {
   const [tfHourCycle, setTfHourCycle] = useState<string>("auto");
   const [tfSeconds, setTfSeconds] = useState<string>("show");
   const [tfTzLabel, setTfTzLabel] = useState<string>("hide");
+  // Raw boolean values as loaded from the API, kept alongside the
+  // select-friendly strings so an explicit `true`/`false` is preserved
+  // verbatim on save when the user does not touch that control. Both
+  // controls are two-option (show/hide), but the API persists
+  // `boolean | null`; without these refs, saving an unrelated preference
+  // would collapse an API-set explicit default-side value back to `null`.
+  const [loadedTfSeconds, setLoadedTfSeconds] = useState<boolean | null>(null);
+  const [loadedTfTzLabel, setLoadedTfTzLabel] = useState<boolean | null>(null);
   const [saving, setSaving] = useState(false);
   const [message, setMessage] = useState("");
   const [loading, setLoading] = useState(true);
@@ -83,6 +91,8 @@ export function PreferencesForm() {
         setTfHourCycle(d.timeFormatHourCycle ?? "auto");
         setTfSeconds(d.timeFormatSeconds === false ? "hide" : "show");
         setTfTzLabel(d.timeFormatTzLabel === true ? "show" : "hide");
+        setLoadedTfSeconds(d.timeFormatSeconds ?? null);
+        setLoadedTfTzLabel(d.timeFormatTzLabel ?? null);
       })
       .catch(() => {})
       .finally(() => setLoading(false));
@@ -90,13 +100,36 @@ export function PreferencesForm() {
 
   // Map the select states to the nullable stored-preference shape. `null`
   // uniformly resets a field to the app default.
+  //
+  // For the two boolean controls, an untouched control re-emits the value
+  // exactly as loaded from the API: if the displayed show/hide state still
+  // matches what the loaded value resolves to, the loaded value (which may
+  // be an explicit `true`/`false` set via the API, or `null`) is sent back
+  // verbatim rather than collapsed to `null`. Only when the user actually
+  // flips a control does it map to the canonical value — the default side
+  // to `null` (so "never touched" stays indistinguishable from the app
+  // default), the non-default side to the explicit boolean.
   function buildTimeFormat(): StoredTimeFormat {
+    const secondsShownNow = tfSeconds !== "hide";
+    const secondsShownLoaded = loadedTfSeconds ?? true;
+    const timeFormatSeconds =
+      secondsShownNow === secondsShownLoaded
+        ? loadedTfSeconds
+        : secondsShownNow
+          ? null
+          : false;
+
+    const tzShownNow = tfTzLabel === "show";
+    const tzShownLoaded = loadedTfTzLabel ?? false;
+    const timeFormatTzLabel =
+      tzShownNow === tzShownLoaded ? loadedTfTzLabel : tzShownNow ? true : null;
+
     return {
       timeFormatLocale: tfLocale === TF_LOCALE_BROWSER ? null : tfLocale,
       timeFormatHourCycle:
         tfHourCycle === "h12" || tfHourCycle === "h23" ? tfHourCycle : null,
-      timeFormatSeconds: tfSeconds === "hide" ? false : null,
-      timeFormatTzLabel: tfTzLabel === "show" ? true : null,
+      timeFormatSeconds,
+      timeFormatTzLabel,
     };
   }
 

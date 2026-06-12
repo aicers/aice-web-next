@@ -14,10 +14,21 @@
  */
 export interface ResolvedTimeFormat {
   /**
-   * Locale override for the formatter. `undefined` means "no override":
-   * the formatter keeps its own base locale (browser for the general
-   * formatter, the explicit `locale` argument for the compact / event
-   * formatters).
+   * Locale override for the formatter. `undefined` means "no explicit
+   * override", but the three formatters resolve that case differently:
+   *
+   * - **General** (`formatDateTime`) follows the browser locale.
+   * - **Event / Detection** (`formatEventTime`) also follows the browser
+   *   locale **whenever a resolved options object is supplied** — the
+   *   "follow browser" default overrides the app-locale `locale` argument
+   *   the Detection call sites pass (#766's second resolution surface).
+   *   The `locale` argument is consulted only when no options object is
+   *   given (legacy / direct callers).
+   * - **Compact** (`formatDateTimeCompact`) always falls back to its
+   *   explicit `locale` argument (the active app locale). Compact is the
+   *   breadcrumb/chrome surface pinned to the app's UI language, so the
+   *   unset default stays byte-identical to today; an explicit tag or the
+   *   `'app'` sentinel still overrides it.
    */
   locale: string | undefined;
   /** `'h12'` / `'h23'`, or `undefined` to follow the locale default. */

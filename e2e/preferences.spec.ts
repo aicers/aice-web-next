@@ -506,6 +506,46 @@ test.describe("Preferences", () => {
 
     await expect(preview).not.toHaveText(before ?? "", { timeout: 5_000 });
   });
+
+  test("saving the form preserves API-set explicit boolean preferences", async ({
+    page,
+    workerUsername,
+    workerPassword,
+  }) => {
+    await signInAndWait(page, workerUsername, workerPassword);
+
+    const cookies = await page.context().cookies();
+    const csrfCookie = cookies.find((c) => c.name === "csrf");
+    const headers = {
+      "x-csrf-token": csrfCookie?.value ?? "",
+      Origin: APP_ORIGIN,
+    };
+
+    // Seed explicit default-side booleans the two-option UI never writes
+    // itself but the API accepts: seconds shown (true), tz label hidden
+    // (false). These are distinct from NULL ("never touched").
+    await page.request.patch("/api/accounts/me/preferences", {
+      data: { timeFormatSeconds: true, timeFormatTzLabel: false },
+      headers,
+    });
+
+    // Open the form and save without touching the seconds / tz-label
+    // controls. An untouched control must re-emit the loaded value
+    // verbatim — not collapse the explicit boolean back to NULL.
+    await page.goto("/profile");
+    await expect(
+      page.getByRole("heading", { name: "Time format" }),
+    ).toBeVisible({ timeout: 5_000 });
+    await page.getByRole("button", { name: "Save" }).click();
+    await expect(page.getByText("Preferences saved")).toBeVisible({
+      timeout: 5_000,
+    });
+
+    const res = await page.request.get("/api/accounts/me/preferences");
+    const body = await res.json();
+    expect(body.data.timeFormatSeconds).toBe(true);
+    expect(body.data.timeFormatTzLabel).toBe(false);
+  });
 });
 
 // ── Live timestamp update on save (#766) ───────────────────────────

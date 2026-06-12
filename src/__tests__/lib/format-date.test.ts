@@ -237,6 +237,29 @@ describe("formatDateTimeCompact — time-format options", () => {
     const plainKo = formatDateTimeCompact(iso, "UTC", "ko-KR");
     expect(overridden).toBe(plainKo);
   });
+
+  it("is byte-identical to the no-options call for the default object", () => {
+    expect(formatDateTimeCompact(iso, "Asia/Seoul", "en", resolved())).toBe(
+      formatDateTimeCompact(iso, "Asia/Seoul", "en"),
+    );
+  });
+
+  it("keeps the explicit (app) locale for the default object, unlike the event formatter", () => {
+    // Compact is the breadcrumb/chrome surface deliberately pinned to the
+    // app UI language. With default resolved options (locale `undefined`
+    // = "follow browser"), it still honours the explicit `locale`
+    // argument rather than following the browser, so the unset default is
+    // byte-identical to today. Contrast formatEventTime, which follows the
+    // browser when options are supplied (#766's second resolution
+    // surface). An explicit tag / the `'app'` sentinel still override
+    // (asserted above); only the follow-browser default keeps the app
+    // locale.
+    const en = formatDateTimeCompact(iso, "UTC", "en-US", resolved());
+    const ko = formatDateTimeCompact(iso, "UTC", "ko-KR", resolved());
+    expect(en).not.toBe(ko);
+    expect(en).toMatch(/AM|PM/i);
+    expect(ko).not.toMatch(/AM|PM/i);
+  });
 });
 
 describe("formatEventTime — time-format options", () => {
