@@ -1,11 +1,8 @@
 "use client";
 
-import { useLocale } from "next-intl";
-
 import { EVENT_KIND_FRIENDLY_NAMES } from "@/components/events/event-display-helpers";
 import { useRegisterBreadcrumbLabel } from "@/components/providers/breadcrumb-label-provider";
-import { useTimezone } from "@/components/providers/timezone-provider";
-import { formatDateTimeCompact } from "@/lib/format-date";
+import { useTimestampFormatter } from "@/components/timestamp";
 
 interface EventBreadcrumbRegistrarProps {
   /** ISO timestamp of the event (`event.time`). */
@@ -17,21 +14,23 @@ interface EventBreadcrumbRegistrarProps {
 /**
  * Publishes the meaningful breadcrumb label for an event detail page —
  * `{compact time} · {event kind}` — derived from the page's already
- * fetched data. The compact time honours the user's timezone
- * (`useTimezone`) and the active app locale (`useLocale`); the event
- * kind reuses the same English-only `EVENT_KIND_FRIENDLY_NAMES` mapping
+ * fetched data. The compact time honours the user's timezone and the
+ * active app locale via `useTimestampFormatter().formatCompact`; the
+ * event kind reuses the same English-only `EVENT_KIND_FRIENDLY_NAMES` mapping
  * the investigation header renders. Renders nothing.
  */
 export function EventBreadcrumbRegistrar({
   time,
   typename,
 }: EventBreadcrumbRegistrarProps) {
-  const timezone = useTimezone();
-  const locale = useLocale();
+  const { formatCompact } = useTimestampFormatter();
 
-  const compactTime = formatDateTimeCompact(time, timezone, locale);
+  const compactTime = formatCompact(time);
   const friendlyKind = EVENT_KIND_FRIENDLY_NAMES[typename] ?? typename;
-  const label = `${compactTime} · ${friendlyKind}`;
+  // Pre-mount `formatCompact` is null; the label registers once the
+  // timezone resolves, matching the registrar's post-mount apply.
+  const label =
+    compactTime === null ? null : `${compactTime} · ${friendlyKind}`;
 
   useRegisterBreadcrumbLabel(label);
 

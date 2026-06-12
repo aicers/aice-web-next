@@ -29,6 +29,14 @@ vi.mock("@/lib/aimer/phase2/manual-send.client", () => ({
   ManualSendError: ManualSendErrorStub,
 }));
 
+// The shared `<Timestamp>` / `useTimestampFormatter` read the active
+// locale through next-intl; mock it so the cards and detail panel render
+// without a real `NextIntlClientProvider`.
+vi.mock("next-intl", () => ({
+  useLocale: () => "en",
+  useTranslations: () => (key: string) => key,
+}));
+
 import {
   AI_ANALYSIS_MAX_IN_FLIGHT,
   AI_ANALYSIS_NEGATIVE_TTL_MS,
@@ -1152,7 +1160,7 @@ describe("TriageStoriesView — refresh ordering guard", () => {
  * for the same asset/customer once the card is replaced by the panel.
  */
 describe("TriageStoryDetail — header identity", () => {
-  it("renders title, member count, time window, rule badge, and customer in the detail header", () => {
+  it("renders title, member count, time window, rule badge, and customer in the detail header", async () => {
     const story = makeStory({
       customerId: 7,
       storyId: "story-1",
@@ -1184,13 +1192,16 @@ describe("TriageStoryDetail — header identity", () => {
     // #684: the time window now renders in the operator's configured
     // timezone via `formatDateTime`, not raw UTC ISO. Compute the
     // expectation through the same helper so the assertion stays
-    // independent of the runtime test timezone.
+    // independent of the runtime test timezone. The `<Timestamp>` swaps
+    // its placeholder for the resolved value post-mount, so wait for it.
     const timeWindow = screen.getByTestId("triage-story-detail-time-window");
-    expect(timeWindow.textContent).toBe(
-      `${formatDateTime("2026-05-09T12:00:00.000Z")} ~ ${formatDateTime(
-        "2026-05-09T12:30:00.000Z",
-      )}`,
-    );
+    await waitFor(() => {
+      expect(timeWindow.textContent).toBe(
+        `${formatDateTime("2026-05-09T12:00:00.000Z")} ~ ${formatDateTime(
+          "2026-05-09T12:30:00.000Z",
+        )}`,
+      );
+    });
     const detail = screen.getByTestId("triage-story-detail");
     // Rule badge ("R1" by default) and customer name remain.
     expect(detail.textContent).toContain("R1");

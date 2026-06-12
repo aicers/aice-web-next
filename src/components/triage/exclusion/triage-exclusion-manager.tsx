@@ -4,7 +4,7 @@ import { CirclePlus, MoreVertical, RotateCcw, Trash2 } from "lucide-react";
 import { useTranslations } from "next-intl";
 import { useCallback, useEffect, useMemo, useState } from "react";
 
-import { useTimezone } from "@/components/providers/timezone-provider";
+import { Timestamp } from "@/components/timestamp";
 import {
   AlertDialog,
   AlertDialogAction,
@@ -39,7 +39,6 @@ import {
   TableRow,
 } from "@/components/ui/table";
 import { readCsrfToken } from "@/lib/csrf-client";
-import { formatDateTime } from "@/lib/format-date";
 
 import { TriageExclusionFormDialog } from "./triage-exclusion-form-dialog";
 
@@ -81,7 +80,6 @@ export function TriageExclusionManager({
   initialCustomerId,
 }: ManagerProps) {
   const t = useTranslations("triageExclusions");
-  const timezone = useTimezone();
 
   const [selectedCustomerId, setSelectedCustomerId] = useState<number | null>(
     () => {
@@ -335,7 +333,7 @@ export function TriageExclusionManager({
                     {r.createdByDisplayName ?? r.createdBy}
                   </TableCell>
                   <TableCell className="text-muted-foreground font-mono text-xs">
-                    {formatDateTime(r.createdAt, timezone)}
+                    <Timestamp at={r.createdAt} />
                   </TableCell>
                   <TableCell>
                     {canMutate && (

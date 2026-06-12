@@ -1,11 +1,10 @@
 "use client";
 
 import { useTranslations } from "next-intl";
-import { useEffect, useMemo, useState } from "react";
+import { useMemo } from "react";
 
-import { useTimezone } from "@/components/providers/timezone-provider";
+import { useTimestampFormatter } from "@/components/timestamp";
 import type { NodeStatusSample } from "@/hooks/use-node-status-polling";
-import { formatDateTime } from "@/lib/format-date";
 import { cn } from "@/lib/utils";
 
 export type ResourceMetric = "cpu" | "memory" | "disk";
@@ -134,19 +133,14 @@ export function ResourceSparkline({
     return t("samplesLabel", { samples: samples.length, minutes });
   }, [samples, pollIntervalMs, t]);
 
-  const timezone = useTimezone();
-  const [hydrated, setHydrated] = useState(false);
-  useEffect(() => {
-    setHydrated(true);
-  }, []);
   // The progress bar's numeric label appends `lastSampleAt` only while
-  // the buffer is stale — that's the rule from #312 / #376. Defer the
-  // locale formatting until after hydration so SSR and the first
+  // the buffer is stale — that's the rule from #312 / #376. The central
+  // formatter hook defers the locale formatting until after mount
+  // (`resolved` false / `format` null pre-mount) so SSR and the first
   // client paint agree on the markup.
+  const { resolved, format } = useTimestampFormatter();
   const staleStamp =
-    hydrated && isStale && lastSampleAt !== null
-      ? formatDateTime(lastSampleAt, timezone)
-      : null;
+    resolved && isStale && lastSampleAt !== null ? format(lastSampleAt) : null;
 
   const latestSample = samples.length > 0 ? samples[samples.length - 1] : null;
   const latestRatio =

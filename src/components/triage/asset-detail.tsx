@@ -3,11 +3,10 @@
 import { ExternalLink } from "lucide-react";
 import { useLocale } from "next-intl";
 
-import { useTimezone } from "@/components/providers/timezone-provider";
+import { useTimestampFormatter } from "@/components/timestamp";
 import { panelSurface } from "@/components/ui/panel-surface";
 import { getPathname } from "@/i18n/navigation";
 import { encodeEventLocator } from "@/lib/events/event-locator";
-import { formatDateTime } from "@/lib/format-date";
 import type { TriageAsset } from "@/lib/triage";
 import { cn } from "@/lib/utils";
 import {
@@ -93,7 +92,7 @@ export function TriageAssetDetailView({
   isPivotFocus = false,
   labels,
 }: TriageAssetDetailViewProps) {
-  const timezone = useTimezone();
+  const { format } = useTimestampFormatter();
   const locale = useLocale();
   const headerTitle = isPivotFocus ? labels.pivotFocusTitle : labels.title;
   const tableLabels: TriageEventTableLabels = {
@@ -106,7 +105,7 @@ export function TriageAssetDetailView({
   const rows: ReadonlyArray<TriageEventRow> = asset
     ? asset.events.map((event) => ({
         key: event.rowKey ?? `${event.time}-${event.__typename}`,
-        time: formatDateTime(event.time, timezone),
+        time: format(event.time) ?? "",
         kind: event.__typename,
         category: event.category ?? null,
         baselineScore: event.score,

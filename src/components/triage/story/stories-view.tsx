@@ -22,8 +22,7 @@
  */
 
 import { useEffect, useMemo, useRef, useState, useTransition } from "react";
-
-import { useTimezone } from "@/components/providers/timezone-provider";
+import { Timestamp, useTimestampFormatter } from "@/components/timestamp";
 import { panelSurface } from "@/components/ui/panel-surface";
 import type { AiAnalysisStorySummaryFetcher } from "@/lib/aimer/analysis/story-summary.client";
 import type { AiAnalysisSummary } from "@/lib/aimer/analysis/summary-types";
@@ -31,10 +30,9 @@ import {
   ManualSendError,
   manualSendToAimerWeb,
 } from "@/lib/aimer/phase2/manual-send.client";
-import { formatDateTime } from "@/lib/format-date";
 import type { TriagePeriod } from "@/lib/triage";
 import type { PivotDimensionId, PivotValue } from "@/lib/triage/pivot";
-import { getPivotDimension } from "@/lib/triage/pivot";
+import { displayPivotValueLabel, getPivotDimension } from "@/lib/triage/pivot";
 import { storyMemberToScoredEvent } from "@/lib/triage/story/pivot-adapter";
 import type {
   StoriesSortOrder,
@@ -958,7 +956,7 @@ function TriageStoryDetail({
   labels,
   cardLabels,
 }: StoryDetailProps) {
-  const timezone = useTimezone();
+  const { format } = useTimestampFormatter();
   const stored = story.summary.memberCount;
   const title = renderStoryTitle(
     story.primaryAsset,
@@ -1058,16 +1056,18 @@ function TriageStoryDetail({
   // provided.
   //
   // The `time` field carries the display string: `event_time_iso` is a
-  // Detection event timestamp (UTC), so #684 routes it through
-  // `formatDateTime(value, tz)` to render in the operator's configured
-  // timezone — matching the asset surface, which already formats this
-  // way. Time formatting stays on the caller side per the shared-table
-  // contract, so each surface picks the zone for its own rows.
+  // Detection event timestamp (UTC), so it is routed through
+  // `useTimestampFormatter().format(value)` to render in the operator's
+  // configured timezone — matching the asset surface, which already
+  // formats this way. Time formatting stays on the caller side per the
+  // shared-table contract, so each surface picks the zone for its own
+  // rows (the formatter returns null pre-mount; the rows are
+  // client-fetched and render post-mount, so `?? ""` is a safety net).
   const rows: ReadonlyArray<TriageEventRow> =
     detail.status === "ready"
       ? detail.members.map((m) => ({
           key: m.eventKey,
-          time: formatDateTime(m.eventTimeIso, timezone),
+          time: format(m.eventTimeIso) ?? "",
           kind: m.kind,
           category: m.category,
           baselineScore: m.baselineScore,
@@ -1084,7 +1084,7 @@ function TriageStoryDetail({
         }))
       : story.topMembers.map((m) => ({
           key: m.eventKey,
-          time: formatDateTime(m.eventTimeIso, timezone),
+          time: format(m.eventTimeIso) ?? "",
           kind: m.kind,
           category: m.category,
           baselineScore: m.rawScore,
@@ -1173,13 +1173,8 @@ function TriageStoryDetail({
             data-testid="triage-story-detail-time-window"
             className="mt-1 font-mono text-xs text-muted-foreground"
           >
-            <time dateTime={story.timeWindowStartIso}>
-              {formatDateTime(story.timeWindowStartIso, timezone)}
-            </time>{" "}
-            ~{" "}
-            <time dateTime={story.timeWindowEndIso}>
-              {formatDateTime(story.timeWindowEndIso, timezone)}
-            </time>
+            <Timestamp at={story.timeWindowStartIso} /> ~{" "}
+            <Timestamp at={story.timeWindowEndIso} />
           </p>
         </div>
         <button
@@ -1262,6 +1257,7 @@ function StoryMemberPivotActions({
   template,
   dimensionLabels,
 }: StoryMemberPivotActionsProps) {
+  const { formatCompact } = useTimestampFormatter();
   // Reuse the dimension registry's per-event extractor against an
   // adapted member event so the row surface only shows pivots whose
   // value actually exists on this row (e.g. a DNS member has no
@@ -1295,22 +1291,25 @@ function StoryMemberPivotActions({
       className="flex flex-wrap justify-end gap-1"
       data-testid="triage-story-member-pivot-actions"
     >
-      {buttons.map(({ dimension, value }) => (
-        <button
-          key={`${dimension}:${value.key}`}
-          type="button"
-          data-testid="triage-story-member-pivot-action"
-          data-dimension={dimension}
-          data-value-key={value.key}
-          onClick={() => onPivot(dimension, value, member)}
-          aria-label={template
-            .replace("{dimension}", dimensionLabels[dimension])
-            .replace("{value}", value.label)}
-          className="max-w-[20ch] truncate rounded border border-border/60 px-2 py-0.5 text-xs text-foreground hover:bg-accent"
-        >
-          {dimensionLabels[dimension]}: {value.label}
-        </button>
-      ))}
+      {buttons.map(({ dimension, value }) => {
+        const display = displayPivotValueLabel(dimension, value, formatCompact);
+        return (
+          <button
+            key={`${dimension}:${value.key}`}
+            type="button"
+            data-testid="triage-story-member-pivot-action"
+            data-dimension={dimension}
+            data-value-key={value.key}
+            onClick={() => onPivot(dimension, value, member)}
+            aria-label={template
+              .replace("{dimension}", dimensionLabels[dimension])
+              .replace("{value}", display)}
+            className="max-w-[20ch] truncate rounded border border-border/60 px-2 py-0.5 text-xs text-foreground hover:bg-accent"
+          >
+            {dimensionLabels[dimension]}: {display}
+          </button>
+        );
+      })}
     </div>
   );
 }

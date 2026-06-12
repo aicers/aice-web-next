@@ -20,7 +20,6 @@ import {
 import { useTimezone } from "@/components/providers/timezone-provider";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
-import { formatEventTime } from "@/lib/detection/event-time";
 import {
   THREAT_CATEGORY_KEY_BY_VALUE,
   THREAT_CATEGORY_VALUES,
@@ -36,6 +35,7 @@ import type {
   ThreatLevel,
   TriageScore,
 } from "@/lib/detection/types";
+import { formatEventTime } from "@/lib/format-date";
 import { cn } from "@/lib/utils";
 
 /**

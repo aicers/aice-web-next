@@ -3,7 +3,7 @@
 import { useTranslations } from "next-intl";
 import { useCallback, useEffect, useState } from "react";
 
-import { useTimezone } from "@/components/providers/timezone-provider";
+import { Timestamp } from "@/components/timestamp";
 import { Badge } from "@/components/ui/badge";
 import {
   Card,
@@ -20,7 +20,6 @@ import {
   TableHeader,
   TableRow,
 } from "@/components/ui/table";
-import { formatDateTime } from "@/lib/format-date";
 
 // ── Types ────────────────────────────────────────────────────────
 
@@ -51,7 +50,6 @@ const SEVERITY_VARIANT: Record<
 
 export function SuspiciousAlertsCard() {
   const t = useTranslations("dashboard.alerts");
-  const tz = useTimezone();
 
   const [alerts, setAlerts] = useState<Alert[]>([]);
   const [loading, setLoading] = useState(true);
@@ -122,7 +120,7 @@ export function SuspiciousAlertsCard() {
                     </TableCell>
                     <TableCell className="text-xs">{a.count}</TableCell>
                     <TableCell className="whitespace-nowrap text-xs">
-                      {formatDateTime(a.latest_at, tz)}
+                      <Timestamp at={a.latest_at} />
                     </TableCell>
                   </TableRow>
                 ))}

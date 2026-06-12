@@ -3,8 +3,8 @@
 import { useTranslations } from "next-intl";
 import { useCallback, useEffect, useState } from "react";
 
-import { useTimezone } from "@/components/providers/timezone-provider";
 import { readCsrfToken } from "@/components/session/session-extension-dialog";
+import { Timestamp } from "@/components/timestamp";
 import {
   AlertDialog,
   AlertDialogAction,
@@ -33,7 +33,6 @@ import {
   TableHeader,
   TableRow,
 } from "@/components/ui/table";
-import { formatDateTime } from "@/lib/format-date";
 
 // ── Types ────────────────────────────────────────────────────────
 
@@ -52,7 +51,6 @@ interface LockedAccount {
 
 export function LockedAccountsCard({ canWrite }: { canWrite: boolean }) {
   const t = useTranslations("dashboard.lockedAccounts");
-  const tz = useTimezone();
 
   const [accounts, setAccounts] = useState<LockedAccount[]>([]);
   const [loading, setLoading] = useState(true);
@@ -162,12 +160,10 @@ export function LockedAccountsCard({ canWrite }: { canWrite: boolean }) {
                       {a.failed_sign_in_count}
                     </TableCell>
                     <TableCell className="whitespace-nowrap text-xs">
-                      {a.locked_until
-                        ? formatDateTime(a.locked_until, tz)
-                        : "-"}
+                      {a.locked_until ? <Timestamp at={a.locked_until} /> : "-"}
                     </TableCell>
                     <TableCell className="whitespace-nowrap text-xs">
-                      {formatDateTime(a.updated_at, tz)}
+                      <Timestamp at={a.updated_at} />
                     </TableCell>
                     {canWrite && (
                       <TableCell>

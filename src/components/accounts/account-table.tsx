@@ -13,8 +13,8 @@ import { useTranslations } from "next-intl";
 import { useCallback, useEffect, useState } from "react";
 
 import { AccountFormDialog } from "@/components/accounts/account-form-dialog";
-import { useTimezone } from "@/components/providers/timezone-provider";
 import { readCsrfToken } from "@/components/session/session-extension-dialog";
+import { Timestamp } from "@/components/timestamp";
 import {
   AlertDialog,
   AlertDialogAction,
@@ -50,7 +50,6 @@ import {
   TableHeader,
   TableRow,
 } from "@/components/ui/table";
-import { formatDateTime } from "@/lib/format-date";
 
 // ── Types ───────────────────────────────────────────────────────
 
@@ -116,7 +115,6 @@ function buildPageNumbers(current: number, total: number): (number | "...")[] {
 
 export function AccountTable() {
   const t = useTranslations("accounts");
-  const tz = useTimezone();
 
   const [accounts, setAccounts] = useState<Account[]>([]);
   const [total, setTotal] = useState(0);
@@ -495,9 +493,11 @@ export function AccountTable() {
                       </Badge>
                     </TableCell>
                     <TableCell className="text-muted-foreground text-sm">
-                      {account.last_sign_in_at
-                        ? formatDateTime(account.last_sign_in_at, tz)
-                        : t("never")}
+                      {account.last_sign_in_at ? (
+                        <Timestamp at={account.last_sign_in_at} />
+                      ) : (
+                        t("never")
+                      )}
                     </TableCell>
                     <TableCell>
                       <DropdownMenu>

@@ -16,10 +16,9 @@
 
 import { useState } from "react";
 
-import { useTimezone } from "@/components/providers/timezone-provider";
+import { Timestamp } from "@/components/timestamp";
 import { panelSurface } from "@/components/ui/panel-surface";
 import type { AiAnalysisSummary } from "@/lib/aimer/analysis/summary-types";
-import { formatDateTime } from "@/lib/format-date";
 import type { TriageStory } from "@/lib/triage/story/types";
 import { cn } from "@/lib/utils";
 import {
@@ -141,7 +140,6 @@ export function TriageStoryCard({
   aiAnalysis,
   labels,
 }: StoryCardProps) {
-  const timezone = useTimezone();
   const title = renderStoryTitle(
     story.primaryAsset,
     story.summary,
@@ -198,11 +196,11 @@ export function TriageStoryCard({
       </header>
       <p className="text-xs text-muted-foreground">
         <time dateTime={story.timeWindowStartIso}>
-          {formatDateTime(story.timeWindowStartIso, timezone)}
+          <Timestamp at={story.timeWindowStartIso} />
         </time>{" "}
         ~{" "}
         <time dateTime={story.timeWindowEndIso}>
-          {formatDateTime(story.timeWindowEndIso, timezone)}
+          <Timestamp at={story.timeWindowEndIso} />
         </time>
       </p>
       {story.lastSentAtIso !== null ? (
@@ -248,7 +246,7 @@ export function TriageStoryCard({
                 <tr key={m.eventKey}>
                   <td className="py-1 pr-2 font-mono">
                     <time dateTime={m.eventTimeIso}>
-                      {formatDateTime(m.eventTimeIso, timezone)}
+                      <Timestamp at={m.eventTimeIso} />
                     </time>
                   </td>
                   <td className="py-1 pr-2">{m.kind}</td>

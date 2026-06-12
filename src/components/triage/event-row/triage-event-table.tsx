@@ -27,9 +27,9 @@ import { cn } from "@/lib/utils";
  *
  * `time` is a pre-formatted display string; each surface decides how
  * to render its source ISO. Both the asset and Story surfaces run
- * `formatDateTime` against the operator's configured timezone (#684) —
- * keeping the formatter on the caller side lets each surface pick its
- * own zone while the table stays presentation-only.
+ * `useTimestampFormatter().format` against the operator's configured
+ * timezone (#684) — keeping the formatter on the caller side lets each
+ * surface pick its own zone while the table stays presentation-only.
  */
 export interface TriageEventRow {
   /** Stable per-row React key. */

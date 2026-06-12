@@ -501,6 +501,37 @@ export function parseSameKindKey(
 }
 
 /**
+ * Render-layer display label for a pivot value.
+ *
+ * For every dimension except `sameKindWithin15Min` the value's stored
+ * `label` is already analyst-facing, so it is returned verbatim. The
+ * `sameKindWithin15Min` label is built lib-side as
+ * `` `${typename} near ${ISO}` `` so the value stays machine-readable;
+ * this helper recovers the instant from the value **key** (via
+ * {@link parseSameKindKey}) and re-renders it through the caller's
+ * central compact formatter so analysts see a localized time instead of
+ * a raw UTC ISO string. It falls back to the raw `label` when the key is
+ * malformed or when `formatCompact` returns `null` (pre-mount).
+ *
+ * @param compactFn `useTimestampFormatter().formatCompact` (or any
+ *   `(at) => string | null`). Returning `null` selects the raw-label
+ *   fallback, so a UTC value is never flashed before the timezone
+ *   resolves.
+ */
+export function displayPivotValueLabel(
+  dimension: PivotDimensionId,
+  value: PivotValue,
+  compactFn: (at: Date | string) => string | null,
+): string {
+  if (dimension !== "sameKindWithin15Min") return value.label;
+  const parsed = parseSameKindKey(value.key);
+  if (parsed === null) return value.label;
+  const compact = compactFn(new Date(parsed.centerMs));
+  if (compact === null) return value.label;
+  return `${parsed.typename} near ${compact}`;
+}
+
+/**
  * Resolve the focus-relative event set for a `sameKindWithin15Min`
  * dimension lookup: events with `__typename === typename` whose time
  * is within `±TRIAGE_SAME_KIND_WINDOW_MS` of `centerMs`. The exact

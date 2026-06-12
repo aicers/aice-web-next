@@ -5,8 +5,8 @@ import { useTranslations } from "next-intl";
 import { useCallback, useEffect, useMemo, useState } from "react";
 
 import { ManagerUnavailablePanel } from "@/components/node/manager-unavailable-panel";
-import { useTimezone } from "@/components/providers/timezone-provider";
 import { readCsrfToken } from "@/components/session/session-extension-dialog";
+import { useTimestampFormatter } from "@/components/timestamp";
 import {
   AlertDialog,
   AlertDialogAction,
@@ -40,7 +40,6 @@ import {
 } from "@/hooks/use-node-status-polling";
 import { useServiceStatus } from "@/hooks/use-service-status";
 import { Link, useRouter } from "@/i18n/navigation";
-import { formatDateTime } from "@/lib/format-date";
 import type { NodeStatus } from "@/lib/node/types";
 import { cn } from "@/lib/utils";
 
@@ -224,20 +223,14 @@ export function NodeStatusTable({
     }
   }, [performControl, shutdownTarget, t]);
 
-  // Defer locale-sensitive timestamp formatting until after mount.
-  // `toLocaleTimeString()` reads the OS locale on the server and the
-  // browser locale on the client, so rendering it during SSR triggers
-  // a hydration mismatch warning.
-  const timezone = useTimezone();
-  const [hydrated, setHydrated] = useState(false);
-  useEffect(() => {
-    setHydrated(true);
-  }, []);
-  const lastUpdatedLabel = !hydrated
-    ? ""
-    : polling.lastSampleAt
-      ? formatDateTime(polling.lastSampleAt, timezone)
-      : formatDateTime(initialCapturedAt, timezone);
+  // Locale-sensitive timestamp formatting is deferred until after mount
+  // by the central formatter hook: `resolved` is false (and `format`
+  // returns null) pre-mount, so SSR and first client paint never render
+  // a server-zone value that would mismatch on hydration.
+  const { resolved, format } = useTimestampFormatter();
+  const lastUpdatedLabel = resolved
+    ? (format(polling.lastSampleAt ?? initialCapturedAt) ?? "")
+    : "";
 
   // If the manager goes unreachable after the first paint, swap to the
   // same fallback panel the SSR path uses. The polling fetcher tags

@@ -5,8 +5,8 @@ import { Bluetooth, Fingerprint, Nfc, Pencil, Trash2, Usb } from "lucide-react";
 import { useTranslations } from "next-intl";
 import { useCallback, useEffect, useState } from "react";
 
-import { useTimezone } from "@/components/providers/timezone-provider";
 import { readCsrfToken } from "@/components/session/session-extension-dialog";
+import { Timestamp } from "@/components/timestamp";
 import {
   AlertDialog,
   AlertDialogCancel,
@@ -37,7 +37,6 @@ import {
 } from "@/components/ui/dialog";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
-import { formatDateTime } from "@/lib/format-date";
 
 // ── Types ────────────────────────────────────────────────────
 
@@ -226,7 +225,6 @@ function CredentialList({
   onRename: (c: Credential) => void;
   onRemove: (c: Credential) => void;
 }) {
-  const tz = useTimezone();
   if (credentials.length === 0) {
     return (
       <p className="text-muted-foreground text-sm">{t("noCredentials")}</p>
@@ -243,12 +241,16 @@ function CredentialList({
             </p>
             <div className="text-muted-foreground flex flex-wrap items-center gap-x-3 text-xs">
               <span>
-                {t("createdAt")} {formatDateTime(cred.createdAt, tz)}
+                {t("createdAt")} <Timestamp at={cred.createdAt} />
               </span>
               <span>
-                {cred.lastUsedAt
-                  ? `${t("lastUsedAt")} ${formatDateTime(cred.lastUsedAt, tz)}`
-                  : t("neverUsed")}
+                {cred.lastUsedAt ? (
+                  <>
+                    {t("lastUsedAt")} <Timestamp at={cred.lastUsedAt} />
+                  </>
+                ) : (
+                  t("neverUsed")
+                )}
               </span>
             </div>
             {cred.transports && cred.transports.length > 0 && (

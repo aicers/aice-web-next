@@ -3,7 +3,7 @@
 import { ArrowLeft } from "lucide-react";
 import { useState } from "react";
 
-import { useTimezone } from "@/components/providers/timezone-provider";
+import { Timestamp } from "@/components/timestamp";
 import { Badge } from "@/components/ui/badge";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { Link } from "@/i18n/navigation";
@@ -11,7 +11,6 @@ import type { AimerCustomerCandidate } from "@/lib/aimer/candidate-customers";
 import type { AimerIntegrationSetupStatus } from "@/lib/aimer/setup-status";
 import type { Event } from "@/lib/detection/types";
 import type { EventLocator } from "@/lib/events/event-locator";
-import { formatDateTime } from "@/lib/format-date";
 
 import {
   EVENT_KIND_FRIENDLY_NAMES,
@@ -302,7 +301,6 @@ export function EventInvestigation({
   // Radix keep it in the DOM (hidden) thereafter. The default tab
   // is pre-seeded so the initial render is indistinguishable from
   // the pre-caching behaviour.
-  const timezone = useTimezone();
   const [activated, setActivated] = useState<Set<string>>(
     () => new Set([initialValue]),
   );
@@ -345,7 +343,7 @@ export function EventInvestigation({
             <dt className="font-medium">{labels.time}</dt>
             <dd>
               <time dateTime={event.time}>
-                {formatDateTime(event.time, timezone)}
+                <Timestamp at={event.time} />
               </time>
             </dd>
           </div>

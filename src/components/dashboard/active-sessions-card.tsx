@@ -3,8 +3,8 @@
 import { useTranslations } from "next-intl";
 import { useCallback, useEffect, useState } from "react";
 
-import { useTimezone } from "@/components/providers/timezone-provider";
 import { readCsrfToken } from "@/components/session/session-extension-dialog";
+import { Timestamp } from "@/components/timestamp";
 import {
   AlertDialog,
   AlertDialogAction,
@@ -33,7 +33,6 @@ import {
   TableHeader,
   TableRow,
 } from "@/components/ui/table";
-import { formatDateTime } from "@/lib/format-date";
 
 // ── Types ────────────────────────────────────────────────────────
 
@@ -54,7 +53,6 @@ interface Session {
 export function ActiveSessionsCard({ canWrite }: { canWrite: boolean }) {
   const t = useTranslations("dashboard.activeSessions");
   const tc = useTranslations("common");
-  const tz = useTimezone();
 
   const [sessions, setSessions] = useState<Session[]>([]);
   const [loading, setLoading] = useState(true);
@@ -151,10 +149,10 @@ export function ActiveSessionsCard({ canWrite }: { canWrite: boolean }) {
                       {shortUa(s.user_agent)}
                     </TableCell>
                     <TableCell className="whitespace-nowrap text-xs">
-                      {formatDateTime(s.last_active_at, tz)}
+                      <Timestamp at={s.last_active_at} />
                     </TableCell>
                     <TableCell className="whitespace-nowrap text-xs">
-                      {formatDateTime(s.created_at, tz)}
+                      <Timestamp at={s.created_at} />
                     </TableCell>
                     <TableCell>
                       {s.needs_reauth && (
