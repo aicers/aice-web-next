@@ -1,6 +1,6 @@
 # mTLS certificate rotation
 
-The BFF authenticates outbound GraphQL traffic to REview (and any other
+The BFF authenticates outbound GraphQL traffic to Central Manager (and any other
 mTLS-protected backend) with a client certificate read from disk at boot.
 When `bootroot` rotates that certificate the BFF must re-read the new
 files **without restarting** so the next outbound request rides the
@@ -87,8 +87,8 @@ Run the rotation against a fresh server start, then confirm:
 
 1. The BFF process ID is unchanged after `bootroot rotate
    force-reissue`.
-2. The next outbound GraphQL request to REview presents the new client
-   cert serial. The simplest check is REview's access log; a debug echo
+2. The next outbound GraphQL request to Central Manager presents the new client
+   cert serial. The simplest check is Central Manager's access log; a debug echo
    route that reflects `X-Client-Cert-Serial` works equally well in a
    staging environment.
 3. In-flight long-poll or streaming connections established before the

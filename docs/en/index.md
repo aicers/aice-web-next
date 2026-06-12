@@ -24,7 +24,7 @@ events, investigation workflows, triage, and reporting.
 ## Architecture Overview
 
 ```text
-Browser ──► Next.js (aice-web-next) ──► review-web (GraphQL)
+Browser ──► Next.js (aice-web-next) ──► Central Manager (GraphQL)
               │         │                    │
               │         └─► auth_db (PG)     ├─ mTLS handshake
               │                              ├─ Context JWT verification

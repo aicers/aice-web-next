@@ -38,7 +38,7 @@ const LABELS: SensorMultiSelectLabels = {
   removeSelection: "Remove {name}",
   comingSoonLabel: "Coming soon",
   comingSoonHint:
-    "Sensor options become available once REview publishes the sensor-list endpoint.",
+    "Sensor options become available once Central Manager publishes the sensor-list endpoint.",
   loadingLabel: "Loading sensors…",
   loadingHint: "Fetching the sensor list from the detection backend.",
   errorLabel: "Could not load sensors",

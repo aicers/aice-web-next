@@ -1,7 +1,7 @@
 <?xml version="1.0" encoding="UTF-8"?>
 <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 760 460" font-family="-apple-system, Segoe UI, Roboto, Helvetica, Arial, sans-serif" role="img" aria-labelledby="title desc">
   <title id="title">Event page — Conn vertical slice (wireframe)</title>
-  <desc id="desc">Wireframe of the /event page. A Filters card holds the record-type selector ("Connection (Conn)"), a single sensor selector, a quick-range dropdown, a start/end time range, and source/destination IP and port range inputs, with Apply and Reset buttons. Below it a results table lists Conn records with columns Time, Source, Destination, Protocol, State, Service, Bytes out and Bytes in; a row opens a detail panel. A Prev/Next cursor paginator and a rows-per-page selector sit under the table. No total count is shown because Giganto connections do not expose one.</desc>
+  <desc id="desc">Wireframe of the /event page. A Filters card holds the record-type selector ("Connection (Conn)"), a single sensor selector, a quick-range dropdown, a start/end time range, and source/destination IP and port range inputs, with Apply and Reset buttons. Below it a results table lists Conn records with columns Time, Source, Destination, Protocol, State, Service, Bytes out and Bytes in; a row opens a detail panel. A Prev/Next cursor paginator and a rows-per-page selector sit under the table. No total count is shown because Data Store connections do not expose one.</desc>
   <style>
     .bg { fill: #fafafa; }
     .panel { fill: #ffffff; stroke: #e5e7eb; stroke-width: 1; }
@@ -23,7 +23,7 @@
 
   <rect class="bg" width="760" height="460"/>
   <text x="24" y="32" class="h1">Event</text>
-  <text x="24" y="48" class="sub">Browse source events collected by Giganto.</text>
+  <text x="24" y="48" class="sub">Browse source events collected by Data Store.</text>
 
   <!-- Filters card -->
   <rect class="panel" x="24" y="60" width="712" height="150" rx="6" ry="6"/>
@@ -113,5 +113,5 @@
   <rect class="btn" x="644" y="364" width="62" height="26" rx="4"/>
   <text x="675" y="381" class="btn-text" text-anchor="middle">Next ›</text>
 
-  <text x="24" y="424" class="muted">Wireframe stand-in — the table shows data received from Giganto, so it ships as a placeholder until a real-data capture is taken.</text>
+  <text x="24" y="424" class="muted">Wireframe stand-in — the table shows data received from Data Store, so it ships as a placeholder until a real-data capture is taken.</text>
 </svg>

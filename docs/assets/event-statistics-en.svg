@@ -1,7 +1,7 @@
 <?xml version="1.0" encoding="UTF-8"?>
 <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 760 460" font-family="-apple-system, Segoe UI, Roboto, Helvetica, Arial, sans-serif" role="img" aria-labelledby="title desc">
   <title id="title">Event page — Statistics view (wireframe)</title>
-  <desc id="desc">Wireframe of the /event page Statistics view. A view-mode toggle at the top offers Events and Statistics, with Statistics active. A Filters card holds a multi-select sensor list (checkboxes), a quick-range dropdown, start/end time inputs, and a protocol multi-select constrained to the allowed Giganto protocol keys, with Apply and Reset buttons. Below it a metric selector (bits per second, packets per second, events per second, count, size) sits above a line chart that draws one series per protocol over time, with a legend. The X-axis shows time and the Y-axis shows the selected metric.</desc>
+  <desc id="desc">Wireframe of the /event page Statistics view. A view-mode toggle at the top offers Events and Statistics, with Statistics active. A Filters card holds a multi-select sensor list (checkboxes), a quick-range dropdown, start/end time inputs, and a protocol multi-select constrained to the allowed Data Store protocol keys, with Apply and Reset buttons. Below it a metric selector (bits per second, packets per second, events per second, count, size) sits above a line chart that draws one series per protocol over time, with a legend. The X-axis shows time and the Y-axis shows the selected metric.</desc>
   <style>
     .bg { fill: #fafafa; }
     .panel { fill: #ffffff; stroke: #e5e7eb; stroke-width: 1; }
@@ -26,7 +26,7 @@
   <rect class="bg" x="0" y="0" width="760" height="460" />
 
   <text class="h1" x="24" y="34">Event</text>
-  <text class="sub" x="24" y="52">Browse source events collected by Giganto.</text>
+  <text class="sub" x="24" y="52">Browse source events collected by Data Store.</text>
 
   <!-- View-mode toggle -->
   <rect class="tab-off" x="24" y="66" width="80" height="26" rx="6" />

@@ -1,7 +1,7 @@
 <?xml version="1.0" encoding="UTF-8"?>
 <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 760 460" font-family="-apple-system, Segoe UI, Roboto, Helvetica, Arial, sans-serif" role="img" aria-labelledby="title desc">
   <title id="title">Event page — Time Series view (wireframe)</title>
-  <desc id="desc">Wireframe of the /event page Periodic Time Series view. A view-mode toggle at the top offers Events, Statistics, and Time Series, with Time Series active. A Filters card holds a sampling-policy dropdown (the id selector, populated from REview's samplingPolicyList), a quick-range dropdown, and start/end time inputs, with Apply and Reset buttons. Below it a line chart draws the selected policy's numeric data series; a caption shows the series origin time, the X-axis is the cumulative sample index, and the Y-axis is the value.</desc>
+  <desc id="desc">Wireframe of the /event page Periodic Time Series view. A view-mode toggle at the top offers Events, Statistics, and Time Series, with Time Series active. A Filters card holds a sampling-policy dropdown (the id selector, populated from Central Manager's samplingPolicyList), a quick-range dropdown, and start/end time inputs, with Apply and Reset buttons. Below it a line chart draws the selected policy's numeric data series; a caption shows the series origin time, the X-axis is the cumulative sample index, and the Y-axis is the value.</desc>
   <style>
     .bg { fill: #fafafa; }
     .panel { fill: #ffffff; stroke: #e5e7eb; stroke-width: 1; }
@@ -25,7 +25,7 @@
   <rect class="bg" x="0" y="0" width="760" height="460" />
 
   <text class="h1" x="24" y="34">Event</text>
-  <text class="sub" x="24" y="52">Browse source events collected by Giganto.</text>
+  <text class="sub" x="24" y="52">Browse source events collected by Data Store.</text>
 
   <!-- View-mode toggle -->
   <rect class="tab-off" x="24" y="66" width="80" height="26" rx="6" />

@@ -516,7 +516,7 @@
     },
     "managerUnavailable": {
       "title": "매니저에 연결할 수 없습니다",
-      "description": "매니저(review-web)에 연결할 수 없습니다. 연결이 복구되기 전까지 노드를 조회하거나 수정할 수 없습니다.",
+      "description": "Central Manager에 연결할 수 없습니다. 연결이 복구되기 전까지 노드를 조회하거나 수정할 수 없습니다.",
       "retry": "다시 시도"
     },
     "status": {
@@ -668,7 +668,7 @@
     },
     "applyPreview": {
       "title": "적용 미리보기",
-      "description": "확인 전에 BFF가 실행할 디스패치를 검토하세요. review-web 내부 단계는 표시되지 않으며 디스패치 순서만 보입니다.",
+      "description": "확인 전에 BFF가 실행할 디스패치를 검토하세요. Central Manager 내부 단계는 표시되지 않으며 디스패치 순서만 보입니다.",
       "loading": "계획을 구성 중…",
       "loadFailed": "적용 계획을 구성할 수 없습니다.",
       "rebuildToRecover": "적용하려면 미리보기를 다시 빌드하세요.",
@@ -1369,7 +1369,7 @@
   },
   "event": {
     "title": "이벤트",
-    "description": "Giganto가 수집한 원본 이벤트를 조회합니다.",
+    "description": "Data Store가 수집한 원본 이벤트를 조회합니다.",
     "recordType": "레코드 유형",
     "recordTypes": {
       "conn": "연결 (Conn)",
@@ -1437,7 +1437,7 @@
     },
     "statistics": {
       "sensors": "센서",
-      "noSensorsAvailable": "Giganto에서 사용할 수 있는 센서가 없습니다.",
+      "noSensorsAvailable": "Data Store에서 사용할 수 있는 센서가 없습니다.",
       "sensorRequired": "통계를 보려면 센서를 하나 이상 선택하세요.",
       "protocols": "프로토콜",
       "protocolsHint": "모두 선택하지 않으면 모든 프로토콜이 포함됩니다.",
@@ -1457,8 +1457,8 @@
       "policy": "샘플링 정책",
       "policyPlaceholder": "샘플링 정책을 선택하세요",
       "policyRequired": "시계열을 보려면 샘플링 정책을 선택하세요.",
-      "noPoliciesAvailable": "REview에서 사용할 수 있는 샘플링 정책이 없습니다.",
-      "policiesUnavailable": "REview에서 샘플링 정책 목록을 불러올 수 없습니다.",
+      "noPoliciesAvailable": "Central Manager에서 사용할 수 있는 샘플링 정책이 없습니다.",
+      "policiesUnavailable": "Central Manager에서 샘플링 정책 목록을 불러올 수 없습니다.",
       "origin": "계열 기준 시각: {start}",
       "sample": "샘플 {index}",
       "value": "값",
@@ -1534,8 +1534,8 @@
       "prequery": "센서를 선택하고 필터를 적용하여 원본 이벤트를 검색하세요.",
       "empty": "현재 필터와 일치하는 이벤트가 없습니다.",
       "loading": "이벤트 불러오는 중…",
-      "error": "Giganto에 연결할 수 없습니다. 나중에 다시 시도하세요.",
-      "sensorsUnavailable": "Giganto에서 센서 목록을 불러올 수 없습니다."
+      "error": "Data Store에 연결할 수 없습니다. 나중에 다시 시도하세요.",
+      "sensorsUnavailable": "Data Store에서 센서 목록을 불러올 수 없습니다."
     },
     "fields": {
       "aaFlag": "권한 응답 플래그",
@@ -1912,7 +1912,7 @@
         "selectedSummary": "{count}개 선택됨",
         "removeSelection": "{name} 제거",
         "comingSoonLabel": "곧 제공됩니다",
-        "comingSoonHint": "REview가 센서 목록 엔드포인트를 제공하면 센서 옵션이 활성화됩니다.",
+        "comingSoonHint": "Central Manager가 센서 목록 엔드포인트를 제공하면 센서 옵션이 활성화됩니다.",
         "loadingLabel": "센서 목록을 불러오는 중…",
         "loadingHint": "탐지 백엔드에서 센서 목록을 가져오는 중입니다.",
         "errorLabel": "센서 목록을 불러오지 못했습니다",
@@ -2753,7 +2753,7 @@
       "toastSuccessTemplate": "재빌드 완료: {deleted}건 삭제, {inserted}건 삽입",
       "toastBusy": "이 고객에 대해 케이던스 또는 다른 재빌드가 쓰는 중입니다. 잠시 후 다시 시도하세요.",
       "toastTimeout": "재빌드 시간 초과 (300초 한도). 기간을 분할하여 다시 시도하세요.",
-      "toastIncomplete": "재빌드 중단: review 페이지네이터가 범위를 소진하지 못했습니다. 선별 후보는 변경되지 않았습니다. 기간을 분할하여 다시 시도하거나, 페이지 수가 예상과 다르면 리졸버를 점검하세요.",
+      "toastIncomplete": "재빌드 중단: Central Manager 페이지네이터가 범위를 소진하지 못했습니다. 선별 후보는 변경되지 않았습니다. 기간을 분할하여 다시 시도하거나, 페이지 수가 예상과 다르면 리졸버를 점검하세요.",
       "toastErrorPrefix": "재빌드 실패:",
       "rebuildingOverlay": "이 기간 다시 빌드 중..."
     },
@@ -2786,7 +2786,7 @@
       "evictionTemplate": "캐시 가득 참 — {dimension}: {value} 항목이 제거되었습니다. 다시 연관 분석하면 재조회합니다.",
       "evictionDismiss": "닫기",
       "errorTemplate": "{dimension}: {value} 조회 실패 — {message}",
-      "errorFallbackMessage": "REview에서 메시지를 반환하지 않았습니다.",
+      "errorFallbackMessage": "Central Manager에서 메시지를 반환하지 않았습니다.",
       "errorDismiss": "닫기",
       "prefetchModal": {
         "title": "큰 결과를 조회하시겠습니까?",

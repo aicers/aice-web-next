@@ -1,8 +1,8 @@
 # Event
 
 The Event page is accessed from the sidebar. It browses **source
-events** collected by Giganto — the raw records the backend ingests,
-before any detection logic runs. It covers all 34 Giganto record types:
+events** collected by Data Store — the raw records the backend ingests,
+before any detection logic runs. It covers all 34 Data Store record types:
 the 20 network types — connection (**Conn**) plus the 19 protocol
 types — and the 14 Sysmon / Windows endpoint types, all listed under
 [Record types](#record-types). Each type has type-appropriate columns
@@ -20,7 +20,7 @@ without it is redirected away.
 !!! note "Wireframe stand-in"
 
     The figure above is an SVG wireframe rather than a real capture.
-    The results table shows data received from Giganto, so a real
+    The results table shows data received from Data Store, so a real
     screenshot is taken from a stack with real data loaded and replaces
     this placeholder in the final documentation sweep.
 
@@ -43,10 +43,10 @@ filter, so switching back and forth does not discard any of them.
 
 The Filters card at the top of the page builds a query. Nothing is
 fetched until you choose a sensor and select **Apply** — a sensor is
-required because Giganto scopes every network query to exactly one
+required because Data Store scopes every network query to exactly one
 sensor.
 
-- **Record type** — the kind of source event to browse. All 34 Giganto
+- **Record type** — the kind of source event to browse. All 34 Data Store
   record types are selectable (see [Record types](#record-types)). The
   new type takes effect when you select **Apply**, which re-runs the
   search and swaps the results columns and detail layout for that type.
@@ -54,7 +54,7 @@ sensor.
   show the IP/port ranges below, while Sysmon types show a single
   **Agent ID** field instead (see below).
 - **Sensor** — the single sensor to query. The list is populated from
-  the sensors Giganto has ingested data for. If the list cannot be
+  the sensors Data Store has ingested data for. If the list cannot be
   loaded, the selector is disabled and a notice is shown. The sensor is
   required for every record type, network and Sysmon alike.
 - **Period** — quick-select pills that fill the start/end time range with
@@ -75,13 +75,13 @@ sensor.
 - **Agent ID** — shown **only for Sysmon types**, in place of the IP and
   port ranges. Sysmon events are scoped by the reporting agent rather
   than by network address, so this is a free-text match on the agent id
-  (Giganto exposes no agent list to populate a dropdown). When you switch
+  (Data Store exposes no agent list to populate a dropdown). When you switch
   between a network type and a Sysmon type, the inputs that do not apply
   to the new type are hidden, cleared, and dropped from both the query
   and the bookmarkable URL, so a value typed for one family never leaks
   into the other — not even after a reload or after switching back.
 
-There is no separate protocol filter: Giganto's network filter has no
+There is no separate protocol filter: Data Store's network filter has no
 protocol field, so the IP protocol cannot be used as a query input. It
 is shown per record in the **Protocol** results column instead.
 
@@ -110,7 +110,7 @@ columns. For **Conn**, the summary columns are:
 Each other record type curates its own summary columns (for example HTTP
 shows method, host, URI, and status code). Wide types render only a
 short default column set in the table; the full field list is in the row
-detail. Byte and packet counts and durations are 64-bit values Giganto
+detail. Byte and packet counts and durations are 64-bit values Data Store
 returns as strings; they are formatted for display without losing
 precision.
 
@@ -135,7 +135,7 @@ are rendered as labelled sub-blocks.
 
 ## Record types
 
-All 34 Giganto record types are selectable in the **Record type**
+All 34 Data Store record types are selectable in the **Record type**
 filter. The 20 network types come first:
 
 | Group | Types |
@@ -190,20 +190,20 @@ A few Sysmon types are worth noting:
 
 ## Pagination
 
-Giganto returns results as a cursor-based connection that does **not**
+Data Store returns results as a cursor-based connection that does **not**
 expose a total count, so the paginator is **Previous / Next** only —
 there is no total, no "last page", and no go-to-page jump.
 
 - **Previous** and **Next** step one page at a time and are enabled only
-  when Giganto reports another page in that direction.
+  when Data Store reports another page in that direction.
 - **Rows per page** selects the page size (25, 50, or 100). 100 is the
-  maximum Giganto accepts.
+  maximum Data Store accepts.
 
 Changing the page size restarts from the first page.
 
 ## Statistics
 
-The **Statistics** view aggregates Giganto's per-protocol traffic
+The **Statistics** view aggregates Data Store's per-protocol traffic
 metrics into a time-series chart instead of listing individual records.
 Select it from the [view toggle](#views).
 
@@ -212,7 +212,7 @@ Select it from the [view toggle](#views).
 !!! note "Wireframe stand-in"
 
     The figure above is an SVG wireframe rather than a real capture.
-    The chart shows data received from Giganto, so a real screenshot is
+    The chart shows data received from Data Store, so a real screenshot is
     taken from a stack with real data loaded and replaces this
     placeholder in the final documentation sweep.
 
@@ -229,7 +229,7 @@ Select it from the [view toggle](#views).
   API tracks (Conn, DNS, Malformed DNS, RADIUS, RDP, HTTP, SMTP, NTLM,
   Kerberos, SSH, DCE/RPC, FTP, MQTT, LDAP, TLS, SMB, NFS, BOOTP, DHCP,
   ICMP, and Statistics). Leave every box unchecked to include all of
-  them. The picker only offers these keys because Giganto rejects any
+  them. The picker only offers these keys because Data Store rejects any
   other protocol value.
 
 ### Chart
@@ -240,11 +240,11 @@ A **Metric** selector chooses which value to plot — **bits per second**,
 Plotting every metric at once would be unreadable, so the metric is a
 display switch over the already-fetched data and does not re-query.
 
-The X-axis is the bucket time. Giganto reports each bucket's timestamp
+The X-axis is the bucket time. Data Store reports each bucket's timestamp
 as an epoch-nanosecond value, which is converted to a calendar time for
 the axis. The 64-bit `count` and `size` values can exceed what a chart
 coordinate can hold exactly, so the plotted line may round above
-2^53; the tooltip always shows the exact integer Giganto returned.
+2^53; the tooltip always shows the exact integer Data Store returned.
 
 ## Time Series
 
@@ -257,7 +257,7 @@ it from the [view toggle](#views).
 !!! note "Wireframe stand-in"
 
     The figure above is an SVG wireframe rather than a real capture.
-    The chart shows data received from Giganto, so a real screenshot is
+    The chart shows data received from Data Store, so a real screenshot is
     taken from a stack with real data loaded and replaces this
     placeholder in the final documentation sweep.
 
@@ -265,8 +265,8 @@ it from the [view toggle](#views).
 
 - **Sampling policy** — a single-select dropdown that chooses which
   series to chart. The options are the sampling policies defined in
-  REview; each option's label is the policy name. A policy is **required**
-  before **Apply** is enabled, because Giganto keys a time series by its
+  Central Manager; each option's label is the policy name. A policy is **required**
+  before **Apply** is enabled, because Data Store keys a time series by its
   policy id. If the policy list cannot be loaded, the selector is
   disabled and a notice is shown.
 - **Period** and **Time range** — the same one-week-capped period pills
@@ -276,8 +276,8 @@ it from the [view toggle](#views).
 
 Reading the sampling policy list and the series both require the
 `event:read` permission — the same gate as the rest of the Event menu.
-The policy list is sourced from REview while the series itself comes from
-Giganto; no additional permission is needed.
+The policy list is sourced from Central Manager while the series itself comes from
+Data Store; no additional permission is needed.
 
 ### Chart
 

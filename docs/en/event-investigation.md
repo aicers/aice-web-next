@@ -24,7 +24,7 @@ valid event link.
 
 The page is served at `/detection/events/<eventToken>`. A detection
 event belongs to the Detection (탐지) domain — it is the subset of
-source events that detection flagged, stored in REview and read with
+source events that detection flagged, stored in Central Manager and read with
 the `detection:read` permission — so the route is nested under
 `/detection/`. This keeps URL, concept, and menu aligned: the
 **탐지** sidebar menu stays highlighted while the page is open,
@@ -394,7 +394,7 @@ purpose-built external tool.
 
 Threat metadata for the event: threat name (from the
 subtype's `attackKind` field where present), threat category
-(REview's `ThreatCategory`, treated as a MITRE tactic),
+(Central Manager's `ThreatCategory`, treated as a MITRE tactic),
 threat level, and — when the event matches the built-in
 MITRE catalogue — a structured **MITRE ATT&CK** card with
 the resolved tactic, technique, and (where applicable)
@@ -408,7 +408,7 @@ entries) and falls back to the event's `__typename`
 (explanation only) and `category` (tactic only). It lives in
 `src/lib/events/mitre-catalogue.ts` and is the extension
 point both for adding new techniques and for merging
-REview-sourced strings later behind the same lookup.
+Central Manager-sourced strings later behind the same lookup.
 
 ### Related Events
 
@@ -427,7 +427,7 @@ new Detection page pre-filtered to the relevant activity:
 
 When the tab activates, the page issues one `eventList`
 lookup per pivot to populate a small **Count / Last seen**
-snippet next to each row. Counts come from REview's
+snippet next to each row. Counts come from Central Manager's
 `totalCount`. Because the detection service's `eventList`
 documents no sort order, the timestamp is computed
 client-side as the max `time` across a bounded sample of the

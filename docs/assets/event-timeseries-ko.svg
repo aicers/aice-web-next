@@ -1,7 +1,7 @@
 <?xml version="1.0" encoding="UTF-8"?>
 <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 760 460" font-family="-apple-system, Segoe UI, Roboto, Helvetica, Arial, sans-serif" role="img" aria-labelledby="title desc">
   <title id="title">이벤트 페이지 — 시계열 보기 (와이어프레임)</title>
-  <desc id="desc">/event 페이지 주기 시계열 보기의 와이어프레임. 상단의 보기 토글은 이벤트, 통계, 시계열을 제공하며 시계열이 활성 상태입니다. 필터 카드에는 샘플링 정책 드롭다운(REview의 samplingPolicyList로 채워지는 id 선택기), 빠른 범위 드롭다운, 시작/종료 시간 입력이 있으며 적용과 초기화 버튼이 있습니다. 그 아래 라인 차트는 선택한 정책의 숫자 데이터 계열을 그립니다. 캡션은 계열 기준 시각을 표시하고, X축은 누적 샘플 인덱스, Y축은 값입니다.</desc>
+  <desc id="desc">/event 페이지 주기 시계열 보기의 와이어프레임. 상단의 보기 토글은 이벤트, 통계, 시계열을 제공하며 시계열이 활성 상태입니다. 필터 카드에는 샘플링 정책 드롭다운(Central Manager의 samplingPolicyList로 채워지는 id 선택기), 빠른 범위 드롭다운, 시작/종료 시간 입력이 있으며 적용과 초기화 버튼이 있습니다. 그 아래 라인 차트는 선택한 정책의 숫자 데이터 계열을 그립니다. 캡션은 계열 기준 시각을 표시하고, X축은 누적 샘플 인덱스, Y축은 값입니다.</desc>
   <style>
     .bg { fill: #fafafa; }
     .panel { fill: #ffffff; stroke: #e5e7eb; stroke-width: 1; }
@@ -25,7 +25,7 @@
   <rect class="bg" x="0" y="0" width="760" height="460" />
 
   <text class="h1" x="24" y="34">이벤트</text>
-  <text class="sub" x="24" y="52">Giganto가 수집한 원본 이벤트를 탐색합니다.</text>
+  <text class="sub" x="24" y="52">Data Store가 수집한 원본 이벤트를 탐색합니다.</text>
 
   <!-- View-mode toggle -->
   <rect class="tab-off" x="24" y="66" width="80" height="26" rx="6" />
