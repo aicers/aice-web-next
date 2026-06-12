@@ -1,6 +1,15 @@
 import { fireEvent, render, screen } from "@testing-library/react";
 import { describe, expect, it, vi } from "vitest";
 
+// `TriagePivotBreadcrumb` resolves `sameKindWithin15Min` crumb times
+// through `useTimestampFormatter`, which reads the active locale via
+// next-intl; mock it so the breadcrumb renders without a real
+// `NextIntlClientProvider`.
+vi.mock("next-intl", () => ({
+  useLocale: () => "en",
+  useTranslations: () => (key: string) => key,
+}));
+
 import { TriagePivotBreadcrumb } from "@/components/triage/pivot/pivot-breadcrumb";
 import type { PivotDimensionId, PivotStep } from "@/lib/triage/pivot";
 
@@ -95,5 +104,37 @@ describe("TriagePivotBreadcrumb — Story origin (#553)", () => {
     expect(screen.getByText("Asset 10.0.0.1").textContent).toBe(
       "Asset 10.0.0.1",
     );
+  });
+});
+
+describe("TriagePivotBreadcrumb — sameKindWithin15Min crumb (#764 Part 3)", () => {
+  it("renders the same-kind crumb time through the central compact formatter, never the raw ISO label", () => {
+    const ms = Date.UTC(2026, 5, 12, 9, 30);
+    const iso = new Date(ms).toISOString();
+    render(
+      <TriagePivotBreadcrumb
+        trail={[
+          {
+            kind: "dimension",
+            dimension: "sameKindWithin15Min",
+            value: {
+              key: `Conn@${ms}`,
+              // The stored label embeds the raw `toISOString()` instant —
+              // exactly what must NOT reach the breadcrumb.
+              label: `Conn near ${iso}`,
+            },
+          },
+        ]}
+        origin={{ kind: "asset" }}
+        onSelect={() => {}}
+        labels={LABELS}
+      />,
+    );
+    // Post-mount the crumb shows the localized compact instant…
+    const crumb = screen.getByText(/^sameKindWithin15Min: Conn near /);
+    expect(crumb.getAttribute("aria-current")).toBe("page");
+    // …and never the raw UTC ISO string from the stored label.
+    expect(crumb.textContent).not.toContain(iso);
+    expect(crumb.textContent).not.toContain("T09:30");
   });
 });

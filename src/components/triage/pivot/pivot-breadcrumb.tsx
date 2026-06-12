@@ -1,7 +1,9 @@
 "use client";
 
+import { useTimestampFormatter } from "@/components/timestamp";
 import {
   describePivotStep,
+  displayPivotValueLabel,
   type PivotDimensionId,
   type PivotOrigin,
   type PivotStep,
@@ -50,6 +52,7 @@ export function TriagePivotBreadcrumb({
   onSelectStoryOrigin,
   labels,
 }: TriagePivotBreadcrumbProps) {
+  const { formatCompact } = useTimestampFormatter();
   const isStoryOrigin = origin.kind === "story";
   if (!isStoryOrigin && trail.length === 0) return null;
   const lastTrailIndex = trail.length - 1;
@@ -96,12 +99,26 @@ export function TriagePivotBreadcrumb({
             step,
             (id) => labels.dimensions[id],
           );
+          // A `sameKindWithin15Min` step stores a machine-readable label
+          // embedding a raw `toISOString()` instant; route the dimension
+          // value through the central display helper (compact form) so the
+          // crumb shows a localized time and never flashes raw UTC ISO
+          // pre-mount — the same contract the chip/header/baseline surfaces
+          // already use (Part 3 of #764).
+          const valueLabel =
+            step.kind === "dimension"
+              ? displayPivotValueLabel(
+                  step.dimension,
+                  step.value,
+                  formatCompact,
+                )
+              : labelParts.valueLabel;
           const text =
             step.kind === "asset"
               ? `${labels.rootCrumbPrefix} ${labelParts.valueLabel}`
               : labels.dimensionCrumbTemplate
                   .replace("{dimension}", labelParts.dimensionLabel)
-                  .replace("{value}", labelParts.valueLabel);
+                  .replace("{value}", valueLabel);
           return (
             <li
               // biome-ignore lint/suspicious/noArrayIndexKey: breadcrumb is positional and a duplicate step is appended-collapsed
