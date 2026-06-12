@@ -46,7 +46,7 @@ Rows whose comparison flags any drift render with:
 - A small amber dot beside any service status icon whose service is
   pending.
 - A small slate **unknown** dot beside an external-service status icon
-  when the page-load read of Giganto / Tivan failed for that kind. The
+  when the page-load read of Data Store / Tivan failed for that kind. The
   pending state cannot be answered against an unreachable endpoint, so
   the row shows the unknown indicator instead of silently rendering as
   "no pending changes".
@@ -187,7 +187,7 @@ emitted instead). When the user toggled an agent service's
 
 ### Server-conflict mapping
 
-REview's GraphQL surface returns plain-text error messages for
+Central Manager's GraphQL surface returns plain-text error messages for
 uniqueness and scope conflicts. The BFF matches each message against
 the pattern table in `decisions/node-conflict-patterns.md` and routes
 the typed error to the correct field:
@@ -349,7 +349,7 @@ confirmation:
    `failed_terminal` immediately (no retry will succeed until the
    operator edits the profile).
 3. **External step.** For each external service that had a pending
-   non-null `draft` at apply-build time (Giganto for `DATA_STORE`,
+   non-null `draft` at apply-build time (Data Store for `DATA_STORE`,
    Tivan for `TI_CONTAINER`), dispatches the upstream
    `updateConfig(old, new)` mutation against the service. `old` is
    read fresh from the service on every dispatch (including
@@ -413,7 +413,7 @@ The recheck is performed at two layers:
    deleted between confirm and a subsequent retry. This is critical
    for `retryDispatch` whose target is an external service: the
    external dispatcher otherwise talks to the deployment-global
-   Giganto / Tivan endpoints with no per-node guard of its own.
+   Data Store / Tivan endpoints with no per-node guard of its own.
    Without this wrapper-level recheck, an actor whose customer
    scope shrank between confirm and retry could keep driving
    `updateConfig` against an out-of-scope node, and a globally-
@@ -422,7 +422,7 @@ The recheck is performed at two layers:
    payload cannot bypass the check because the `customerId` and
    the existence verdict are both read from the manager DB, not
    trusted from the request. For tenant-scoped callers, both
-   possible review-web responses for an out-of-scope node — a
+   possible Central Manager responses for an out-of-scope node — a
    filtered `null` payload *and* a `NOT_FOUND` GraphQL error — are
    mapped to `NodePermissionError` (mirroring the create-attempt
    surface), so the wrapper never leaks "this node exists but you
@@ -629,7 +629,7 @@ returns the planned dispatch list — the **top-level dispatches the
 BFF itself orchestrates**: the upstream `applyNodeDraft` mutation,
 the upstream `applyAgentConfig` mutation, then one `updateConfig`
 per external service whose draft is pending at plan-build time.
-Internal review-web execution stages are not surfaced; the modal
+Internal Central Manager execution stages are not surfaced; the modal
 only renders the dispatch sequence the BFF will issue.
 
 Each row shows the dispatch kind label
@@ -922,7 +922,7 @@ Per-type signal rules:
   successful response renders **On**; any error — connection refused,
   HTTP 500, GraphQL `errors[]`, schema mismatch — renders **Off**.
   External services have no Idle state in v1. Probes are staggered so
-  Giganto and Tivan are not hit on the same tick; the per-service
+  Data Store and Tivan are not hit on the same tick; the per-service
   cadence defaults to `NEXT_PUBLIC_NODE_STATUS_POLL_MS`.
 
 - **Dead-node override** — when the node's `ping` is `null` (the node

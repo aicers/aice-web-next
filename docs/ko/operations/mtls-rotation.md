@@ -1,6 +1,6 @@
 # mTLS 인증서 교체
 
-BFF는 부팅 시 디스크에서 읽은 클라이언트 인증서로 REview(또는 다른
+BFF는 부팅 시 디스크에서 읽은 클라이언트 인증서로 Central Manager(또는 다른
 mTLS 보호 백엔드)에 대한 외부 GraphQL 요청을 인증합니다. `bootroot`
 가 인증서를 교체하면 BFF는 **재시작 없이** 새 파일을 다시 읽어
 다음 외부 요청부터 새 자격 증명을 사용해야 하며, 이미 진행 중인
@@ -86,8 +86,8 @@ PID 1에게 `SIGHUP`을 전달해야 합니다. 그렇지 않으면 애플리케
 
 1. `bootroot rotate force-reissue` 이후에도 BFF 프로세스 ID가 변경되지
    않았는지 확인합니다.
-2. REview로 향한 다음 외부 GraphQL 요청이 새 클라이언트 인증서 시리얼을
-   제시하는지 확인합니다. 가장 단순한 확인은 REview의 액세스 로그이며,
+2. Central Manager로 향한 다음 외부 GraphQL 요청이 새 클라이언트 인증서 시리얼을
+   제시하는지 확인합니다. 가장 단순한 확인은 Central Manager의 액세스 로그이며,
    스테이징 환경에서는 `X-Client-Cert-Serial`을 그대로 반사하는 디버그
    에코 라우트도 동등하게 활용할 수 있습니다.
 3. 신호 이전에 수립된 long-poll/스트리밍 연결이 기존 TLS 세션 위에서

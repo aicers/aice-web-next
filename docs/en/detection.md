@@ -212,7 +212,7 @@ once without losing context.
 
     The tab-bar illustration above is an SVG wireframe rather than a
     real capture. The bar sits above the filter chip bar and renders
-    alongside the same live REview-backed result list; the authoring
+    alongside the same live Central Manager-backed result list; the authoring
     worktree has no staging backend with seeded detection data, so a
     PNG captured here would show the empty-state panel rather than
     a populated multi-tab session. Per `docs/AUTHORING.md`'s
@@ -415,7 +415,7 @@ A single header line above the list shows:
 
 - The result count and time range
   (`Detected events <range> / <totalCount>`). Total counts are
-  64-bit safe — REview returns them as strings to avoid loss of
+  64-bit safe — Central Manager returns them as strings to avoid loss of
   precision, and the UI displays them verbatim.
 - An **Updated _N_ ago** label that refreshes itself in the
   background so you can see how stale the current view is.
@@ -445,7 +445,7 @@ Each detection event renders as a compact two-line entry:
   plus a `+N more` button; clicking the button opens an inline
   popover listing every hidden IP or port. The user / host cells
   are pivotable when the event subtype emits the underlying field
-  per the REview schema — see the [Pivot section](#pivot-drill-down-from-result-cells)
+  per the Central Manager schema — see the [Pivot section](#pivot-drill-down-from-result-cells)
   for the full list of subtypes that emit each field. Subtypes
   that do not emit the field render the cell as a non-pivotable
   `User: —` / `Host: —` token so the column position stays stable
@@ -546,7 +546,7 @@ The pivotable cells in v1:
 
 The user / host identity cells follow the sensor on the second
 line of every row. The cell is pivotable when the event subtype
-emits the underlying field per the REview schema:
+emits the underlying field per the Central Manager schema:
 
 - **userName** — HTTP-class events (`HttpThreat`, `BlocklistHttp`,
   `DomainGenerationAlgorithm`, `NonBrowser`, `TorConnection`) and
@@ -565,7 +565,7 @@ there is no value to merge into the active filter.
 Three more columns the pivot engine recognises — `userId`,
 `userDepartment`, and `direction` (`FlowKind`) — are tracked in
 [issue #348](https://github.com/aicers/aice-web-next/issues/348)
-and will only become actionable once REview extends the per-event
+and will only become actionable once Central Manager extends the per-event
 payload to include them. They are not surfaced in the row today.
 
 A click that would only re-narrow the **active tab** by a value it
@@ -745,18 +745,18 @@ controls, and a **Go to page** input for rare deep seeks.
 ![Detection pagination controls](../assets/detection-pagination-en.png)
 
 - **Rows per page** toggles between `25`, `50`, and `100`. The
-  default is `50`; `100` matches REview 0.47.0's hard upper bound on
+  default is `50`; `100` matches Central Manager 0.47.0's hard upper bound on
   Relay `first` / `last` arguments. Changing the size keeps the
   operator near the start of the current window: on page 3 at
   `50/page` (rows 101–150), switching to `100/page` lands on page 2
   (rows 101–200) instead of snapping back to page 1. Because
-  REview cursors are page-size scoped, this is accomplished by
+  Central Manager cursors are page-size scoped, this is accomplished by
   walking forward from head at the new size — the same cursor
   walk Go-to-page uses — so deep windows cost one request per
   page traversed.
 - The **range indicator** formats totals and page bounds with
   locale-aware grouping (for example, `1–50 of 1,453`). Totals are
-  BigInt-safe: REview returns them as strings and the UI preserves
+  BigInt-safe: Central Manager returns them as strings and the UI preserves
   that precision end-to-end, so counts beyond `2^53` still render
   without rounding.
 - **First / Previous / Next / Last** walk adjacent windows.
@@ -837,7 +837,7 @@ Pick the dimension that powers the Top N chart from the dropdown:
 - **Source IP** (`origAddr`)
 - **Destination IP** (`respAddr`)
 - **Country** — combined originator + responder country codes; the
-  REview sentinel codes `XX` (location unknown) and `ZZ` (location
+  Central Manager sentinel codes `XX` (location unknown) and `ZZ` (location
   database unavailable) appear with localized labels.
 - **Threat Category** — MITRE-style category labels.
 - **Threat Level** — `Low`, `Medium`, `High`.
@@ -877,7 +877,7 @@ matches the result-list pivot contract from
 [Pivot (drill-down) from result cells](#pivot-drill-down-from-result-cells):
 already-narrowed filters surface a "Already filtered by …" toast
 instead of duplicating a tab. Country rows are not clickable
-because REview's `eventCountsByCountry` mixes originator and
+because Central Manager's `eventCountsByCountry` mixes originator and
 responder rows and a single click cannot decide between
 `origCountry` and `respCountry`.
 
@@ -891,7 +891,7 @@ from the result list:
   broadening the filter rather than the result list's "open
   filters" affordance, because the result list is already showing
   the same zero-events condition.
-- **Error** — REview rejected one of the queries; a `Retry` button
+- **Error** — Central Manager rejected one of the queries; a `Retry` button
   re-issues the pair without affecting the result list.
 - **Forbidden** — your account lacks `detection:read`. The same
   permission already gates the result list, so this state is
@@ -1022,9 +1022,9 @@ chip-name lookups during that brief loading window.
 > the result region (or export banner) shows an actionable
 > **This filter references a customer outside your access. Remove
 > the unavailable customers and retry.** message rather than the
-> generic transient-error copy. The backend (REview) applies its
+> generic transient-error copy. The backend (Central Manager) applies its
 > own intersection on top, but the aice-web-next side is no longer
-> relying on REview as the only enforcement point.
+> relying on Central Manager as the only enforcement point.
 
 ### Sensor
 
@@ -1079,7 +1079,7 @@ the query by free-form strings.
 - **Source** and **Destination** are single-value text inputs — the
   active filter carries exactly one source string and one destination
   string at a time. Validation is lenient: the backend rejects
-  malformed values, so operators can paste whatever REview accepts.
+  malformed values, so operators can paste whatever Central Manager accepts.
 - **Keywords**, **Hostnames**, **User IDs**, **User Names**, and
   **User Departments** are tag inputs. Press `Enter` or type a comma
   to commit the current entry as a chip; `Backspace` on an empty
@@ -1124,7 +1124,7 @@ multi-select with the same interaction pattern:
 The five categorical fields are:
 
 - **Threat Level** — `Low` / `Medium` / `High` (maps to `levels:
-  [LOW, MEDIUM, HIGH]` on the backend). REview's `ThreatLevel` enum
+  [LOW, MEDIUM, HIGH]` on the backend). Central Manager's `ThreatLevel` enum
   also defines `VERY_LOW` and `VERY_HIGH`; those values can appear
   on event output and result-list level chips, but the drawer keeps
   the three-level surface today. Because the visible options are a
@@ -1134,7 +1134,7 @@ The five categorical fields are:
   `3 selected`, not `All`) so the query never silently broadens to
   include `VERY_LOW` / `VERY_HIGH`.
 - **Threat Country** — originator / responder country, selected by
-  ISO-3166 alpha-2 code. The list includes the REview sentinels
+  ISO-3166 alpha-2 code. The list includes the Central Manager sentinels
   `XX` and `ZZ` so events that could not be geolocated can still
   be filtered in or out. These surface with explicit localized
   labels — `Location unknown (XX)` and `Location database
@@ -1144,16 +1144,16 @@ The five categorical fields are:
 - **AI Model Type** — `Unsupervised` / `Semi-supervised` (maps to
   `learningMethods`).
 - **Threat Category** — the 14 MITRE ATT&CK tactic-style categories
-  REview tags events with (Reconnaissance, Initial Access,
+  Central Manager tags events with (Reconnaissance, Initial Access,
   Execution, …).
 - **Threat Name** — a curated starting list of attack kinds
-  submitted as REview's canonical event `__typename` tokens
+  submitted as Central Manager's canonical event `__typename` tokens
   (`HttpThreat`, `PortScan`, …). The option labels render the
   friendlier display name ("HTTP Threat", "Port Scan"), and search
   matches either form. The list is an open seed subset rather than
   an exhaustive option source: saturating the visible list does
   **not** broaden the query, and a live completion sourced from
-  REview will replace the seed list in a follow-up.
+  Central Manager will replace the seed list in a follow-up.
 
 ### Active filter chip bar
 
@@ -1343,7 +1343,7 @@ picker is the one the server streams under.
 On browsers that do not yet implement the File System Access API
 (Firefox, Safari), the download falls back to the browser's
 default download folder. The server still streams page-by-page
-from REview; only the final hand-off buffers in tab memory, so
+from Central Manager; only the final hand-off buffers in tab memory, so
 the same hard cap keeps peak memory bounded on those browsers.
 
 ### Large-export guardrail
@@ -1371,7 +1371,7 @@ server anyway.
 
 ### Cancelling an in-flight export
 
-Cancelling an in-flight export now terminates the active REview
+Cancelling an in-flight export now terminates the active Central Manager
 page rather than waiting for it to complete. Whether you cancel by
 clicking **Cancel** on the large-export confirmation, dismissing
 the Chromium Save As dialog, or closing the tab, the underlying
@@ -1381,11 +1381,11 @@ request — so the export stops within a small bounded delay
 instead of running the current page (up to 500 events) to
 completion. The previous behaviour cancelled the loop only at the
 next page boundary; a Cancel mid-page could still burn tens of
-seconds on the active REview round-trip on a large filter.
+seconds on the active Central Manager round-trip on a large filter.
 
 ### Errors
 
-If the export fails partway — REview connection reset, server
+If the export fails partway — Central Manager connection reset, server
 error, or a mid-download transport abort — the download is
 discarded by the browser rather than landing as a partial file,
 and a banner appears below the result header explaining that the

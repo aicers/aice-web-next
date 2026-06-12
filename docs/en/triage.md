@@ -241,7 +241,7 @@ without affecting the in-flight rebuild. On completion:
   hard cap. The in-flight transaction is rolled back and the lock
   is released, so the candidates are in their pre-rebuild state. Split
   the period and retry.
-- **RebuildIncomplete** (HTTP 504) — review's paginator never
+- **RebuildIncomplete** (HTTP 504) — Central Manager's paginator never
   reported `hasNextPage = false` within the safety cap, or
   returned `hasNextPage = true` with a missing cursor. The
   rebuild aborts **before** the DB transaction begins, so the
@@ -785,7 +785,7 @@ If the BFF cannot fetch events for the chosen period, the page
 renders the empty shell with one of these banners:
 
 - **"Could not load events for this period. Try a different
-  range."** — the BFF reached REview but the response was an
+  range."** — the BFF reached Central Manager but the response was an
   unrecognised error.
 - **"You are not authorized to view triage results."** — the
   caller lacks `triage:read`. (In practice this is unreachable
@@ -1044,7 +1044,7 @@ the scope toggle is set to **Tier 2**:
 
 Each click bounds the Tier 2 fetch to the ≤50 member events the
 Story carries. The cohort's `totalCount` reflects the matched
-member count, not REview's universe count, and the per-dimension
+member count, not Central Manager's universe count, and the per-dimension
 truncation cap does not apply at the cohort universe level.
 
 The `policyOnly` Tier 2 dimensions — `country`, `levels`, and
@@ -1273,7 +1273,7 @@ The panel surfaces events grouped by:
   certificate subject CN.
 - **DNS** — DNS query, DNS answer (multi-answer rows are split, and
   only IPv4 / IPv6 literal tokens are kept; CNAMEs and status text
-  such as `NXDOMAIN` that REview sometimes surfaces in the same
+  such as `NXDOMAIN` that Central Manager sometimes surfaces in the same
   field are filtered out so the dimension stays a "DNS answer IP"
   pivot, not a generic "answer string").
 - **Time / structure** — same kind within ±15 minutes (events of
@@ -1383,10 +1383,10 @@ dimensions:
 
   ![Learning method static section](../assets/triage-learning-methods-en.png)
 
-  - **Unsupervised** — events flagged by REview's unsupervised
+  - **Unsupervised** — events flagged by Central Manager's unsupervised
     detection models. Pivoting here surfaces every Tier 2 event in
     the period whose `learningMethod` is `UNSUPERVISED`.
-  - **Semi-supervised** — events flagged by REview's
+  - **Semi-supervised** — events flagged by Central Manager's
     semi-supervised detection models. Pivoting here surfaces every
     Tier 2 event in the period whose `learningMethod` is
     `SEMI_SUPERVISED`.
@@ -1446,7 +1446,7 @@ notice when the fetch fails).
 ### Per-dimension cap and pre-fetch confirmation
 
 A single Tier 2 dimension fetch walks at most **5,000 events**, in
-pages of 100 (REview's hard `[0, 100]` cap on `first` / `last`). At
+pages of 100 (Central Manager's hard `[0, 100]` cap on `first` / `last`). At
 the cap the panel shows a truncation hint similar to the Tier 1
 banner. The hint stays visible while any server-filtered Tier 2 step
 on the breadcrumb is capped, including after the operator pivots
@@ -1484,7 +1484,7 @@ insertion would exceed the cap, the cache evicts the
 least-recently-used dimension result (whole result set, not
 individual events) and shows a non-blocking notice naming the
 evicted dimension. Re-pivoting on the evicted dimension refetches
-from REview.
+from Central Manager.
 
 If a single dimension result is itself larger than the 100 MB cap,
 the cache rejects the candidate up front without disturbing other
@@ -1498,7 +1498,7 @@ different customer in the same browser session.
 
 ### Fetch failures
 
-If the BFF cannot complete a Tier 2 fetch (REview timeout, transport
+If the BFF cannot complete a Tier 2 fetch (Central Manager timeout, transport
 error, or a forbidden response), the page surfaces a dismissible
 red notice naming the dimension and value, and the failed pivot is
 released so the operator can retry by clicking the row again. The
@@ -1507,7 +1507,7 @@ loaded candidates and the Tier 1 panel are unaffected.
 ### Weak-signal rendering
 
 A row that came from a Tier 2 fetch and is *not* present in the
-Tier 1 candidates (compared via REview's stable per-event `Event.id`)
+Tier 1 candidates (compared via Central Manager's stable per-event `Event.id`)
 renders with reduced opacity and a small **weak** badge. Rows that are in
 both — including non-baseline `score === 0` candidate members — render
 without the badge so the operator can tell at a glance whether a
@@ -1515,7 +1515,7 @@ row was already in the loaded slice or freshly pulled.
 
 ### Sensor pivot
 
-`EventListFilterInput.sensors` requires REview's opaque sensor
+`EventListFilterInput.sensors` requires Central Manager's opaque sensor
 **ID**, but Triage events carry only the sensor **name**. The Tier 2
 sensor pivot resolves the clicked name to that opaque ID against the
 shared sensor lookup (now callable with `triage:read` or
@@ -1531,7 +1531,7 @@ two reasons render distinct copy so the operator can tell them apart:
   The page renders the same notice as a stale shared URL ("Pivot
   trail in the URL no longer matches the loaded period — showing the
   asset root.").
-- **No longer accessible** — REview tightened scope mid-session and
+- **No longer accessible** — Central Manager tightened scope mid-session and
   rejected the resolved `nodeId`. The page renders a dedicated
   notice ("Sensor pivot is no longer accessible in your customer
   scope — showing the asset root.") so the operator can recognise

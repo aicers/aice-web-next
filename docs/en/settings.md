@@ -996,7 +996,7 @@ background):
   bound to the resolved customer and carries the issued `jti`,
   the active signing-key `kid`, the locator's `event_key`, the
   resolved `lang`, the `force` flag, and whether the
-  `event_data` source was the baseline corpus or the REview
+  `event_data` source was the baseline corpus or the Central Manager
   fallback, so a forensic analyst can correlate the envelope
   with the matching record on Clumit Insight.
 - `aimer_analyze_envelope.denied` — failure. Carries a `reason`

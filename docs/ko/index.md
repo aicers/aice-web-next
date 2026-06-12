@@ -21,7 +21,7 @@ Frontend) 역할을 하는 Next.js 풀스택 애플리케이션입니다.
 ## 아키텍처 개요
 
 ```text
-브라우저 ──► Next.js (aice-web-next) ──► review-web (GraphQL)
+브라우저 ──► Next.js (aice-web-next) ──► Central Manager (GraphQL)
                │         │                    │
                │         └─► auth_db (PG)     ├─ mTLS 핸드셰이크
                │                              ├─ Context JWT 검증

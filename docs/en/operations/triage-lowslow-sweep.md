@@ -13,7 +13,7 @@ The sweep is parallel to — not part of — the
 [15-minute baseline cadence](triage-baseline-cadence.md). The cadence
 ingests the upstream corpus and owns Story forward progress
 (`story_finalized_through`); the sweep reads only the already-ingested
-local corpus over a 24-hour window and never fetches from REview. The
+local corpus over a 24-hour window and never fetches from Central Manager. The
 two surfaces have separate dispatch routes, separate advisory locks,
 separate tokens, and separate watermarks.
 

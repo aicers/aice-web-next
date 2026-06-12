@@ -516,7 +516,7 @@
     },
     "managerUnavailable": {
       "title": "Cannot reach manager",
-      "description": "The manager (review-web) is unreachable. Nodes cannot be listed or modified until the connection is restored.",
+      "description": "The Central Manager is unreachable. Nodes cannot be listed or modified until the connection is restored.",
       "retry": "Try again"
     },
     "status": {
@@ -668,7 +668,7 @@
     },
     "applyPreview": {
       "title": "Apply preview",
-      "description": "Review the dispatches the BFF will run before confirming. Only the dispatch sequence is shown — internal review-web steps are not.",
+      "description": "Review the dispatches the BFF will run before confirming. Only the dispatch sequence is shown — internal Central Manager steps are not.",
       "loading": "Building plan…",
       "loadFailed": "Could not build the apply plan.",
       "rebuildToRecover": "Rebuild the preview to apply.",
@@ -1369,7 +1369,7 @@
   },
   "event": {
     "title": "Event",
-    "description": "Browse source events collected by Giganto.",
+    "description": "Browse source events collected by Data Store.",
     "recordType": "Record type",
     "recordTypes": {
       "conn": "Connection (Conn)",
@@ -1437,7 +1437,7 @@
     },
     "statistics": {
       "sensors": "Sensors",
-      "noSensorsAvailable": "No sensors are available from Giganto.",
+      "noSensorsAvailable": "No sensors are available from Data Store.",
       "sensorRequired": "Select at least one sensor to view statistics.",
       "protocols": "Protocols",
       "protocolsHint": "Leave all unchecked to include every protocol.",
@@ -1457,8 +1457,8 @@
       "policy": "Sampling policy",
       "policyPlaceholder": "Select a sampling policy",
       "policyRequired": "Select a sampling policy to view its time series.",
-      "noPoliciesAvailable": "No sampling policies are available from REview.",
-      "policiesUnavailable": "Could not load the sampling policy list from REview.",
+      "noPoliciesAvailable": "No sampling policies are available from Central Manager.",
+      "policiesUnavailable": "Could not load the sampling policy list from Central Manager.",
       "origin": "Series origin: {start}",
       "sample": "Sample {index}",
       "value": "Value",
@@ -1534,8 +1534,8 @@
       "prequery": "Select a sensor and apply filters to search source events.",
       "empty": "No events match the current filters.",
       "loading": "Loading events…",
-      "error": "Could not reach Giganto. Try again later.",
-      "sensorsUnavailable": "Could not load the sensor list from Giganto."
+      "error": "Could not reach Data Store. Try again later.",
+      "sensorsUnavailable": "Could not load the sensor list from Data Store."
     },
     "fields": {
       "aaFlag": "Authoritative Answer Flag",
@@ -1912,7 +1912,7 @@
         "selectedSummary": "{count} selected",
         "removeSelection": "Remove {name}",
         "comingSoonLabel": "Coming soon",
-        "comingSoonHint": "Sensor options become available once REview publishes the sensor-list endpoint.",
+        "comingSoonHint": "Sensor options become available once Central Manager publishes the sensor-list endpoint.",
         "loadingLabel": "Loading sensors…",
         "loadingHint": "Fetching the sensor list from the detection backend.",
         "errorLabel": "Could not load sensors",
@@ -2753,7 +2753,7 @@
       "toastSuccessTemplate": "Rebuilt: deleted {deleted}, inserted {inserted} events",
       "toastBusy": "Cadence or another rebuild is currently writing for this customer; retry shortly.",
       "toastTimeout": "Rebuild timed out (300s cap). Split the period and retry.",
-      "toastIncomplete": "Rebuild aborted: review's paginator did not exhaust the range. The triage candidates were left untouched. Split the period and retry, or investigate the resolver if the page count was unexpected.",
+      "toastIncomplete": "Rebuild aborted: Central Manager's paginator did not exhaust the range. The triage candidates were left untouched. Split the period and retry, or investigate the resolver if the page count was unexpected.",
       "toastErrorPrefix": "Rebuild failed:",
       "rebuildingOverlay": "Rebuilding this period..."
     },
@@ -2786,7 +2786,7 @@
       "evictionTemplate": "Cache full — evicted {dimension}: {value}. Re-pivoting will refetch.",
       "evictionDismiss": "Dismiss",
       "errorTemplate": "Failed to fetch {dimension}: {value} — {message}",
-      "errorFallbackMessage": "REview did not return a message.",
+      "errorFallbackMessage": "Central Manager did not return a message.",
       "errorDismiss": "Dismiss",
       "prefetchModal": {
         "title": "Fetch large result set?",
