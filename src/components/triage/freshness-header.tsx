@@ -23,8 +23,7 @@
  * The tooltip lists customer ids whose state matches the picked badge.
  */
 
-import { useTimezone } from "@/components/providers/timezone-provider";
-import { formatDateTime } from "@/lib/format-date";
+import { useTimestampFormatter } from "@/components/timestamp";
 import type { TriageCustomerFreshness, TriageFreshness } from "@/lib/triage";
 
 export interface TriageFreshnessHeaderLabels {
@@ -191,7 +190,7 @@ export function TriageFreshnessHeader({
   labels,
   now,
 }: TriageFreshnessHeaderProps) {
-  const timezone = useTimezone();
+  const { format } = useTimestampFormatter();
   const effectiveNow = now ?? new Date();
   if (freshness.worst === null) {
     // Empty scope — render nothing rather than a misleading badge.
@@ -205,7 +204,7 @@ export function TriageFreshnessHeader({
   );
   const exact =
     freshness.worst.lastIngestedAtIso !== null
-      ? formatDateTime(freshness.worst.lastIngestedAtIso, timezone)
+      ? format(freshness.worst.lastIngestedAtIso)
       : null;
   return (
     <p

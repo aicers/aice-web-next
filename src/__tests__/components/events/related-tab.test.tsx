@@ -21,6 +21,13 @@ vi.mock("@/lib/events/related-pivots", () => ({
     fetchRelatedPivotSummariesMock(...args),
 }));
 
+// The shared `<Timestamp>` reads the active locale through next-intl;
+// mock it so the tab renders without a real `NextIntlClientProvider`.
+vi.mock("next-intl", () => ({
+  useLocale: () => "en",
+  useTranslations: () => (key: string) => key,
+}));
+
 import {
   type RelatedLabels,
   RelatedTab,
@@ -61,9 +68,14 @@ describe("RelatedTab — Last seen timezone formatting (#684)", () => {
     ]);
     render(<RelatedTab event={EVENT} labels={LABELS} />);
 
+    // The `<Timestamp>` renders a hidden placeholder pre-mount and swaps
+    // in the resolved value post-mount, so wait for the formatted text.
     const timeEl = await waitFor(() => {
       const el = document.querySelector("time");
       if (!el) throw new Error("time element not yet rendered");
+      if (el.textContent !== formatDateTime(LAST_TIME)) {
+        throw new Error("timestamp not yet resolved");
+      }
       return el;
     });
 

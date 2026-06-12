@@ -14,6 +14,7 @@ import {
   refreshTriageStories,
   submitSaveAnalystCuratedStory,
 } from "@/app/[locale]/(dashboard)/triage/story-actions";
+import { useTimestampFormatter } from "@/components/timestamp";
 import { fetchAiAnalysisStorySummary } from "@/lib/aimer/analysis/story-summary.client";
 import type {
   ScoredTriageEvent,
@@ -33,6 +34,7 @@ import {
   backtrackPivotTrail,
   buildPivotPanel,
   clearPivotTrail,
+  displayPivotValueLabel,
   getPivotDimension,
   hasPivotedAwayFromAsset,
   isStaticTier2Dimension,
@@ -216,6 +218,7 @@ export function TriageBaselineContent({
   labels,
 }: TriageBaselineContentProps) {
   const router = useRouter();
+  const { formatCompact } = useTimestampFormatter();
   const tier2 = useTier2Pivot({
     periodStartIso: period.startIso,
     periodEndIso: period.endIso,
@@ -775,7 +778,11 @@ export function TriageBaselineContent({
       )?.status === "ready";
     if (focusEvents.length === 0 && !isReadyStaticTier2) return null;
     const dimensionLabel = labels.pivotPanel.dimensions[activeStep.dimension];
-    const address = `${dimensionLabel}: ${activeStep.value.label}`;
+    const address = `${dimensionLabel}: ${displayPivotValueLabel(
+      activeStep.dimension,
+      activeStep.value,
+      formatCompact,
+    )}`;
     let triagedCount = 0;
     let scoreSum = 0;
     for (const ev of focusEvents) {
@@ -857,6 +864,7 @@ export function TriageBaselineContent({
   }, [
     activeStep,
     focusEvents,
+    formatCompact,
     labels.pivotPanel.dimensions,
     trail,
     result.assets,

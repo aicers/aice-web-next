@@ -501,6 +501,46 @@ export function parseSameKindKey(
 }
 
 /**
+ * Render-layer display label for a pivot value.
+ *
+ * For every dimension except `sameKindWithin15Min` the value's stored
+ * `label` is already analyst-facing, so it is returned verbatim. The
+ * `sameKindWithin15Min` label is built lib-side as
+ * `` `${typename} near ${ISO}` `` so the value stays machine-readable;
+ * this helper recovers the instant from the value **key** (via
+ * {@link parseSameKindKey}) and re-renders it through the caller's
+ * central compact formatter so analysts see a localized time instead of
+ * a raw UTC ISO string.
+ *
+ * When `formatCompact` returns `null` (pre-mount, before the timezone
+ * resolves) for a well-formed key, the instant is replaced with an
+ * ellipsis placeholder (`` `${typename} near …` ``) rather than the
+ * stored `label` — the stored label embeds the raw `toISOString()`
+ * instant, so falling back to it would flash a UTC value before mount,
+ * which Part 3 of #764 forbids. The raw `label` is used only when the
+ * key is malformed (a defensive edge for which no parsed instant exists)
+ * or for every other dimension, whose stored label is already
+ * analyst-facing.
+ *
+ * @param compactFn `useTimestampFormatter().formatCompact` (or any
+ *   `(at) => string | null`). Returning `null` selects the ellipsis
+ *   placeholder, so a UTC value is never flashed before the timezone
+ *   resolves.
+ */
+export function displayPivotValueLabel(
+  dimension: PivotDimensionId,
+  value: PivotValue,
+  compactFn: (at: Date | string) => string | null,
+): string {
+  if (dimension !== "sameKindWithin15Min") return value.label;
+  const parsed = parseSameKindKey(value.key);
+  if (parsed === null) return value.label;
+  const compact = compactFn(new Date(parsed.centerMs));
+  if (compact === null) return `${parsed.typename} near …`;
+  return `${parsed.typename} near ${compact}`;
+}
+
+/**
  * Resolve the focus-relative event set for a `sameKindWithin15Min`
  * dimension lookup: events with `__typename === typename` whose time
  * is within `±TRIAGE_SAME_KIND_WINDOW_MS` of `centerMs`. The exact

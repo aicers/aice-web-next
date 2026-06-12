@@ -11,7 +11,6 @@ import {
 import { useTimezone } from "@/components/providers/timezone-provider";
 import { Badge } from "@/components/ui/badge";
 import { Link } from "@/i18n/navigation";
-import { formatEventTime } from "@/lib/detection/event-time";
 import type { PeriodKey } from "@/lib/detection/period";
 import { buildPivotPatch, type PivotPatch } from "@/lib/detection/pivot";
 import type { RenderedHighlight } from "@/lib/detection/quick-peek-highlights";
@@ -28,6 +27,7 @@ import {
   type PivotWindow,
   pivotWindowToPeriodKey,
 } from "@/lib/detection/url-filters";
+import { formatEventTime } from "@/lib/format-date";
 import { cn } from "@/lib/utils";
 
 /**

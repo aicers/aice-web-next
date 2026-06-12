@@ -10,6 +10,7 @@ export {
   resolveStepFocusEvents,
 } from "./breadcrumb";
 export {
+  displayPivotValueLabel,
   eventsWithinSameKindWindow,
   getPivotDimension,
   isDimensionAvailableInBaseline,

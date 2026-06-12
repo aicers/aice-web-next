@@ -1,6 +1,6 @@
 import { describe, expect, it, vi } from "vitest";
 
-import { formatEventTime } from "@/lib/detection/event-time";
+import { formatEventTime } from "@/lib/format-date";
 
 const ISO = "2026-04-22T15:30:45.000Z";
 const FALLBACK = "—";

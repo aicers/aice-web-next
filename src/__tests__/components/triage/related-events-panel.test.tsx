@@ -12,6 +12,14 @@
 import { fireEvent, render, screen } from "@testing-library/react";
 import { describe, expect, it, vi } from "vitest";
 
+// The shared `<Timestamp>` / `useTimestampFormatter` read the active
+// locale through next-intl; mock it so the panel renders without a real
+// `NextIntlClientProvider`.
+vi.mock("next-intl", () => ({
+  useLocale: () => "en",
+  useTranslations: () => (key: string) => key,
+}));
+
 import {
   TriagePivotPanel,
   type TriagePivotPanelLabels,

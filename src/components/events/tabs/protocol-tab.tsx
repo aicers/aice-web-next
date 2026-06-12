@@ -1,8 +1,7 @@
 "use client";
 
-import { useTimezone } from "@/components/providers/timezone-provider";
+import { Timestamp } from "@/components/timestamp";
 import type { Event } from "@/lib/detection/types";
-import { formatDateTime } from "@/lib/format-date";
 
 interface HttpFieldLabels {
   method: string;
@@ -236,7 +235,6 @@ function Field({ label, value }: { label: string; value: unknown }) {
  * the plain `Field`.
  */
 function TimeField({ label, value }: { label: string; value: unknown }) {
-  const tz = useTimezone();
   if (value === undefined || value === null || value === "") {
     return null;
   }
@@ -244,7 +242,7 @@ function TimeField({ label, value }: { label: string; value: unknown }) {
     <>
       <dt className="text-muted-foreground">{label}</dt>
       <dd className="text-foreground break-all font-mono">
-        {formatDateTime(String(value), tz)}
+        <Timestamp at={String(value)} />
       </dd>
     </>
   );

@@ -1,6 +1,6 @@
 "use client";
 
-import { useTimezone } from "@/components/providers/timezone-provider";
+import { Timestamp } from "@/components/timestamp";
 import { Badge } from "@/components/ui/badge";
 import { Link } from "@/i18n/navigation";
 import type { AimerCustomerCandidate } from "@/lib/aimer/candidate-customers";
@@ -8,7 +8,6 @@ import type { AimerIntegrationSetupStatus } from "@/lib/aimer/setup-status";
 import type { Event } from "@/lib/detection/types";
 import { buildDetectionPivotUrl } from "@/lib/detection/url-filters";
 import type { EventLocator } from "@/lib/events/event-locator";
-import { formatDateTime } from "@/lib/format-date";
 import { AimerBanner } from "../aimer-banner";
 import {
   EVENT_KIND_FRIENDLY_NAMES,
@@ -58,7 +57,6 @@ export function OverviewTab({
   customerBridgeEligible,
   aimerSetup,
 }: Props) {
-  const timezone = useTimezone();
   const friendly =
     EVENT_KIND_FRIENDLY_NAMES[event.__typename] ?? event.__typename;
   const addressing = readEventAddressing(event);
@@ -112,9 +110,7 @@ export function OverviewTab({
         </h2>
         <dl className="grid grid-cols-1 gap-x-6 gap-y-2 sm:grid-cols-2">
           <Row label={labels.time}>
-            <time dateTime={event.time}>
-              {formatDateTime(event.time, timezone)}
-            </time>
+            <Timestamp at={event.time} />
           </Row>
           <Row label={labels.kind}>{friendly}</Row>
           <Row label={labels.category}>{event.category ?? "—"}</Row>

@@ -11,9 +11,8 @@
 
 import { useMemo, useState } from "react";
 
-import { useTimezone } from "@/components/providers/timezone-provider";
+import { Timestamp, useTimestampFormatter } from "@/components/timestamp";
 import { panelSurface } from "@/components/ui/panel-surface";
-import { formatDateTime } from "@/lib/format-date";
 import type { ScoredTriageEvent } from "@/lib/triage";
 import {
   MAX_KEYWORD_LENGTH,
@@ -24,6 +23,7 @@ import {
   type LearningMethodValue,
 } from "@/lib/triage/learning-methods";
 import {
+  displayPivotValueLabel,
   getPivotDimension,
   PIVOT_GROUP_DEFAULT_ROWS,
   PIVOT_GROUP_EXPANDED_ROWS,
@@ -444,7 +444,7 @@ function PivotSection({
   labels: TriagePivotPanelLabels;
   isWeakSignal?: (event: ScoredTriageEvent) => boolean;
 }) {
-  const timezone = useTimezone();
+  const { formatCompact } = useTimestampFormatter();
   const [expanded, setExpanded] = useState(false);
   const visibleRows = expanded
     ? section.events.slice(0, PIVOT_GROUP_EXPANDED_ROWS)
@@ -453,8 +453,13 @@ function PivotSection({
   const familyLabel =
     labels.family[section.family as keyof typeof labels.family];
   const focusValuesText = useMemo(
-    () => describeFocusValues(section.focusValues),
-    [section.focusValues],
+    () =>
+      describeFocusValues(
+        section.focusValues,
+        section.dimension,
+        formatCompact,
+      ),
+    [section.focusValues, section.dimension, formatCompact],
   );
   const showMoreVisible =
     !expanded && section.events.length > PIVOT_GROUP_DEFAULT_ROWS;
@@ -516,7 +521,6 @@ function PivotSection({
               dimension={section.dimension}
               onPivot={onPivot}
               labels={labels}
-              timezone={timezone}
               weak={isWeakSignal?.(event) ?? false}
             />
           ))}
@@ -554,14 +558,12 @@ function PivotRow({
   dimension,
   onPivot,
   labels,
-  timezone,
   weak,
 }: {
   event: ScoredTriageEvent;
   dimension: PivotDimensionId;
   onPivot: (step: PivotStep) => void;
   labels: TriagePivotPanelLabels;
-  timezone: string;
   weak: boolean;
 }) {
   const dim = labels.dimensions[dimension];
@@ -580,7 +582,7 @@ function PivotRow({
     >
       <td className="py-1.5 pr-2 font-mono text-xs">
         {marker}
-        {formatDateTime(event.time, timezone)}
+        <Timestamp at={event.time} />
       </td>
       <td className="py-1.5 pr-2">
         {event.__typename}
@@ -622,6 +624,7 @@ function PivotRowActions({
   // focused asset. A single (asset, dimension) section can list events
   // that share *some* of the asset's focus values; pivoting from the
   // row should jump to that row's value.
+  const { formatCompact } = useTimestampFormatter();
   const values = useMemo(
     () => extractRowValues(event, dimension),
     [event, dimension],
@@ -629,34 +632,40 @@ function PivotRowActions({
   if (values.length === 0) return null;
   return (
     <div className="flex flex-wrap justify-end gap-1">
-      {values.map((value) => (
-        <button
-          key={value.key}
-          type="button"
-          onClick={() => onPivot({ kind: "dimension", dimension, value })}
-          aria-label={actionTemplate
-            .replace("{dimension}", dimensionLabel)
-            .replace("{value}", value.label)}
-          className={cn(
-            "max-w-[24ch] truncate rounded border border-border/60 px-2 py-0.5 text-xs",
-            "text-foreground hover:bg-accent",
-          )}
-        >
-          {value.label}
-        </button>
-      ))}
+      {values.map((value) => {
+        const display = displayPivotValueLabel(dimension, value, formatCompact);
+        return (
+          <button
+            key={value.key}
+            type="button"
+            onClick={() => onPivot({ kind: "dimension", dimension, value })}
+            aria-label={actionTemplate
+              .replace("{dimension}", dimensionLabel)
+              .replace("{value}", display)}
+            className={cn(
+              "max-w-[24ch] truncate rounded border border-border/60 px-2 py-0.5 text-xs",
+              "text-foreground hover:bg-accent",
+            )}
+          >
+            {display}
+          </button>
+        );
+      })}
     </div>
   );
 }
 
-function describeFocusValues(values: PivotValue[]): string {
+function describeFocusValues(
+  values: PivotValue[],
+  dimension: PivotDimensionId,
+  formatCompact: (at: Date | string) => string | null,
+): string {
+  const label = (v: PivotValue) =>
+    displayPivotValueLabel(dimension, v, formatCompact);
   if (values.length === 0) return "—";
-  if (values.length === 1) return values[0].label;
-  if (values.length <= 3) return values.map((v) => v.label).join(", ");
-  const head = values
-    .slice(0, 3)
-    .map((v) => v.label)
-    .join(", ");
+  if (values.length === 1) return label(values[0]);
+  if (values.length <= 3) return values.map(label).join(", ");
+  const head = values.slice(0, 3).map(label).join(", ");
   return `${head} (+${values.length - 3})`;
 }
 
