@@ -25,15 +25,19 @@
 
 - This project uses **pnpm** exclusively. NEVER use `npm`, `bun`, `yarn`, or
   any other package manager.
-- Run CLI tools via `pnpm` (e.g., `pnpm vitest run`, `pnpm tsc --noEmit`,
-  `pnpm biome check`). NEVER use `npx`.
+- Run CLI tools via `pnpm`, preferring the package.json scripts (e.g.,
+  `pnpm test`, `pnpm typecheck`, `pnpm check`). NEVER use `npx`.
 
 ## CI requirements
 
-- Before committing, ensure all CI lint/check steps (e.g., Biome, type checks)
-  would pass for the changed files.
-- Before pushing or opening a PR, ensure the full CI pipeline passes locally
-  (all checks, tests, and builds).
+- Use the package.json scripts, not hand-written equivalents — they encode the
+  exact CI gates. CI runs `pnpm check` (Biome CI; warnings are errors),
+  `pnpm check:scope`, `pnpm check:sql-drift`, `pnpm typecheck` (`next typegen`
+  plus the project tsconfig), `pnpm test`, and `pnpm test:integration`.
+  Documentation changes additionally must pass `mkdocs build --strict`.
+- Before committing, ensure the lint/check/type steps pass for the changed
+  files. Before pushing or opening a PR, ensure the full pipeline passes
+  locally.
 
 ## Schema and migrations
 
