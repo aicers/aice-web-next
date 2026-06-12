@@ -14,7 +14,7 @@ import { act, render, screen, waitFor } from "@testing-library/react";
 import { afterEach, describe, expect, it, vi } from "vitest";
 
 const mockUseTimezone = vi.hoisted(() => vi.fn(() => "UTC"));
-vi.mock("@/components/providers/timezone-provider", () => ({
+vi.mock("@/components/providers/account-preferences-provider", () => ({
   useTimezone: mockUseTimezone,
 }));
 

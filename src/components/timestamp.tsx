@@ -24,20 +24,38 @@
 import { useLocale } from "next-intl";
 import { type CSSProperties, useCallback, useEffect, useState } from "react";
 
-import { useTimezone } from "@/components/providers/timezone-provider";
-import { formatDateTime, formatDateTimeCompact } from "@/lib/format-date";
+import {
+  useResolvedTimeFormat,
+  useTimezone,
+} from "@/components/providers/account-preferences-provider";
+import {
+  formatDateTime,
+  formatDateTimeCompact,
+  type ResolvedTimeFormat,
+} from "@/lib/format-date";
+import { reservedTimestampCh } from "@/lib/timestamp-width";
 
 /**
- * Reserved widths (in `ch`) for the pre-mount placeholder slot, sized
- * for the worst-case representative `en` / `ko` outputs. CJK/Hangul
- * glyphs render about `2ch`, so a fully-spelled Korean timestamp is the
- * widest case. The {@link TIMESTAMP_RESERVED_CH} export is pinned by a
- * unit test that measures the real worst-case formatter outputs, so an
- * undersized reservation fails CI.
+ * Reserved widths (in `ch`) for the pre-mount placeholder slot under the
+ * **default** (unset) time-display format — the global worst case across
+ * the curated locale list for browser-locale / locale-default hour cycle
+ * / seconds shown / no tz label. With a stored preference (#766) the slot
+ * is resized from the resolved options via {@link reservedTimestampCh};
+ * this constant is the default baseline the deterministic SSR /
+ * first-paint placeholder reserves before the client resolves the
+ * preference. Pinned by a unit test that measures the real worst-case
+ * formatter outputs, so an undersized reservation fails CI.
  */
+const DEFAULT_RESOLVED: ResolvedTimeFormat = {
+  locale: undefined,
+  hourCycle: undefined,
+  seconds: true,
+  tzLabel: false,
+};
+
 export const TIMESTAMP_RESERVED_CH = {
-  general: 28,
-  compact: 19,
+  general: reservedTimestampCh(DEFAULT_RESOLVED, false),
+  compact: reservedTimestampCh(DEFAULT_RESOLVED, true),
 } as const;
 
 /**
@@ -59,12 +77,10 @@ function toIso(at: Date | string): string {
   return typeof at === "string" ? at : at.toISOString();
 }
 
-function slotStyle(compact: boolean): CSSProperties {
+function slotStyle(reservedCh: number): CSSProperties {
   return {
     display: "inline-block",
-    minWidth: `${
-      compact ? TIMESTAMP_RESERVED_CH.compact : TIMESTAMP_RESERVED_CH.general
-    }ch`,
+    minWidth: `${reservedCh}ch`,
   };
 }
 
@@ -84,9 +100,10 @@ export function Timestamp({ at, compact = false, className }: TimestampProps) {
   const mounted = useMounted();
   const timezone = useTimezone();
   const locale = useLocale();
+  const timeFormat = useResolvedTimeFormat();
 
   const iso = toIso(at);
-  const style = slotStyle(compact);
+  const style = slotStyle(reservedTimestampCh(timeFormat, compact));
 
   if (!mounted) {
     return (
@@ -99,8 +116,8 @@ export function Timestamp({ at, compact = false, className }: TimestampProps) {
   }
 
   const formatted = compact
-    ? formatDateTimeCompact(at, timezone, locale)
-    : formatDateTime(at, timezone);
+    ? formatDateTimeCompact(at, timezone, locale, timeFormat)
+    : formatDateTime(at, timezone, timeFormat);
 
   return (
     <time className={className} dateTime={iso} style={style}>
@@ -135,17 +152,18 @@ export function useTimestampFormatter(): TimestampFormatter {
   const mounted = useMounted();
   const timezone = useTimezone();
   const locale = useLocale();
+  const timeFormat = useResolvedTimeFormat();
 
   const format = useCallback(
     (at: Date | string): string | null =>
-      mounted ? formatDateTime(at, timezone) : null,
-    [mounted, timezone],
+      mounted ? formatDateTime(at, timezone, timeFormat) : null,
+    [mounted, timezone, timeFormat],
   );
 
   const formatCompact = useCallback(
     (at: Date | string): string | null =>
-      mounted ? formatDateTimeCompact(at, timezone, locale) : null,
-    [mounted, timezone, locale],
+      mounted ? formatDateTimeCompact(at, timezone, locale, timeFormat) : null,
+    [mounted, timezone, locale, timeFormat],
   );
 
   return { resolved: mounted, format, formatCompact };

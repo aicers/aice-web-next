@@ -4,6 +4,8 @@ import { APP_ORIGIN, APP_URL } from "./helpers/app-url";
 import { resetRateLimits, signInAndWait } from "./helpers/auth";
 import {
   clearMustChangePassword,
+  deleteWebAuthnCredentials,
+  insertWebAuthnCredential,
   resetAccountDefaults,
   resetAccountPreferences,
   revokeAllSessions,
@@ -275,7 +277,7 @@ test.describe("Preferences", () => {
 
     await expect(page.getByRole("heading", { name: "Profile" })).toBeVisible();
     await expect(page.getByText("Language")).toBeVisible();
-    await expect(page.getByLabel("Timezone")).toBeVisible();
+    await expect(page.getByLabel("Timezone", { exact: true })).toBeVisible();
     await expect(page.getByRole("button", { name: "Save" })).toBeVisible();
   });
 
@@ -325,7 +327,7 @@ test.describe("Preferences", () => {
       timeout: 10_000,
     });
     await expect(page.getByLabel("언어")).toBeVisible();
-    await expect(page.getByLabel("시간대")).toBeVisible();
+    await expect(page.getByLabel("시간대", { exact: true })).toBeVisible();
   });
 
   test("locale change persists after page reload", async ({
@@ -400,5 +402,213 @@ test.describe("Preferences", () => {
     expect(timestampNY).toBeTruthy();
     expect(timestampSeoul).toBeTruthy();
     expect(timestampNY).not.toBe(timestampSeoul);
+  });
+
+  // ── Time-display format (#766) ───────────────────────────────────
+
+  test("GET returns null time-format fields when unset", async ({
+    page,
+    workerUsername,
+    workerPassword,
+  }) => {
+    await signInAndWait(page, workerUsername, workerPassword);
+
+    const res = await page.request.get("/api/accounts/me/preferences");
+    expect(res.status()).toBe(200);
+
+    const body = await res.json();
+    expect(body.data.timeFormatLocale).toBeNull();
+    expect(body.data.timeFormatHourCycle).toBeNull();
+    expect(body.data.timeFormatSeconds).toBeNull();
+    expect(body.data.timeFormatTzLabel).toBeNull();
+  });
+
+  test("PATCH persists the four time-format fields and GET reads them back", async ({
+    page,
+    workerUsername,
+    workerPassword,
+  }) => {
+    await signInAndWait(page, workerUsername, workerPassword);
+
+    const cookies = await page.context().cookies();
+    const csrfCookie = cookies.find((c) => c.name === "csrf");
+    const headers = {
+      "x-csrf-token": csrfCookie?.value ?? "",
+      Origin: APP_ORIGIN,
+    };
+
+    const patch = await page.request.patch("/api/accounts/me/preferences", {
+      data: {
+        timeFormatLocale: "fr-CA",
+        timeFormatHourCycle: "h23",
+        timeFormatSeconds: false,
+        timeFormatTzLabel: true,
+      },
+      headers,
+    });
+    expect(patch.status()).toBe(200);
+
+    const res = await page.request.get("/api/accounts/me/preferences");
+    const body = await res.json();
+    expect(body.data.timeFormatLocale).toBe("fr-CA");
+    expect(body.data.timeFormatHourCycle).toBe("h23");
+    expect(body.data.timeFormatSeconds).toBe(false);
+    expect(body.data.timeFormatTzLabel).toBe(true);
+  });
+
+  test("PATCH rejects invalid time-format values", async ({
+    page,
+    workerUsername,
+    workerPassword,
+  }) => {
+    await signInAndWait(page, workerUsername, workerPassword);
+
+    const cookies = await page.context().cookies();
+    const csrfCookie = cookies.find((c) => c.name === "csrf");
+    const headers = {
+      "x-csrf-token": csrfCookie?.value ?? "",
+      Origin: APP_ORIGIN,
+    };
+
+    for (const data of [
+      { timeFormatLocale: "xx-YY" },
+      { timeFormatHourCycle: "h11" },
+      { timeFormatSeconds: "yes" },
+      { timeFormatTzLabel: 1 },
+    ]) {
+      const res = await page.request.patch("/api/accounts/me/preferences", {
+        data,
+        headers,
+      });
+      expect(res.status(), JSON.stringify(data)).toBe(400);
+    }
+  });
+
+  test("profile page shows the time-format section with a live preview", async ({
+    page,
+    workerUsername,
+    workerPassword,
+  }) => {
+    await signInAndWait(page, workerUsername, workerPassword);
+    await page.goto("/profile");
+
+    await expect(
+      page.getByRole("heading", { name: "Time format" }),
+    ).toBeVisible({ timeout: 5_000 });
+
+    const preview = page.locator('[data-slot="time-format-preview"]');
+    await expect(preview).toBeVisible();
+    const before = await preview.textContent();
+
+    // Switching to 24-hour changes the preview live (no save / reload).
+    await page.locator("#tf-hour-cycle").click();
+    await page.getByRole("option", { name: "24-hour" }).click();
+
+    await expect(preview).not.toHaveText(before ?? "", { timeout: 5_000 });
+  });
+
+  test("saving the form preserves API-set explicit boolean preferences", async ({
+    page,
+    workerUsername,
+    workerPassword,
+  }) => {
+    await signInAndWait(page, workerUsername, workerPassword);
+
+    const cookies = await page.context().cookies();
+    const csrfCookie = cookies.find((c) => c.name === "csrf");
+    const headers = {
+      "x-csrf-token": csrfCookie?.value ?? "",
+      Origin: APP_ORIGIN,
+    };
+
+    // Seed explicit default-side booleans the two-option UI never writes
+    // itself but the API accepts: seconds shown (true), tz label hidden
+    // (false). These are distinct from NULL ("never touched").
+    await page.request.patch("/api/accounts/me/preferences", {
+      data: { timeFormatSeconds: true, timeFormatTzLabel: false },
+      headers,
+    });
+
+    // Open the form and save without touching the seconds / tz-label
+    // controls. An untouched control must re-emit the loaded value
+    // verbatim — not collapse the explicit boolean back to NULL.
+    await page.goto("/profile");
+    await expect(
+      page.getByRole("heading", { name: "Time format" }),
+    ).toBeVisible({ timeout: 5_000 });
+    await page.getByRole("button", { name: "Save" }).click();
+    await expect(page.getByText("Preferences saved")).toBeVisible({
+      timeout: 5_000,
+    });
+
+    const res = await page.request.get("/api/accounts/me/preferences");
+    const body = await res.json();
+    expect(body.data.timeFormatSeconds).toBe(true);
+    expect(body.data.timeFormatTzLabel).toBe(false);
+  });
+});
+
+// ── Live timestamp update on save (#766) ───────────────────────────
+
+test.describe("Time format — live update on save", () => {
+  test.beforeAll(async ({ workerUsername }) => {
+    await resetRateLimits();
+    await clearMustChangePassword(workerUsername);
+    await resetAccountDefaults(workerUsername);
+    await resetAccountPreferences(workerUsername);
+    await deleteWebAuthnCredentials(workerUsername);
+  });
+
+  test.beforeEach(async ({ workerUsername }) => {
+    await resetRateLimits();
+    await revokeAllSessions(workerUsername);
+    await resetAccountPreferences(workerUsername);
+    await deleteWebAuthnCredentials(workerUsername);
+  });
+
+  test.afterAll(async ({ workerUsername }) => {
+    await deleteWebAuthnCredentials(workerUsername);
+    await resetAccountPreferences(workerUsername);
+  });
+
+  test("saving a time-format change updates live timestamps without reload", async ({
+    page,
+    workerUsername,
+    workerPassword,
+  }) => {
+    // Sign in BEFORE seeding the passkey: an enrolled passkey turns
+    // sign-in into a WebAuthn MFA challenge the helper cannot complete.
+    await signInAndWait(page, workerUsername, workerPassword);
+
+    // Seed a passkey so the WebAuthn card renders a live <Timestamp> on
+    // the same page as the preferences form, then load the profile.
+    await insertWebAuthnCredential(workerUsername, {
+      displayName: "Live Timestamp Passkey",
+    });
+    await page.goto("/profile");
+
+    await expect(page.getByText("Live Timestamp Passkey")).toBeVisible({
+      timeout: 5_000,
+    });
+
+    // The created-at <Timestamp> resolves post-mount; capture its value.
+    const stamp = page.locator("time").first();
+    await expect(stamp).not.toHaveText("", { timeout: 5_000 });
+    const before = (await stamp.textContent())?.trim();
+    expect(before).toBeTruthy();
+
+    // Hide seconds — a format change that always alters the general
+    // timestamp output — then save.
+    await page.locator("#tf-seconds").click();
+    await page.getByRole("option", { name: "Hide" }).click();
+    await page.getByRole("button", { name: "Save" }).click();
+
+    await expect(page.getByText("Preferences saved")).toBeVisible({
+      timeout: 5_000,
+    });
+
+    // The provider re-fetch (not router.refresh alone) updates the live
+    // timestamp in place — no page reload performed.
+    await expect(stamp).not.toHaveText(before ?? "", { timeout: 5_000 });
   });
 });

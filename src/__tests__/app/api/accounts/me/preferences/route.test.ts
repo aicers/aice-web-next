@@ -115,6 +115,34 @@ describe("GET /api/accounts/me/preferences", () => {
 
     expect(res.status).toBe(404);
   });
+
+  it("returns the four time-format fields camelCased", async () => {
+    mockQuery.mockResolvedValueOnce({
+      rows: [
+        {
+          locale: "ko",
+          timezone: "Asia/Seoul",
+          time_format_locale: "ja-JP",
+          time_format_hour_cycle: "h12",
+          time_format_seconds: true,
+          time_format_tz_label: false,
+        },
+      ],
+    });
+
+    const { GET } = await import("@/app/api/accounts/me/preferences/route");
+    const res = await GET(
+      new NextRequest("http://localhost/api/accounts/me/preferences"),
+      emptyContext,
+    );
+    const body = await res.json();
+
+    expect(res.status).toBe(200);
+    expect(body.data.timeFormatLocale).toBe("ja-JP");
+    expect(body.data.timeFormatHourCycle).toBe("h12");
+    expect(body.data.timeFormatSeconds).toBe(true);
+    expect(body.data.timeFormatTzLabel).toBe(false);
+  });
 });
 
 describe("PATCH /api/accounts/me/preferences", () => {
@@ -337,5 +365,164 @@ describe("PATCH /api/accounts/me/preferences", () => {
     );
 
     expect(res.status).toBe(404);
+  });
+
+  // ── #766: time-display-format fields ────────────────────────────
+
+  it("persists the four time-format fields and returns them camelCased", async () => {
+    mockQuery.mockResolvedValueOnce({
+      rows: [
+        {
+          locale: null,
+          timezone: null,
+          time_format_locale: "fr-CA",
+          time_format_hour_cycle: "h23",
+          time_format_seconds: false,
+          time_format_tz_label: true,
+        },
+      ],
+    });
+
+    const { PATCH } = await import("@/app/api/accounts/me/preferences/route");
+    const res = await PATCH(
+      new NextRequest("http://localhost/api/accounts/me/preferences", {
+        method: "PATCH",
+        body: JSON.stringify({
+          timeFormatLocale: "fr-CA",
+          timeFormatHourCycle: "h23",
+          timeFormatSeconds: false,
+          timeFormatTzLabel: true,
+        }),
+      }),
+      emptyContext,
+    );
+    const body = await res.json();
+
+    expect(res.status).toBe(200);
+    expect(body.data.timeFormatLocale).toBe("fr-CA");
+    expect(body.data.timeFormatHourCycle).toBe("h23");
+    expect(body.data.timeFormatSeconds).toBe(false);
+    expect(body.data.timeFormatTzLabel).toBe(true);
+    expect(mockQuery).toHaveBeenCalledWith(
+      expect.stringContaining("time_format_locale"),
+      expect.arrayContaining(["fr-CA", "h23", false, true]),
+    );
+  });
+
+  it("accepts the 'app' sentinel for timeFormatLocale", async () => {
+    mockQuery.mockResolvedValueOnce({
+      rows: [
+        {
+          locale: null,
+          timezone: null,
+          time_format_locale: "app",
+          time_format_hour_cycle: null,
+          time_format_seconds: null,
+          time_format_tz_label: null,
+        },
+      ],
+    });
+
+    const { PATCH } = await import("@/app/api/accounts/me/preferences/route");
+    const res = await PATCH(
+      new NextRequest("http://localhost/api/accounts/me/preferences", {
+        method: "PATCH",
+        body: JSON.stringify({ timeFormatLocale: "app" }),
+      }),
+      emptyContext,
+    );
+
+    expect(res.status).toBe(200);
+    expect((await res.json()).data.timeFormatLocale).toBe("app");
+  });
+
+  it("rejects a timeFormatLocale outside the curated list", async () => {
+    const { PATCH } = await import("@/app/api/accounts/me/preferences/route");
+    const res = await PATCH(
+      new NextRequest("http://localhost/api/accounts/me/preferences", {
+        method: "PATCH",
+        body: JSON.stringify({ timeFormatLocale: "xx-YY" }),
+      }),
+      emptyContext,
+    );
+
+    expect(res.status).toBe(400);
+    expect((await res.json()).error).toContain("timeFormatLocale");
+  });
+
+  it("rejects an unknown timeFormatHourCycle", async () => {
+    const { PATCH } = await import("@/app/api/accounts/me/preferences/route");
+    const res = await PATCH(
+      new NextRequest("http://localhost/api/accounts/me/preferences", {
+        method: "PATCH",
+        body: JSON.stringify({ timeFormatHourCycle: "h11" }),
+      }),
+      emptyContext,
+    );
+
+    expect(res.status).toBe(400);
+    expect((await res.json()).error).toContain("timeFormatHourCycle");
+  });
+
+  it("rejects a non-boolean timeFormatSeconds", async () => {
+    const { PATCH } = await import("@/app/api/accounts/me/preferences/route");
+    const res = await PATCH(
+      new NextRequest("http://localhost/api/accounts/me/preferences", {
+        method: "PATCH",
+        body: JSON.stringify({ timeFormatSeconds: "yes" }),
+      }),
+      emptyContext,
+    );
+
+    expect(res.status).toBe(400);
+    expect((await res.json()).error).toContain("timeFormatSeconds");
+  });
+
+  it("rejects a non-boolean timeFormatTzLabel", async () => {
+    const { PATCH } = await import("@/app/api/accounts/me/preferences/route");
+    const res = await PATCH(
+      new NextRequest("http://localhost/api/accounts/me/preferences", {
+        method: "PATCH",
+        body: JSON.stringify({ timeFormatTzLabel: 1 }),
+      }),
+      emptyContext,
+    );
+
+    expect(res.status).toBe(400);
+    expect((await res.json()).error).toContain("timeFormatTzLabel");
+  });
+
+  it("allows null to reset the time-format fields", async () => {
+    mockQuery.mockResolvedValueOnce({
+      rows: [
+        {
+          locale: null,
+          timezone: null,
+          time_format_locale: null,
+          time_format_hour_cycle: null,
+          time_format_seconds: null,
+          time_format_tz_label: null,
+        },
+      ],
+    });
+
+    const { PATCH } = await import("@/app/api/accounts/me/preferences/route");
+    const res = await PATCH(
+      new NextRequest("http://localhost/api/accounts/me/preferences", {
+        method: "PATCH",
+        body: JSON.stringify({
+          timeFormatLocale: null,
+          timeFormatHourCycle: null,
+          timeFormatSeconds: null,
+          timeFormatTzLabel: null,
+        }),
+      }),
+      emptyContext,
+    );
+    const body = await res.json();
+
+    expect(res.status).toBe(200);
+    expect(body.data.timeFormatLocale).toBeNull();
+    expect(body.data.timeFormatSeconds).toBeNull();
   });
 });

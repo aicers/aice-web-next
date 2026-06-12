@@ -533,6 +533,34 @@ Users can configure their language and timezone preferences.
 
 ![Profile preferences](../assets/preferences-en.png)
 
+#### Time format
+
+Below the language and timezone selectors, the **Time format** section
+lets users choose how dates and times are displayed across the app. The
+four options are independent and combine into many concrete formats; a
+**live preview** of a sample instant updates as the options change. The
+options use the browser's `Intl` formatter, so month *names* never
+appear (numeric months only).
+
+- **Formatting locale** — *Follow browser* (default), *Follow app
+  language*, or an explicit locale from a curated list. Drives date
+  order, separators, and AM/PM wording.
+- **Hour cycle** — *Follow locale* (default), *12-hour*, or *24-hour*.
+- **Seconds** — *Show* (default) or *Hide*.
+- **Timezone label** — *Show* (e.g. `GMT+9`) or *Hide* (default).
+
+When no option is changed, timestamps render exactly as before — the
+default is byte-identical to the previous fixed format.
+
+Saving applies the new format immediately to every timestamp already on
+screen, without a page reload.
+
+> **Note:** Compact timestamps (for example, breadcrumbs) always omit
+> seconds and the timezone label regardless of these settings; they only
+> honour the formatting locale and hour cycle.
+
+![Time format preferences](../assets/preferences-time-format-en.png)
+
 ### Two-Factor Authentication (TOTP)
 
 The TOTP card shows the current enrollment status and allows

@@ -408,7 +408,10 @@ export async function getCustomerIdByName(
 export async function resetAccountPreferences(username: string): Promise<void> {
   await withAuthDb((c) =>
     c.query(
-      "UPDATE accounts SET locale = NULL, timezone = NULL WHERE username = $1",
+      `UPDATE accounts SET locale = NULL, timezone = NULL,
+         time_format_locale = NULL, time_format_hour_cycle = NULL,
+         time_format_seconds = NULL, time_format_tz_label = NULL
+       WHERE username = $1`,
       [username],
     ),
   );
