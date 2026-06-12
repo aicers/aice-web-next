@@ -195,13 +195,8 @@ export function TriageStoryCard({
         </div>
       </header>
       <p className="text-xs text-muted-foreground">
-        <time dateTime={story.timeWindowStartIso}>
-          <Timestamp at={story.timeWindowStartIso} />
-        </time>{" "}
-        ~{" "}
-        <time dateTime={story.timeWindowEndIso}>
-          <Timestamp at={story.timeWindowEndIso} />
-        </time>
+        <Timestamp at={story.timeWindowStartIso} /> ~{" "}
+        <Timestamp at={story.timeWindowEndIso} />
       </p>
       {story.lastSentAtIso !== null ? (
         <p
@@ -245,9 +240,7 @@ export function TriageStoryCard({
               {story.topMembers.map((m) => (
                 <tr key={m.eventKey}>
                   <td className="py-1 pr-2 font-mono">
-                    <time dateTime={m.eventTimeIso}>
-                      <Timestamp at={m.eventTimeIso} />
-                    </time>
+                    <Timestamp at={m.eventTimeIso} />
                   </td>
                   <td className="py-1 pr-2">{m.kind}</td>
                   <td className="py-1 text-muted-foreground">

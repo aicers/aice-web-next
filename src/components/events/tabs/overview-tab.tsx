@@ -110,9 +110,7 @@ export function OverviewTab({
         </h2>
         <dl className="grid grid-cols-1 gap-x-6 gap-y-2 sm:grid-cols-2">
           <Row label={labels.time}>
-            <time dateTime={event.time}>
-              <Timestamp at={event.time} />
-            </time>
+            <Timestamp at={event.time} />
           </Row>
           <Row label={labels.kind}>{friendly}</Row>
           <Row label={labels.category}>{event.category ?? "—"}</Row>

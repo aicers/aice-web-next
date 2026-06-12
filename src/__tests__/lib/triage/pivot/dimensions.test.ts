@@ -3,6 +3,7 @@ import type { ScoredTriageEvent, TriageEvent } from "@/lib/triage";
 import { aggregateTriageEvents } from "@/lib/triage";
 import {
   buildPivotIndex,
+  displayPivotValueLabel,
   eventsMatchingFocusValues,
   getPivotDimension,
   lookupPivotEntry,
@@ -473,5 +474,47 @@ describe("pivot dimension extractors", () => {
       });
       expect(getPivotDimension("mqttSubscribe").extract(empty)).toEqual([]);
     });
+  });
+});
+
+describe("displayPivotValueLabel", () => {
+  const sameKindValue = getPivotDimension("sameKindWithin15Min").extract(
+    scored({ __typename: "HttpThreat", time: "2026-05-09T12:00:00.000Z" }),
+  )[0];
+
+  it("formats the sameKindWithin15Min instant through the compact formatter", () => {
+    const compact = (at: Date | string) =>
+      `compact(${new Date(at).toISOString()})`;
+    expect(
+      displayPivotValueLabel("sameKindWithin15Min", sameKindValue, compact),
+    ).toBe("HttpThreat near compact(2026-05-09T12:00:00.000Z)");
+  });
+
+  it("never flashes the raw ISO label pre-mount: a null formatter yields an ellipsis placeholder, not the stored toISOString label", () => {
+    // The stored label embeds the raw UTC ISO instant.
+    expect(sameKindValue.label).toBe(
+      "HttpThreat near 2026-05-09T12:00:00.000Z",
+    );
+    const fallback = displayPivotValueLabel(
+      "sameKindWithin15Min",
+      sameKindValue,
+      () => null,
+    );
+    expect(fallback).toBe("HttpThreat near …");
+    expect(fallback).not.toContain("2026-05-09T12:00:00.000Z");
+  });
+
+  it("uses the raw label only for a malformed key (no parseable instant)", () => {
+    const malformed = { key: "no-at-separator", label: "raw-label" };
+    expect(
+      displayPivotValueLabel("sameKindWithin15Min", malformed, () => "x"),
+    ).toBe("raw-label");
+  });
+
+  it("returns the stored label verbatim for other dimensions", () => {
+    const value = { key: "7", label: "COMMAND_AND_CONTROL" };
+    expect(displayPivotValueLabel("categories", value, () => "ignored")).toBe(
+      "COMMAND_AND_CONTROL",
+    );
   });
 });

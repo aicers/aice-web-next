@@ -215,10 +215,7 @@ function PivotSnippet({
       </span>
       {summary.lastTime ? (
         <span>
-          {labels.lastSeen}:{" "}
-          <time dateTime={summary.lastTime}>
-            <Timestamp at={summary.lastTime} />
-          </time>
+          {labels.lastSeen}: <Timestamp at={summary.lastTime} />
         </span>
       ) : null}
     </span>

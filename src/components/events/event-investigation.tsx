@@ -342,9 +342,7 @@ export function EventInvestigation({
           <div className="flex items-center gap-1.5">
             <dt className="font-medium">{labels.time}</dt>
             <dd>
-              <time dateTime={event.time}>
-                <Timestamp at={event.time} />
-              </time>
+              <Timestamp at={event.time} />
             </dd>
           </div>
           <div className="flex items-center gap-1.5">

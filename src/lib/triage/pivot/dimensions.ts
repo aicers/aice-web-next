@@ -510,12 +510,21 @@ export function parseSameKindKey(
  * this helper recovers the instant from the value **key** (via
  * {@link parseSameKindKey}) and re-renders it through the caller's
  * central compact formatter so analysts see a localized time instead of
- * a raw UTC ISO string. It falls back to the raw `label` when the key is
- * malformed or when `formatCompact` returns `null` (pre-mount).
+ * a raw UTC ISO string.
+ *
+ * When `formatCompact` returns `null` (pre-mount, before the timezone
+ * resolves) for a well-formed key, the instant is replaced with an
+ * ellipsis placeholder (`` `${typename} near …` ``) rather than the
+ * stored `label` — the stored label embeds the raw `toISOString()`
+ * instant, so falling back to it would flash a UTC value before mount,
+ * which Part 3 of #764 forbids. The raw `label` is used only when the
+ * key is malformed (a defensive edge for which no parsed instant exists)
+ * or for every other dimension, whose stored label is already
+ * analyst-facing.
  *
  * @param compactFn `useTimestampFormatter().formatCompact` (or any
- *   `(at) => string | null`). Returning `null` selects the raw-label
- *   fallback, so a UTC value is never flashed before the timezone
+ *   `(at) => string | null`). Returning `null` selects the ellipsis
+ *   placeholder, so a UTC value is never flashed before the timezone
  *   resolves.
  */
 export function displayPivotValueLabel(
@@ -527,7 +536,7 @@ export function displayPivotValueLabel(
   const parsed = parseSameKindKey(value.key);
   if (parsed === null) return value.label;
   const compact = compactFn(new Date(parsed.centerMs));
-  if (compact === null) return value.label;
+  if (compact === null) return `${parsed.typename} near …`;
   return `${parsed.typename} near ${compact}`;
 }
 
