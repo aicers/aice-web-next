@@ -22,8 +22,22 @@ import { describe, expect, it, vi } from "vitest";
 const TZ = "Asia/Seoul";
 const localeRef = vi.hoisted(() => ({ current: "en" }));
 
-vi.mock("@/components/providers/timezone-provider", () => ({
+// Default (unset) resolved format — byte-identical to the no-options
+// formatter output the assertions compare against. A stable reference
+// (the real provider memoizes it) so formatter identities stay stable
+// across re-renders.
+const resolvedTimeFormatRef = vi.hoisted(() => ({
+  current: {
+    locale: undefined,
+    hourCycle: undefined,
+    seconds: true,
+    tzLabel: false,
+  },
+}));
+
+vi.mock("@/components/providers/account-preferences-provider", () => ({
   useTimezone: () => "Asia/Seoul",
+  useResolvedTimeFormat: () => resolvedTimeFormatRef.current,
 }));
 vi.mock("next-intl", () => ({
   useLocale: () => localeRef.current,

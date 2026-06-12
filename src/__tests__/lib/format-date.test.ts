@@ -1,6 +1,24 @@
 import { describe, expect, it } from "vitest";
 
-import { formatDateTime, formatDateTimeCompact } from "@/lib/format-date";
+import {
+  formatDateTime,
+  formatDateTimeCompact,
+  formatEventTime,
+  type ResolvedTimeFormat,
+} from "@/lib/format-date";
+
+/** Build a resolved time-format object, defaulting to the app default. */
+function resolved(
+  overrides: Partial<ResolvedTimeFormat> = {},
+): ResolvedTimeFormat {
+  return {
+    locale: undefined,
+    hourCycle: undefined,
+    seconds: true,
+    tzLabel: false,
+    ...overrides,
+  };
+}
 
 describe("formatDateTime", () => {
   // Use a fixed UTC date to avoid locale-dependent output
@@ -108,5 +126,167 @@ describe("formatDateTimeCompact", () => {
     const result = formatDateTimeCompact(new Date(isoString), "UTC", "en");
     expect(result).toMatch(/15/);
     expect(result).toMatch(/30/);
+  });
+});
+
+// ── #766: time-display-format options ─────────────────────────────
+
+describe("formatDateTime — time-format options", () => {
+  const iso = "2024-06-15T15:30:45Z";
+
+  it("is byte-identical to the no-options call for the default object", () => {
+    expect(formatDateTime(iso, "UTC", resolved())).toBe(
+      formatDateTime(iso, "UTC"),
+    );
+    expect(formatDateTime(iso, "Asia/Seoul", resolved())).toBe(
+      formatDateTime(iso, "Asia/Seoul"),
+    );
+  });
+
+  it("honours the hour-cycle option (h12 vs h23)", () => {
+    // Pin en-US so the AM/PM wording is deterministic regardless of the
+    // runtime default locale.
+    const h23 = formatDateTime(
+      iso,
+      "UTC",
+      resolved({ locale: "en-US", hourCycle: "h23" }),
+    );
+    const h12 = formatDateTime(
+      iso,
+      "UTC",
+      resolved({ locale: "en-US", hourCycle: "h12" }),
+    );
+    // 15:30 UTC → 15 in 24-hour, 3 + PM in 12-hour.
+    expect(h23).toMatch(/15/);
+    expect(h23).not.toMatch(/AM|PM/i);
+    expect(h12).toMatch(/3/);
+    expect(h12).toMatch(/PM/i);
+  });
+
+  it("hides seconds when the seconds option is false", () => {
+    const withSeconds = formatDateTime(iso, "UTC", resolved({ seconds: true }));
+    const noSeconds = formatDateTime(iso, "UTC", resolved({ seconds: false }));
+    expect(withSeconds).toContain("45");
+    expect(noSeconds).not.toContain("45");
+  });
+
+  it("adds a GMT offset label when tzLabel is true", () => {
+    const withLabel = formatDateTime(
+      iso,
+      "Asia/Seoul",
+      resolved({ tzLabel: true }),
+    );
+    const noLabel = formatDateTime(iso, "Asia/Seoul", resolved());
+    // shortOffset pins the offset form (GMT+9), never KST.
+    expect(withLabel).toContain("GMT+9");
+    expect(withLabel).not.toContain("KST");
+    expect(noLabel).not.toContain("GMT");
+  });
+
+  it("applies the locale override", () => {
+    const en = formatDateTime(iso, "UTC", resolved({ locale: "en-US" }));
+    const ko = formatDateTime(iso, "UTC", resolved({ locale: "ko-KR" }));
+    expect(en).not.toBe(ko);
+    expect(en).toMatch(/AM|PM/i);
+    expect(ko).not.toMatch(/AM|PM/i);
+  });
+});
+
+describe("formatDateTimeCompact — time-format options", () => {
+  const iso = "2024-06-15T15:30:45Z";
+
+  it("ignores the seconds and tzLabel options (compact invariance)", () => {
+    const base = formatDateTimeCompact(iso, "Asia/Seoul", "en", resolved());
+    const fiddled = formatDateTimeCompact(
+      iso,
+      "Asia/Seoul",
+      "en",
+      resolved({ seconds: false, tzLabel: true }),
+    );
+    expect(fiddled).toBe(base);
+    // Seconds and tz label never appear in the compact form.
+    expect(fiddled).not.toContain("45");
+    expect(fiddled).not.toContain("GMT");
+  });
+
+  it("honours the hour-cycle option", () => {
+    const h23 = formatDateTimeCompact(
+      iso,
+      "UTC",
+      "en",
+      resolved({ hourCycle: "h23" }),
+    );
+    const h12 = formatDateTimeCompact(
+      iso,
+      "UTC",
+      "en",
+      resolved({ hourCycle: "h12" }),
+    );
+    expect(h23).toMatch(/15/);
+    expect(h23).not.toMatch(/AM|PM/i);
+    expect(h12).toMatch(/PM/i);
+  });
+
+  it("the locale override takes precedence over the locale argument", () => {
+    const overridden = formatDateTimeCompact(
+      iso,
+      "UTC",
+      "en",
+      resolved({ locale: "ko-KR" }),
+    );
+    const plainKo = formatDateTimeCompact(iso, "UTC", "ko-KR");
+    expect(overridden).toBe(plainKo);
+  });
+});
+
+describe("formatEventTime — time-format options", () => {
+  const iso = "2024-06-15T15:30:45Z";
+  const FALLBACK = "—";
+
+  it("is byte-identical to the no-options call for the default object", () => {
+    expect(formatEventTime(iso, "en", FALLBACK, "UTC", resolved())).toBe(
+      formatEventTime(iso, "en", FALLBACK, "UTC"),
+    );
+  });
+
+  it("hides seconds when the seconds option is false", () => {
+    const withSeconds = formatEventTime(iso, "en", FALLBACK, "UTC", resolved());
+    const noSeconds = formatEventTime(
+      iso,
+      "en",
+      FALLBACK,
+      "UTC",
+      resolved({ seconds: false }),
+    );
+    expect(withSeconds).toContain("45");
+    expect(noSeconds).not.toContain("45");
+  });
+
+  it("adds the GMT offset label when tzLabel is true", () => {
+    const withLabel = formatEventTime(
+      iso,
+      "en",
+      FALLBACK,
+      "Asia/Seoul",
+      resolved({ tzLabel: true }),
+    );
+    expect(withLabel).toContain("GMT+9");
+  });
+
+  it("the locale override takes precedence over the locale argument", () => {
+    const overridden = formatEventTime(
+      iso,
+      "en",
+      FALLBACK,
+      "UTC",
+      resolved({ locale: "ko-KR" }),
+    );
+    expect(overridden).not.toMatch(/AM|PM/i);
+  });
+
+  it("returns the fallback for an unparseable instant", () => {
+    expect(
+      formatEventTime("not-a-date", "en", FALLBACK, "UTC", resolved()),
+    ).toBe(FALLBACK);
   });
 });

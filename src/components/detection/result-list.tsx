@@ -17,7 +17,10 @@ import {
   readEventAddressing,
   readEventIdentity,
 } from "@/components/events/event-display-helpers";
-import { useTimezone } from "@/components/providers/timezone-provider";
+import {
+  useResolvedTimeFormat,
+  useTimezone,
+} from "@/components/providers/account-preferences-provider";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import {
@@ -771,6 +774,7 @@ function EventRow({
   onPivot?: (patch: PivotPatch) => void;
 }) {
   const timezone = useTimezone();
+  const timeFormat = useResolvedTimeFormat();
   const addressing = readEventAddressing(event);
   const identity = readEventIdentity(event);
   const kindLabel =
@@ -873,6 +877,7 @@ function EventRow({
                 locale,
                 labels.unknownTime,
                 timezone,
+                timeFormat,
               )}
             </span>
             <PivotCell

@@ -111,6 +111,21 @@ CREATE TABLE accounts (
   allowed_ips           TEXT[],
   locale                TEXT,
   timezone              TEXT,
+  -- User-selectable time-display format (#766). Four nullable,
+  -- no-DEFAULT columns; NULL uniformly means "use the app default"
+  -- (today's format), keeping "never touched the setting" distinct
+  -- from any explicit choice.
+  --   time_format_locale: NULL = follow browser; 'app' = follow app
+  --   locale; any other value = an explicit BCP-47 tag from the
+  --   curated list (app-layer validated, like timezone).
+  --   time_format_hour_cycle: NULL = follow the locale's default.
+  --   time_format_seconds: NULL = default (show).
+  --   time_format_tz_label: NULL = default (hide).
+  time_format_locale     TEXT,
+  time_format_hour_cycle TEXT
+                        CHECK (time_format_hour_cycle IN ('h12', 'h23')),
+  time_format_seconds    BOOLEAN,
+  time_format_tz_label   BOOLEAN,
   last_sign_in_at       TIMESTAMPTZ,
   password_changed_at   TIMESTAMPTZ,
   created_at            TIMESTAMPTZ NOT NULL DEFAULT NOW(),

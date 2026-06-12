@@ -1,9 +1,9 @@
 "use client";
 
 import { useRouter } from "next/navigation";
-import { useTranslations } from "next-intl";
+import { useLocale, useTranslations } from "next-intl";
 import { useEffect, useState } from "react";
-
+import { useRefreshAccountPreferences } from "@/components/providers/account-preferences-provider";
 import { readCsrfToken } from "@/components/session/session-extension-dialog";
 import { Button } from "@/components/ui/button";
 import { Label } from "@/components/ui/label";
@@ -14,6 +14,13 @@ import {
   SelectTrigger,
   SelectValue,
 } from "@/components/ui/select";
+import { formatDateTime } from "@/lib/format-date";
+import {
+  CURATED_TIME_FORMAT_LOCALES,
+  resolveTimeFormat,
+  type StoredTimeFormat,
+  TIME_FORMAT_LOCALE_APP,
+} from "@/lib/time-format";
 
 // ── Constants ───────────────────────────────────────────────────
 
@@ -22,15 +29,32 @@ const LOCALE_LABELS: Record<string, string> = {
   ko: "한국어",
 };
 
+/** Sentinel select values for the formatting-locale control. */
+const TF_LOCALE_BROWSER = "browser";
+
+/**
+ * Fixed sample instant for the live preview — a PM time with non-zero
+ * seconds so the hour-cycle, seconds, and AM/PM differences are visible.
+ */
+const PREVIEW_INSTANT = new Date("2026-01-15T13:09:05Z");
+
 // ── Component ───────────────────────────────────────────────────
 
 export function PreferencesForm() {
   const t = useTranslations("profile");
   const router = useRouter();
+  const committedLocale = useLocale();
+  const refreshPreferences = useRefreshAccountPreferences();
 
   const [locale, setLocale] = useState<string>("");
   const [timezone, setTimezone] = useState<string>("");
   const [timezones, setTimezones] = useState<string[]>([]);
+  // Time-format controls (#766). Stored as select-friendly strings and
+  // mapped to the nullable API contract on save.
+  const [tfLocale, setTfLocale] = useState<string>(TF_LOCALE_BROWSER);
+  const [tfHourCycle, setTfHourCycle] = useState<string>("auto");
+  const [tfSeconds, setTfSeconds] = useState<string>("show");
+  const [tfTzLabel, setTfTzLabel] = useState<string>("hide");
   const [saving, setSaving] = useState(false);
   const [message, setMessage] = useState("");
   const [loading, setLoading] = useState(true);
@@ -49,14 +73,46 @@ export function PreferencesForm() {
     fetch("/api/accounts/me/preferences")
       .then((res) => (res.ok ? res.json() : null))
       .then((data) => {
-        if (data?.data) {
-          setLocale(data.data.locale ?? "");
-          setTimezone(data.data.timezone ?? "");
-        }
+        if (!data?.data) return;
+        const d = data.data;
+        setLocale(d.locale ?? "");
+        setTimezone(d.timezone ?? "");
+        setTfLocale(
+          d.timeFormatLocale == null ? TF_LOCALE_BROWSER : d.timeFormatLocale,
+        );
+        setTfHourCycle(d.timeFormatHourCycle ?? "auto");
+        setTfSeconds(d.timeFormatSeconds === false ? "hide" : "show");
+        setTfTzLabel(d.timeFormatTzLabel === true ? "show" : "hide");
       })
       .catch(() => {})
       .finally(() => setLoading(false));
   }, [browserTimezone]);
+
+  // Map the select states to the nullable stored-preference shape. `null`
+  // uniformly resets a field to the app default.
+  function buildTimeFormat(): StoredTimeFormat {
+    return {
+      timeFormatLocale: tfLocale === TF_LOCALE_BROWSER ? null : tfLocale,
+      timeFormatHourCycle:
+        tfHourCycle === "h12" || tfHourCycle === "h23" ? tfHourCycle : null,
+      timeFormatSeconds: tfSeconds === "hide" ? false : null,
+      timeFormatTzLabel: tfTzLabel === "show" ? true : null,
+    };
+  }
+
+  // Live preview: resolve the pending selections (the `'app'` sentinel
+  // resolves against the *pending* language selection, not the committed
+  // route locale) and format the sample instant with the general
+  // formatter, which observes all four options.
+  const previewStored = buildTimeFormat();
+  const pendingAppLocale = locale || committedLocale;
+  const previewResolved = resolveTimeFormat(previewStored, pendingAppLocale);
+  const previewTimezone = timezone || browserTimezone;
+  const previewText = formatDateTime(
+    PREVIEW_INSTANT,
+    previewTimezone,
+    previewResolved,
+  );
 
   async function handleSave() {
     setSaving(true);
@@ -73,6 +129,7 @@ export function PreferencesForm() {
         body: JSON.stringify({
           locale: locale || null,
           timezone: timezone || null,
+          ...buildTimeFormat(),
         }),
       });
 
@@ -83,6 +140,10 @@ export function PreferencesForm() {
       }
 
       setMessage(t("saved"));
+      // Re-run the client provider's fetch so already-mounted <Timestamp>s
+      // pick up the new format immediately — router.refresh() only
+      // re-renders server components, not the client provider's effect.
+      refreshPreferences();
       router.refresh();
     } catch {
       setMessage("Failed to save preferences");
@@ -138,6 +199,114 @@ export function PreferencesForm() {
               {t("browserDefault")}: {browserTimezone}
             </p>
           )}
+        </div>
+
+        {/* Time-format options (#766) */}
+        <div
+          className="space-y-4 border-t pt-6"
+          data-slot="time-format-section"
+        >
+          <div className="space-y-1">
+            <h2 className="text-lg font-medium">{t("timeFormat")}</h2>
+            <p className="text-muted-foreground text-sm">
+              {t("timeFormatDescription")}
+            </p>
+          </div>
+
+          {/* Live preview */}
+          <div className="space-y-1">
+            <Label>{t("timeFormatPreview")}</Label>
+            <p
+              className="rounded-md border bg-muted/40 px-3 py-2 font-mono text-sm tabular-nums"
+              data-slot="time-format-preview"
+            >
+              {previewText}
+            </p>
+          </div>
+
+          {/* Formatting locale */}
+          <div className="space-y-2">
+            <Label htmlFor="tf-locale">{t("timeFormatLocale")}</Label>
+            <Select value={tfLocale} onValueChange={setTfLocale}>
+              <SelectTrigger id="tf-locale">
+                <SelectValue />
+              </SelectTrigger>
+              <SelectContent>
+                <SelectItem value={TF_LOCALE_BROWSER}>
+                  {t("timeFormatLocaleBrowser")}
+                </SelectItem>
+                <SelectItem value={TIME_FORMAT_LOCALE_APP}>
+                  {t("timeFormatLocaleApp")}
+                </SelectItem>
+                {CURATED_TIME_FORMAT_LOCALES.map((tag) => (
+                  <SelectItem key={tag} value={tag}>
+                    {tag}
+                  </SelectItem>
+                ))}
+              </SelectContent>
+            </Select>
+          </div>
+
+          {/* Hour cycle */}
+          <div className="space-y-2">
+            <Label htmlFor="tf-hour-cycle">{t("timeFormatHourCycle")}</Label>
+            <Select value={tfHourCycle} onValueChange={setTfHourCycle}>
+              <SelectTrigger id="tf-hour-cycle">
+                <SelectValue />
+              </SelectTrigger>
+              <SelectContent>
+                <SelectItem value="auto">
+                  {t("timeFormatHourCycleAuto")}
+                </SelectItem>
+                <SelectItem value="h12">
+                  {t("timeFormatHourCycle12")}
+                </SelectItem>
+                <SelectItem value="h23">
+                  {t("timeFormatHourCycle24")}
+                </SelectItem>
+              </SelectContent>
+            </Select>
+          </div>
+
+          {/* Seconds */}
+          <div className="space-y-2">
+            <Label htmlFor="tf-seconds">{t("timeFormatSeconds")}</Label>
+            <Select value={tfSeconds} onValueChange={setTfSeconds}>
+              <SelectTrigger id="tf-seconds">
+                <SelectValue />
+              </SelectTrigger>
+              <SelectContent>
+                <SelectItem value="show">
+                  {t("timeFormatSecondsShow")}
+                </SelectItem>
+                <SelectItem value="hide">
+                  {t("timeFormatSecondsHide")}
+                </SelectItem>
+              </SelectContent>
+            </Select>
+          </div>
+
+          {/* Timezone label */}
+          <div className="space-y-2">
+            <Label htmlFor="tf-tz-label">{t("timeFormatTzLabel")}</Label>
+            <Select value={tfTzLabel} onValueChange={setTfTzLabel}>
+              <SelectTrigger id="tf-tz-label">
+                <SelectValue />
+              </SelectTrigger>
+              <SelectContent>
+                <SelectItem value="show">
+                  {t("timeFormatTzLabelShow")}
+                </SelectItem>
+                <SelectItem value="hide">
+                  {t("timeFormatTzLabelHide")}
+                </SelectItem>
+              </SelectContent>
+            </Select>
+          </div>
+
+          <p className="text-muted-foreground text-xs">
+            {t("timeFormatCompactNote")}
+          </p>
         </div>
 
         {/* Save */}

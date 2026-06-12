@@ -8,7 +8,10 @@ import {
   levelBadgeVariant,
   readEventAddressing,
 } from "@/components/events/event-display-helpers";
-import { useTimezone } from "@/components/providers/timezone-provider";
+import {
+  useResolvedTimeFormat,
+  useTimezone,
+} from "@/components/providers/account-preferences-provider";
 import { Badge } from "@/components/ui/badge";
 import { Link } from "@/i18n/navigation";
 import type { PeriodKey } from "@/lib/detection/period";
@@ -144,6 +147,7 @@ export function QuickPeekInspector({
   customers,
 }: QuickPeekInspectorProps) {
   const timezone = useTimezone();
+  const timeFormat = useResolvedTimeFormat();
   const kindLabel =
     EVENT_KIND_FRIENDLY_NAMES[event.__typename] ?? event.__typename;
   const timeLabel = formatEventTime(
@@ -151,6 +155,7 @@ export function QuickPeekInspector({
     locale,
     labels.unknownTime,
     timezone,
+    timeFormat,
   );
   const addressing = readEventAddressing(event);
   const highlights = pickHighlightValues(event);

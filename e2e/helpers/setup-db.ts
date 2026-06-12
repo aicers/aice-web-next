@@ -471,11 +471,15 @@ export async function getCustomerIdByName(
 // ── Preferences helpers ───────────────────────────────────────────
 
 /**
- * Reset locale and timezone preferences for an account.
+ * Reset locale, timezone, and time-display-format preferences for an
+ * account so they do not leak across E2E runs (#766).
  */
 export async function resetAccountPreferences(username: string): Promise<void> {
   await pool.query(
-    "UPDATE accounts SET locale = NULL, timezone = NULL WHERE username = $1",
+    `UPDATE accounts SET locale = NULL, timezone = NULL,
+       time_format_locale = NULL, time_format_hour_cycle = NULL,
+       time_format_seconds = NULL, time_format_tz_label = NULL
+     WHERE username = $1`,
     [username],
   );
 }

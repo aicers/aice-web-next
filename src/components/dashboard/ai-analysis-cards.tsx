@@ -58,7 +58,7 @@
 
 import { useEffect, useRef, useState } from "react";
 
-import { useTimezone } from "@/components/providers/timezone-provider";
+import { useTimezone } from "@/components/providers/account-preferences-provider";
 import {
   type AiAnalysisBadgeLabels,
   renderAiAnalysisBadge,

@@ -8,9 +8,9 @@ import { Breadcrumbs } from "@/components/layout/breadcrumbs";
 import { CustomerScopeIndicator } from "@/components/layout/customer-scope-indicator";
 import { MobileHeader } from "@/components/layout/mobile-header";
 import { Sidebar } from "@/components/layout/sidebar";
+import { AccountPreferencesProvider } from "@/components/providers/account-preferences-provider";
 import { BreadcrumbLabelProvider } from "@/components/providers/breadcrumb-label-provider";
 import { ScopeFingerprintProvider } from "@/components/providers/scope-fingerprint-provider";
-import { TimezoneProvider } from "@/components/providers/timezone-provider";
 import { useSidebar } from "@/hooks/use-sidebar";
 import type { EffectiveCustomerScope } from "@/lib/auth/customer-scope";
 
@@ -60,7 +60,7 @@ export default function DashboardLayout({
 
   return (
     <ScopeFingerprintProvider fingerprint={scopeFingerprint}>
-      <TimezoneProvider>
+      <AccountPreferencesProvider>
         <BreadcrumbLabelProvider>
           <div className="flex h-screen flex-col">
             {isAimerSystemAdmin && <AimerPhase2Banner />}
@@ -115,7 +115,7 @@ export default function DashboardLayout({
             </div>
           </div>
         </BreadcrumbLabelProvider>
-      </TimezoneProvider>
+      </AccountPreferencesProvider>
     </ScopeFingerprintProvider>
   );
 }
