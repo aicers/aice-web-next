@@ -920,7 +920,7 @@ never force-refreshes.
 
 The Send button is disabled when the Clumit Insight integration is
 not configured (no active signing key, no `aice_id`, or no
-`aimer_web_bridge_url`). Configure the integration on the
+`clumit_insight_bridge_url`). Configure the integration on the
 Settings → Clumit Insight integration page first.
 
 ### Opportunistic background push

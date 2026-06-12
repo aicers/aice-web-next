@@ -152,9 +152,9 @@ export function AimerIntegrationPanel({
   async function saveSetting(
     key:
       | "aice_id"
-      | "aimer_web_bridge_url"
-      | "aimer_default_model_name"
-      | "aimer_default_model",
+      | "clumit_insight_bridge_url"
+      | "clumit_insight_default_model_name"
+      | "clumit_insight_default_model",
     value: string,
   ): Promise<string | null> {
     setBusy(key);
@@ -184,11 +184,11 @@ export function AimerIntegrationPanel({
         switch (key) {
           case "aice_id":
             return { ...prev, aiceId: body.data.value };
-          case "aimer_web_bridge_url":
+          case "clumit_insight_bridge_url":
             return { ...prev, bridgeUrl: body.data.value };
-          case "aimer_default_model_name":
+          case "clumit_insight_default_model_name":
             return { ...prev, defaultModelName: body.data.value };
-          case "aimer_default_model":
+          case "clumit_insight_default_model":
             return { ...prev, defaultModel: body.data.value };
         }
       });
@@ -667,9 +667,9 @@ function SettingsBlock({
   onSave: (
     key:
       | "aice_id"
-      | "aimer_web_bridge_url"
-      | "aimer_default_model_name"
-      | "aimer_default_model",
+      | "clumit_insight_bridge_url"
+      | "clumit_insight_default_model_name"
+      | "clumit_insight_default_model",
     value: string,
   ) => Promise<string | null>;
   t: ReturnType<typeof useTranslations<"aimerIntegration">>;
@@ -681,9 +681,9 @@ function SettingsBlock({
   const [pendingSave, setPendingSave] = useState<
     | null
     | "aice_id"
-    | "aimer_web_bridge_url"
-    | "aimer_default_model_name"
-    | "aimer_default_model"
+    | "clumit_insight_bridge_url"
+    | "clumit_insight_default_model_name"
+    | "clumit_insight_default_model"
   >(null);
 
   const aiceDirty = aiceIdDraft.trim() !== (aiceId ?? "");
@@ -742,10 +742,10 @@ function SettingsBlock({
           <Button
             type="button"
             data-testid="aimer-bridge-url-save"
-            disabled={!bridgeDirty || busyKey === "aimer_web_bridge_url"}
-            onClick={() => setPendingSave("aimer_web_bridge_url")}
+            disabled={!bridgeDirty || busyKey === "clumit_insight_bridge_url"}
+            onClick={() => setPendingSave("clumit_insight_bridge_url")}
           >
-            {busyKey === "aimer_web_bridge_url"
+            {busyKey === "clumit_insight_bridge_url"
               ? t("settings.saving")
               : t("settings.saveBridgeUrl")}
           </Button>
@@ -769,10 +769,12 @@ function SettingsBlock({
           <Button
             type="button"
             data-testid="aimer-default-model-name-save"
-            disabled={!modelNameDirty || busyKey === "aimer_default_model_name"}
-            onClick={() => setPendingSave("aimer_default_model_name")}
+            disabled={
+              !modelNameDirty || busyKey === "clumit_insight_default_model_name"
+            }
+            onClick={() => setPendingSave("clumit_insight_default_model_name")}
           >
-            {busyKey === "aimer_default_model_name"
+            {busyKey === "clumit_insight_default_model_name"
               ? t("settings.saving")
               : t("settings.saveDefaultModelName")}
           </Button>
@@ -796,10 +798,10 @@ function SettingsBlock({
           <Button
             type="button"
             data-testid="aimer-default-model-save"
-            disabled={!modelDirty || busyKey === "aimer_default_model"}
-            onClick={() => setPendingSave("aimer_default_model")}
+            disabled={!modelDirty || busyKey === "clumit_insight_default_model"}
+            onClick={() => setPendingSave("clumit_insight_default_model")}
           >
-            {busyKey === "aimer_default_model"
+            {busyKey === "clumit_insight_default_model"
               ? t("settings.saving")
               : t("settings.saveDefaultModel")}
           </Button>
@@ -819,9 +821,9 @@ function SettingsBlock({
           const draft =
             key === "aice_id"
               ? aiceIdDraft
-              : key === "aimer_web_bridge_url"
+              : key === "clumit_insight_bridge_url"
                 ? bridgeUrlDraft
-                : key === "aimer_default_model_name"
+                : key === "clumit_insight_default_model_name"
                   ? modelNameDraft
                   : modelDraft;
           const value = draft.trim();
@@ -838,13 +840,13 @@ function SettingsBlock({
               case "aice_id":
                 setAiceIdDraft(canonical);
                 break;
-              case "aimer_web_bridge_url":
+              case "clumit_insight_bridge_url":
                 setBridgeUrlDraft(canonical);
                 break;
-              case "aimer_default_model_name":
+              case "clumit_insight_default_model_name":
                 setModelNameDraft(canonical);
                 break;
-              case "aimer_default_model":
+              case "clumit_insight_default_model":
                 setModelDraft(canonical);
                 break;
             }

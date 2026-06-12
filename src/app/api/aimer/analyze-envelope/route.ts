@@ -62,8 +62,8 @@ import { ReviewForbiddenError } from "@/lib/review/errors";
  *   1. Tenant-scope check on `customerId` (same gate as the Phase 1
  *      context-token route — `detection:read` users for tenant A
  *      must not mint envelopes for tenant B).
- *   2. Setup gating: `aice_id`, `aimer_web_bridge_url`,
- *      `aimer_default_model_name`, `aimer_default_model`, and an
+ *   2. Setup gating: `aice_id`, `clumit_insight_bridge_url`,
+ *      `clumit_insight_default_model_name`, `clumit_insight_default_model`, and an
  *      active signing key must all be present.
  *   3. Resolve the customer's `external_key`.
  *   4. REview event-resolution gate (`event(id:)` under
@@ -261,7 +261,7 @@ export const POST = withAuth(
 
     // Setup gating — all five prerequisites must be present so the
     // signed envelope is structurally complete. A missing
-    // `aimer_default_model_name` / `aimer_default_model` is a 503
+    // `clumit_insight_default_model_name` / `clumit_insight_default_model` is a 503
     // because aimer-web#254 made both required.
     const setup = await getAimerIntegrationSetup();
     if (

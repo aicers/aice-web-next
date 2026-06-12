@@ -111,7 +111,7 @@
   },
   "aimerIntegration": {
     "title": "Clumit Insight Integration",
-    "description": "Configure the system-wide prerequisites for the Analyze with Insight flow: the deployment identifier (aice_id), the Clumit Insight bridge URL, the default analyze model identifiers (aimer_default_model_name, aimer_default_model), and the dedicated context-token signing keypair.",
+    "description": "Configure the system-wide prerequisites for the Analyze with Insight flow: the deployment identifier (aice_id), the Clumit Insight bridge URL, the default analyze model identifiers (clumit_insight_default_model_name, clumit_insight_default_model), and the dedicated context-token signing keypair.",
     "permissionAlert": {
       "title": "Clumit Insight signing key file has unexpected permissions",
       "body": "The on-disk file ({path}) was observed with mode {observed} instead of 0600. Restore the correct mode (chmod 0600) before continuing — the application refuses to write a key with looser permissions, but reading remains possible."
@@ -123,9 +123,9 @@
       "notConfigured": "Not configured",
       "missing": {
         "aiceId": "aice_id is not set.",
-        "bridgeUrl": "aimer_web_bridge_url is not set.",
-        "defaultModelName": "aimer_default_model_name is not set.",
-        "defaultModel": "aimer_default_model is not set.",
+        "bridgeUrl": "clumit_insight_bridge_url is not set.",
+        "defaultModelName": "clumit_insight_default_model_name is not set.",
+        "defaultModel": "clumit_insight_default_model is not set.",
         "signingKey": "Context-token signing keypair is not generated."
       }
     },
@@ -185,13 +185,13 @@
       "aiceIdLabel": "aice_id",
       "aiceIdPlaceholder": "acme.example.com",
       "aiceIdHelper": "Deployment hostname (RFC 1123). Used as the JWT iss claim and as the aice_id claim sent to Clumit Insight. Clumit Insight's trust_registry uses this as the lookup key, so it must match the value registered there.",
-      "bridgeUrlLabel": "aimer_web_bridge_url",
+      "bridgeUrlLabel": "clumit_insight_bridge_url",
       "bridgeUrlPlaceholder": "https://insight.example.com",
       "bridgeUrlHelper": "Base URL of the Clumit Insight instance that receives the multipart POST to /api/analysis/analyze-bridge. HTTPS only. The path is normalized to a canonical form (no trailing slash).",
-      "defaultModelNameLabel": "aimer_default_model_name",
+      "defaultModelNameLabel": "clumit_insight_default_model_name",
       "defaultModelNamePlaceholder": "anthropic",
       "defaultModelNameHelper": "Default LLM vendor / model-family identifier embedded in the analyze_params_token JWS claims sent to Clumit Insight. The accepted catalog is owned by Clumit Insight-side configuration.",
-      "defaultModelLabel": "aimer_default_model",
+      "defaultModelLabel": "clumit_insight_default_model",
       "defaultModelPlaceholder": "claude-sonnet-4-6",
       "defaultModelHelper": "Default LLM model identifier embedded in the analyze_params_token JWS claims. The accepted catalog is owned by Clumit Insight-side configuration.",
       "saveAiceId": "Save aice_id",

@@ -6,7 +6,7 @@
  * pure logic.  Two component-specific behaviors are easy to regress
  * and not visible from those tests:
  *
- * 1. After a successful PATCH on `aimer_web_bridge_url`, the input
+ * 1. After a successful PATCH on `clumit_insight_bridge_url`, the input
  *    draft must reset to the server-normalized canonical value (the
  *    server strips trailing slashes).  Without this sync the input
  *    would keep the original "https://aimer.example.com/" the
@@ -183,7 +183,7 @@ describe("AimerIntegrationPanel – bridge URL save normalization", () => {
         };
         const value = (body.value ?? "").replace(/\/+$/, "");
         return new Response(
-          JSON.stringify({ data: { key: "aimer_web_bridge_url", value } }),
+          JSON.stringify({ data: { key: "clumit_insight_bridge_url", value } }),
           { status: 200, headers: { "Content-Type": "application/json" } },
         );
       }) as unknown as typeof fetch,

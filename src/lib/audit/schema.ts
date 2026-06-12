@@ -103,7 +103,7 @@ type AimerSigningKeyAction =
 /**
  * Aimer integration setting change action (#437).
  *
- * Records updates to `aice_id` and `aimer_web_bridge_url` system
+ * Records updates to `aice_id` and `clumit_insight_bridge_url` system
  * settings, which together with the signing keypair gate the Send to
  * Aimer flow.
  */

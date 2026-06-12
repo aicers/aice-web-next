@@ -212,7 +212,7 @@ describe("system-settings", () => {
         ]),
       );
       expect(allowed).not.toContain("aice_id");
-      expect(allowed).not.toContain("aimer_web_bridge_url");
+      expect(allowed).not.toContain("clumit_insight_bridge_url");
     });
   });
 

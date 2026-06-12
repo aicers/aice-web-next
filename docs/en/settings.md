@@ -834,17 +834,17 @@ Analyze with Insight requires five system-wide prerequisites:
    `iss` claim and as the `aice_id` claim sent to Clumit Insight.
    Clumit Insight's `trust_registry` joins on this value, so it must
    match the entry registered there.
-2. **`aimer_web_bridge_url`** — the base URL of the Clumit Insight
+2. **`clumit_insight_bridge_url`** — the base URL of the Clumit Insight
    instance whose `/api/analysis/analyze-bridge` endpoint
    receives the top-level multipart POST. HTTPS only.
-3. **`aimer_default_model_name`** — the default LLM vendor /
+3. **`clumit_insight_default_model_name`** — the default LLM vendor /
    model-family identifier embedded as the `model_name` claim
    in the `analyze_params_token` JWS. The accepted catalog is
    owned by Clumit Insight-side configuration; any non-empty string
    is structurally valid here.
-4. **`aimer_default_model`** — the default LLM model identifier
+4. **`clumit_insight_default_model`** — the default LLM model identifier
    embedded as the `model` claim. Same shape rules as
-   `aimer_default_model_name`.
+   `clumit_insight_default_model_name`.
 5. **Context-token signing keypair** — a dedicated ES256 keypair
    stored under `data/keys/aimer-context-signing.json`.
 
@@ -935,7 +935,7 @@ join key portable.
 
 Example: `acme.example.com`.
 
-### `aimer_web_bridge_url`
+### `clumit_insight_bridge_url`
 
 Base URL of the Clumit Insight instance, HTTPS-only. The path is
 normalized to a canonical form (no trailing slash). Credentials,
@@ -943,7 +943,7 @@ query strings, and fragments are rejected.
 
 Example: `https://insight.example.com`.
 
-### `aimer_default_model_name`
+### `clumit_insight_default_model_name`
 
 Default LLM vendor / model-family identifier sent as the
 `model_name` claim of the `analyze_params_token` JWS. Any
@@ -952,7 +952,7 @@ the accepted catalog is owned by Clumit Insight-side configuration.
 
 Example: `anthropic`.
 
-### `aimer_default_model`
+### `clumit_insight_default_model`
 
 Default LLM model identifier sent as the `model` claim of the
 `analyze_params_token` JWS. Any non-empty string up to 256
@@ -963,8 +963,8 @@ Example: `claude-sonnet-4-6`.
 
 ### Effect-warning modal
 
-Editing any of `aice_id`, `aimer_web_bridge_url`,
-`aimer_default_model_name`, or `aimer_default_model` triggers
+Editing any of `aice_id`, `clumit_insight_bridge_url`,
+`clumit_insight_default_model_name`, or `clumit_insight_default_model` triggers
 a non-dismissable modal that warns:
 
 > After this change, the operator must re-register this
@@ -983,8 +983,8 @@ The Clumit Insight integration page records:
 - `aimer_signing_key.generated`, `.rotated`, `.switched`,
   `.deactivated` — keypair lifecycle events.
 - `aimer_integration_setting.changed` — any of `aice_id`,
-  `aimer_web_bridge_url`, `aimer_default_model_name`, or
-  `aimer_default_model` changed, with the `{key, old, new}`
+  `clumit_insight_bridge_url`, `clumit_insight_default_model_name`, or
+  `clumit_insight_default_model` changed, with the `{key, old, new}`
   triple.
 
 The Analyze with Insight flow records, on every browser-initiated
