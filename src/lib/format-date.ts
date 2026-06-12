@@ -114,9 +114,12 @@ export function formatDateTimeCompact(
  *
  * This is the **full** form (2-digit fields + seconds), not compact, so
  * per #766 all four time-display options apply here, same as the general
- * formatter. The `options.locale` override (when set) takes precedence
- * over the explicit `locale` argument, so "follow browser / explicit"
- * overrides the app-locale prop the call sites pass today.
+ * formatter. When a resolved `options` object is supplied (the Detection
+ * call sites always thread one), its `locale` field dictates the locale
+ * source outright: an explicit tag wins, and `undefined` means "follow
+ * browser" and **overrides** the app-locale `locale` argument the call
+ * sites pass. The `locale` argument is only consulted when no `options`
+ * object is supplied at all (legacy / direct callers).
  *
  * @param iso       ISO instant string.
  * @param locale    BCP 47 locale tag (e.g. `en`, `ko`).
@@ -138,7 +141,14 @@ export function formatEventTime(
   const d = new Date(iso);
   if (Number.isNaN(d.getTime())) return fallback;
   try {
-    return new Intl.DateTimeFormat(options?.locale ?? locale, {
+    // Distinguish "no resolved options supplied" (fall back to the
+    // explicit `locale` argument) from "options supplied with an
+    // intentionally undefined locale" (follow the browser, ignoring the
+    // app-locale argument). `options?.locale ?? locale` would conflate
+    // the two and keep Detection on the app locale even when the stored
+    // preference says follow-browser (#766).
+    const resolvedLocale = options ? options.locale : locale;
+    return new Intl.DateTimeFormat(resolvedLocale, {
       timeZone: timeZone ?? undefined,
       year: "numeric",
       month: "2-digit",

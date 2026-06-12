@@ -10,6 +10,11 @@ import { hasPermission } from "@/lib/auth/permissions";
 import { computeScopeFingerprint } from "@/lib/auth/scope-fingerprint";
 import { getCurrentSession } from "@/lib/auth/session";
 import { query } from "@/lib/db/client";
+import {
+  DEFAULT_STORED_TIME_FORMAT,
+  type StoredTimeFormat,
+  type TimeFormatHourCycle,
+} from "@/lib/time-format";
 
 export default async function DashboardLayout({
   children,
@@ -34,16 +39,37 @@ export default async function DashboardLayout({
     redirect(`${localePrefix}/enroll-mfa`);
   }
 
-  // Fetch username for sidebar display
+  // Fetch the username for the sidebar plus the stored time-format
+  // preference (#766) in one round-trip. Seeding the preference into the
+  // client provider lets the first paint reserve the correct <Timestamp>
+  // width for accounts with a non-default format, avoiding a line shift
+  // when the provider's own fetch would otherwise resolve it later.
   let username: string | undefined;
+  let initialTimeFormat: StoredTimeFormat = DEFAULT_STORED_TIME_FORMAT;
   try {
-    const { rows } = await query<{ username: string }>(
-      "SELECT username FROM accounts WHERE id = $1",
+    const { rows } = await query<{
+      username: string;
+      time_format_locale: string | null;
+      time_format_hour_cycle: TimeFormatHourCycle | null;
+      time_format_seconds: boolean | null;
+      time_format_tz_label: boolean | null;
+    }>(
+      `SELECT username, time_format_locale, time_format_hour_cycle,
+              time_format_seconds, time_format_tz_label
+         FROM accounts WHERE id = $1`,
       [session.accountId],
     );
     username = rows[0]?.username;
+    if (rows[0]) {
+      initialTimeFormat = {
+        timeFormatLocale: rows[0].time_format_locale,
+        timeFormatHourCycle: rows[0].time_format_hour_cycle,
+        timeFormatSeconds: rows[0].time_format_seconds,
+        timeFormatTzLabel: rows[0].time_format_tz_label,
+      };
+    }
   } catch {
-    // DB unavailable — fall back to no username
+    // DB unavailable — fall back to no username and the default format.
   }
 
   // Resolve the session's effective customer scope so the indicator
@@ -114,6 +140,7 @@ export default async function DashboardLayout({
       initialSidebarCollapsed={initialSidebarCollapsed}
       isAimerSystemAdmin={isAimerSystemAdmin}
       aimerAnalysisHref={aimerAnalysisHref}
+      initialTimeFormat={initialTimeFormat}
     >
       {children}
     </DashboardLayoutClient>

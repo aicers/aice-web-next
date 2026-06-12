@@ -225,6 +225,11 @@ export default defineConfig({
             // pin. Needs real DOM for the mount effect that resolves the
             // timezone and swaps the placeholder for the formatted value.
             "src/__tests__/components/timestamp.test.tsx",
+            // Issue #766 (Reviewer Round 1): the AccountPreferencesProvider
+            // server-seeding fix — `initialTimeFormat` must be reflected by
+            // `useResolvedTimeFormat()` on the first render, before the
+            // self-fetch resolves. Needs real DOM for the render + effect.
+            "src/__tests__/components/providers/account-preferences-provider.test.tsx",
           ],
           setupFiles: ["src/__tests__/setup/dom-setup.ts"],
         },
@@ -286,6 +291,7 @@ export default defineConfig({
             "src/__tests__/hooks/use-detection-return-nav.test.tsx",
             "src/__tests__/components/detection/quick-peek-inspector.test.tsx",
             "src/__tests__/components/timestamp.test.tsx",
+            "src/__tests__/components/providers/account-preferences-provider.test.tsx",
           ],
         },
       },

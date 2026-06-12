@@ -243,10 +243,22 @@ describe("formatEventTime — time-format options", () => {
   const iso = "2024-06-15T15:30:45Z";
   const FALLBACK = "—";
 
-  it("is byte-identical to the no-options call for the default object", () => {
-    expect(formatEventTime(iso, "en", FALLBACK, "UTC", resolved())).toBe(
-      formatEventTime(iso, "en", FALLBACK, "UTC"),
-    );
+  it("follows the browser locale (ignoring the locale argument) when resolved options carry no locale override", () => {
+    // With resolved options supplied and `locale: undefined` (the
+    // "follow browser" default), the app-locale argument must NOT win:
+    // the output is identical regardless of the argument, because both
+    // calls follow the runtime/browser locale.
+    const viaEn = formatEventTime(iso, "en", FALLBACK, "UTC", resolved());
+    const viaKo = formatEventTime(iso, "ko", FALLBACK, "UTC", resolved());
+    expect(viaEn).toBe(viaKo);
+  });
+
+  it("honours the locale argument only when no resolved options are supplied", () => {
+    // No options object: the explicit `locale` argument is the locale
+    // source (legacy / direct callers).
+    const en = formatEventTime(iso, "en-US", FALLBACK, "UTC");
+    const ko = formatEventTime(iso, "ko-KR", FALLBACK, "UTC");
+    expect(en).not.toBe(ko);
   });
 
   it("hides seconds when the seconds option is false", () => {

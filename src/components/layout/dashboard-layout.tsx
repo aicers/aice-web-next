@@ -13,6 +13,7 @@ import { BreadcrumbLabelProvider } from "@/components/providers/breadcrumb-label
 import { ScopeFingerprintProvider } from "@/components/providers/scope-fingerprint-provider";
 import { useSidebar } from "@/hooks/use-sidebar";
 import type { EffectiveCustomerScope } from "@/lib/auth/customer-scope";
+import type { StoredTimeFormat } from "@/lib/time-format";
 
 interface DashboardLayoutProps {
   children: React.ReactNode;
@@ -41,6 +42,13 @@ interface DashboardLayoutProps {
    * fed from the server and hidden when there is no bridge URL (#646).
    */
   aimerAnalysisHref?: string | null;
+  /**
+   * Server-seeded stored time-format preference (#766), read from the
+   * account row in the server layout. Passed to
+   * {@link AccountPreferencesProvider} so the first paint already reserves
+   * the correct `<Timestamp>` width for accounts with a non-default format.
+   */
+  initialTimeFormat?: StoredTimeFormat;
 }
 
 export default function DashboardLayout({
@@ -52,6 +60,7 @@ export default function DashboardLayout({
   initialSidebarCollapsed = false,
   isAimerSystemAdmin = false,
   aimerAnalysisHref = null,
+  initialTimeFormat,
 }: Readonly<DashboardLayoutProps>) {
   const { collapsed, toggle } = useSidebar({
     initialCollapsed: initialSidebarCollapsed,
@@ -60,7 +69,7 @@ export default function DashboardLayout({
 
   return (
     <ScopeFingerprintProvider fingerprint={scopeFingerprint}>
-      <AccountPreferencesProvider>
+      <AccountPreferencesProvider initialTimeFormat={initialTimeFormat}>
         <BreadcrumbLabelProvider>
           <div className="flex h-screen flex-col">
             {isAimerSystemAdmin && <AimerPhase2Banner />}
